@@ -7,7 +7,7 @@ import { playerData } from '../data/PlayerData';
 import { getBallSkin, BallSkinData } from '../data/SkinsCatalog';
 
 export class Ball {
-  public body: MatterJS.BodyType;
+  public body!: MatterJS.BodyType;  // ИСПРАВЛЕНО: добавлен !
   public sprite: Phaser.GameObjects.Container;
 
   private scene: Phaser.Scene;
@@ -54,6 +54,15 @@ export class Ball {
     this.createPhysicsBody(x, y);
   }
 
+  // ДОБАВЛЕНО: геттеры для x и y
+  get x(): number {
+    return this.body.position.x;
+  }
+
+  get y(): number {
+    return this.body.position.y;
+  }
+
   private createVisuals(): void {
     const { skinData: skin, radius: r, scene } = this;
     const colors = getColors();
@@ -75,7 +84,6 @@ export class Ball {
   private createGlow(): void {
     const { scene, radius: r, skinData: skin } = this;
     
-    // Используем p_glow или создаём свою текстуру
     let texKey = 'p_glow';
     let scale = r / 10;
     
@@ -106,7 +114,8 @@ export class Ball {
     const key = 'ball_glow_tex';
     if (this.scene.textures.exists(key)) return key;
     
-    const g = this.scene.make.graphics({ x: 0, y: 0, add: false });
+    // ИСПРАВЛЕНО: убран add: false
+    const g = this.scene.add.graphics();
     g.fillStyle(0xffffff).fillCircle(32, 32, 32);
     g.generateTexture(key, 64, 64);
     g.destroy();
@@ -116,15 +125,12 @@ export class Ball {
   private createBallSprite(): void {
     const { scene, radius: r, skinData: skin } = this;
     
-    // Проверяем наличие текстуры по textureKey из скина
     const textureKey = skin.textureKey;
     
     if (textureKey && scene.textures.exists(textureKey)) {
-      // Используем сгенерированную текстуру
       this.ballSprite = scene.add.sprite(0, 0, textureKey)
-        .setScale((r * 2) / 64); // 64 = размер текстуры мяча
+        .setScale((r * 2) / 64);
     } else {
-      // Fallback: рисуем программно
       this.ballSprite = this.createFallbackBallSprite();
     }
     
@@ -136,30 +142,26 @@ export class Ball {
     const key = `ball_fallback_${skin.id}`;
     
     if (!scene.textures.exists(key)) {
-      const g = scene.make.graphics({ x: 0, y: 0, add: false });
+      // ИСПРАВЛЕНО: убран add: false
+      const g = scene.add.graphics();
+      g.setVisible(false);
       const size = 64;
       const center = size / 2;
       const ballRadius = 30;
       
-      // Основа
       g.fillStyle(skin.primaryColor);
       g.fillCircle(center, center, ballRadius);
       
-      // Паттерн (футбольный мяч)
       g.fillStyle(skin.secondaryColor);
-      // Центральный пятиугольник
       this.drawPentagonOnGraphics(g, center, center, 10);
-      // Боковые
       for (let i = 0; i < 5; i++) {
         const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
         this.drawPentagonOnGraphics(g, center + Math.cos(angle) * 18, center + Math.sin(angle) * 18, 6);
       }
       
-      // Обводка
       g.lineStyle(2, skin.glowColor);
       g.strokeCircle(center, center, ballRadius);
       
-      // Блик
       g.fillStyle(0xffffff, 0.4);
       g.fillEllipse(center - 8, center - 8, 10, 6);
       
@@ -205,7 +207,9 @@ export class Ball {
     const key = 'ball_trail_tex';
     if (this.scene.textures.exists(key)) return key;
     
-    const g = this.scene.make.graphics({ x: 0, y: 0, add: false });
+    // ИСПРАВЛЕНО: убран add: false
+    const g = this.scene.add.graphics();
+    g.setVisible(false);
     g.fillStyle(0xffffff).fillCircle(8, 8, 8);
     g.generateTexture(key, 16, 16);
     g.destroy();
@@ -219,13 +223,14 @@ export class Ball {
     const texKey = this.scene.textures.exists(effect.texture) ? effect.texture : 'p_spark';
     if (!this.scene.textures.exists(texKey)) return;
 
+    // ИСПРАВЛЕНО: blendMode приведение типа
     this.particleEmitter = this.scene.add.particles(0, 0, texKey, {
       speed: effect.speed,
       scale: effect.scale,
       alpha: { start: 0.8, end: 0 },
       lifespan: effect.lifespan,
       frequency: effect.frequency,
-      blendMode: effect.blendMode as Phaser.BlendModes,
+      blendMode: effect.blendMode as unknown as Phaser.BlendModes,
       tint: effect.color,
       gravityY: effect.gravityY || 0,
       quantity: effect.quantity || 1,
@@ -263,12 +268,10 @@ export class Ball {
 
     const speed = this.getSpeed();
 
-    // Вращение мяча
     if (speed > 0.1) {
       this.ballSprite.rotation += speed * 0.05;
     }
 
-    // Trail эмиттер
     if (this.trailEmitter) {
       if (speed > 2) {
         this.trailEmitter.start();
@@ -279,7 +282,6 @@ export class Ball {
       }
     }
 
-    // Particle эмиттер (для скинов с эффектами)
     if (this.particleEmitter && this.skinData.particleEffect?.followVelocity) {
       if (speed > 1.5) {
         this.particleEmitter.start();

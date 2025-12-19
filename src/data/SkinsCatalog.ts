@@ -1,5 +1,8 @@
 // src/data/SkinsCatalog.ts
 
+// src/data/SkinsCatalog.ts
+
+// ИСПРАВЛЕНО: импорт из types
 import { SkinRarity, SkinVisualConfig, ParticleConfig } from '../types';
 
 export interface SkinPrice {
@@ -35,6 +38,9 @@ export const BASE_UPGRADE_COSTS: number[] = [
   2600, 3300, 4100, 5000, 6000, 7200, 8500, 10000, 12000, 15000,
   18000, 22000, 26000, 30000, 35000,
 ];
+
+// ... ОСТАЛЬНОЙ КОД ОСТАЁТСЯ БЕЗ ИЗМЕНЕНИЙ (весь каталог скинов) ...
+// Скопируйте всё после этого места из вашего оригинального файла
 
 // === DATA INTERFACES ===
 

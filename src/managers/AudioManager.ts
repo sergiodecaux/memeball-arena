@@ -4,7 +4,7 @@ import Phaser from 'phaser';
 
 export class AudioManager {
   private static instance: AudioManager;
-  private scene: Phaser.Scene;
+  private scene!: Phaser.Scene;
   
   public isSoundEnabled: boolean = true;
   public isMusicEnabled: boolean = true;
@@ -40,7 +40,7 @@ export class AudioManager {
   public stopAll() {
     this.stopMusic();
     this.stopAmbience();
-    if (this.scene) {
+    if (this.scene && this.scene.sound) {
       this.scene.sound.stopAll();
     }
   }
@@ -50,7 +50,7 @@ export class AudioManager {
   public playMusic(key: string) {
     if (!this.isMusicEnabled) return;
     
-    // ФИКС: Если эта музыка УЖЕ играет, не перезапускаем её
+    // Если эта музыка уже играет — не перезапускаем
     if (this.currentMusic && (this.currentMusic as any).key === key && this.currentMusic.isPlaying) {
       return;
     }
@@ -58,15 +58,23 @@ export class AudioManager {
     this.stopMusic();
 
     try {
-      this.currentMusic = this.scene.sound.add(key, { loop: true, volume: 0.4 });
-      this.currentMusic.play();
-    } catch (e) { console.warn(e); }
+      if (this.scene && this.scene.sound) {
+        this.currentMusic = this.scene.sound.add(key, { loop: true, volume: 0.4 });
+        this.currentMusic.play();
+      }
+    } catch (e) { 
+      console.warn('AudioManager: Could not play music', key, e); 
+    }
   }
 
   public stopMusic() {
     if (this.currentMusic) {
-      this.currentMusic.stop();
-      this.currentMusic.destroy();
+      try {
+        this.currentMusic.stop();
+        this.currentMusic.destroy();
+      } catch (e) {
+        console.warn('AudioManager: Error stopping music', e);
+      }
       this.currentMusic = null;
     }
   }
@@ -79,12 +87,15 @@ export class AudioManager {
     if (this.ambience && this.ambience.isPlaying) return;
 
     try {
-      this.ambience = this.scene.sound.add(key, { loop: true, volume: 0.2 });
-      this.ambience.play();
-    } catch (e) { console.warn(e); }
+      if (this.scene && this.scene.sound) {
+        this.ambience = this.scene.sound.add(key, { loop: true, volume: 0.2 });
+        this.ambience.play();
+      }
+    } catch (e) { 
+      console.warn('AudioManager: Could not play ambience', key, e); 
+    }
   }
 
-  // НОВЫЙ МЕТОД: Изменение громкости толпы
   public setAmbienceVolume(volume: number) {
     if (this.ambience && this.ambience.isPlaying && (this.ambience as any).setVolume) {
       const targetVol = Phaser.Math.Clamp(volume, 0, 0.8);
@@ -94,8 +105,12 @@ export class AudioManager {
 
   public stopAmbience() {
     if (this.ambience) {
-      this.ambience.stop();
-      this.ambience.destroy();
+      try {
+        this.ambience.stop();
+        this.ambience.destroy();
+      } catch (e) {
+        console.warn('AudioManager: Error stopping ambience', e);
+      }
       this.ambience = null;
     }
   }
@@ -106,30 +121,45 @@ export class AudioManager {
     if (!this.isSoundEnabled) return;
 
     try {
-      this.scene.sound.play(key, {
-        volume: config.volume ?? 1.0,
-        detune: config.detune ?? Phaser.Math.Between(-100, 100), 
-        rate: config.rate ?? 1.0,
-        delay: config.delay ?? 0 
-      });
-    } catch (e) { }
+      if (this.scene && this.scene.sound) {
+        this.scene.sound.play(key, {
+          volume: config.volume ?? 1.0,
+          detune: config.detune ?? Phaser.Math.Between(-100, 100), 
+          rate: config.rate ?? 1.0,
+          delay: config.delay ?? 0 
+        });
+      }
+    } catch (e) { 
+      // Игнорируем ошибки SFX
+    }
   }
 
-  // --- TOGGLES ---
+  // --- SETTERS ---
 
-  public toggleMusic(enabled: boolean) {
+  public setSoundEnabled(enabled: boolean) {
+    this.isSoundEnabled = enabled;
+  }
+
+  public setMusicEnabled(enabled: boolean) {
     this.isMusicEnabled = enabled;
     if (!enabled) {
       this.stopMusic();
       this.stopAmbience();
     } else {
+      // Если включили музыку и мы в меню — запускаем
       if (this.scene && this.scene.scene.key === 'MainMenuScene') {
         this.playMusic('bgm_menu');
       }
     }
   }
 
+  // --- TOGGLES (для совместимости) ---
+
+  public toggleMusic(enabled: boolean) {
+    this.setMusicEnabled(enabled);
+  }
+
   public toggleSound(enabled: boolean) {
-    this.isSoundEnabled = enabled;
+    this.setSoundEnabled(enabled);
   }
 }

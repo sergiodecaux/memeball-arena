@@ -2,6 +2,12 @@
 
 import { CapClass } from '../constants/gameConstants';
 
+// ==================== SKIN RARITY ====================
+
+export type SkinRarity = 'basic' | 'common' | 'rare' | 'epic' | 'legendary';
+
+// ==================== POSITION & DIMENSIONS ====================
+
 export interface Position {
   x: number;
   y: number;
@@ -34,10 +40,10 @@ export interface GameEntityData {
 // ==================== FORMATIONS ====================
 
 export interface FormationSlot {
-  id: string;           // уникальный id слота (slot_0, slot_1, slot_2)
-  x: number;            // 0-1 относительные координаты
-  y: number;            // 0-1
-  capClass: CapClass;   // роль фишки на этом слоте
+  id: string;
+  x: number;
+  y: number;
+  capClass: CapClass;
 }
 
 export interface Formation {

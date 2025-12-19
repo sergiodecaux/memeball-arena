@@ -1,14 +1,30 @@
 // src/scenes/UpgradeScene.ts
 
 import Phaser from 'phaser';
-import { getColors, hexToString, getRarityColor } from '../config/themes';
+import { getColors, hexToString } from '../config/themes';
 import { playerData } from '../data/PlayerData';
-import { getCapSkin, getRarityName, getSkinTotalBonus, MAX_UPGRADE_BONUS, CapSkinData } from '../data/SkinsCatalog';
+import { 
+  getCapSkin, 
+  getRarityName, 
+  getRarityColor,
+  getSkinBaseBonus,
+  getUpgradeCost,
+  MAX_CAP_LEVEL,
+  CapSkinData 
+} from '../data/SkinsCatalog';
+
+// Максимальный бонус от прокачки для каждой редкости
+const MAX_UPGRADE_BONUS: Record<string, number> = {
+  basic: 10,
+  common: 15,
+  rare: 20,
+  epic: 25,
+  legendary: 30,
+};
 
 export class UpgradeScene extends Phaser.Scene {
   private selectedSkinId: string | null = null;
   private coinsText!: Phaser.GameObjects.Text;
-  private detailContainer!: Phaser.GameObjects.Container;
 
   constructor() {
     super({ key: 'UpgradeScene' });
@@ -131,7 +147,7 @@ export class UpgradeScene extends Phaser.Scene {
       container.add(bg);
 
       // Превью
-      if (skin.hasGlow) {
+      if (skin.hasGlow && skin.glowColor) {
         container.add(this.add.circle(0, -5, 22, skin.glowColor, 0.2));
       }
       const main = this.add.circle(0, -5, 18, skin.primaryColor);
@@ -140,14 +156,11 @@ export class UpgradeScene extends Phaser.Scene {
       container.add(this.add.circle(0, -5, 11, skin.secondaryColor, 0.5));
 
       // Уровень
-      const upgrade = data.capUpgrades[owned.id];
-      if (upgrade) {
-        container.add(this.add.text(0, 25, `Lv.${upgrade.level}`, {
-          fontSize: '10px',
-          color: '#ffffff',
-          fontStyle: 'bold',
-        }).setOrigin(0.5, 0.5));
-      }
+      container.add(this.add.text(0, 25, `Lv.${owned.level}`, {
+        fontSize: '10px',
+        color: '#ffffff',
+        fontStyle: 'bold',
+      }).setOrigin(0.5, 0.5));
 
       // Интерактивность
       const hitArea = this.add.rectangle(0, 0, itemSize, itemSize, 0x000000, 0);
@@ -171,10 +184,11 @@ export class UpgradeScene extends Phaser.Scene {
     if (!skin) return;
 
     const data = playerData.get();
-    const upgrade = data.capUpgrades[this.selectedSkinId];
+    const ownedSkin = data.ownedCapSkins.find(s => s.id === this.selectedSkinId);
+    const currentLevel = ownedSkin?.level || 1;
     const rarityColor = getRarityColor(skin.rarity);
-    const maxBonus = MAX_UPGRADE_BONUS[skin.rarity];
-    const totalBonus = playerData.getTotalSkinBonus(this.selectedSkinId);
+    const maxBonus = MAX_UPGRADE_BONUS[skin.rarity] || 10;
+    const totalBonus = playerData.getCapTotalBonus(this.selectedSkinId);
 
     const panelY = 180;
     const panelHeight = height - panelY - 20;
@@ -193,13 +207,13 @@ export class UpgradeScene extends Phaser.Scene {
       color: '#ffffff',
     }).setOrigin(0.5, 0.5);
 
-    this.add.text(width / 2, panelY + 50, `${getRarityName(skin.rarity)} • Level ${upgrade?.level || 1}`, {
+    this.add.text(width / 2, panelY + 50, `${getRarityName(skin.rarity)} • Level ${currentLevel}/${MAX_CAP_LEVEL}`, {
       fontSize: '14px',
       color: hexToString(rarityColor),
       fontStyle: 'bold',
     }).setOrigin(0.5, 0.5);
 
-    // Статы для улучшения
+    // Статы
     const stats: { key: 'power' | 'speed' | 'control' | 'weight'; name: string; icon: string; color: number }[] = [
       { key: 'power', name: 'POWER', icon: '💪', color: 0xef4444 },
       { key: 'speed', name: 'SPEED', icon: '⚡', color: 0xfbbf24 },
@@ -213,9 +227,10 @@ export class UpgradeScene extends Phaser.Scene {
     stats.forEach((stat, index) => {
       const y = startY + index * statHeight;
       const currentValue = totalBonus[stat.key];
-      const upgradeValue = upgrade ? upgrade[stat.key] : 0;
-      const canUpgrade = upgradeValue < maxBonus;
-      const cost = canUpgrade ? playerData.getUpgradeCost(this.selectedSkinId!, stat.key) : 0;
+      const baseBonus = getSkinBaseBonus(skin);
+      const upgradeValue = currentValue - baseBonus[stat.key];
+      const canUpgrade = currentLevel < MAX_CAP_LEVEL;
+      const cost = canUpgrade ? getUpgradeCost(this.selectedSkinId!, currentLevel) : 0;
       const canAfford = data.coins >= cost;
 
       // Фон стата
@@ -239,156 +254,156 @@ export class UpgradeScene extends Phaser.Scene {
         color: hexToString(stat.color),
         fontStyle: 'bold',
       }).setOrigin(0.5, 0.5);
-      // src/scenes/UpgradeScene.ts (продолжение)
 
       // Прогресс бар
       const barWidth = width - 180;
       const barHeight = 14;
       const barX = 40;
       const barY = y + 45;
-      const progress = upgradeValue / maxBonus;
+      const progress = Math.min(upgradeValue / maxBonus, 1);
 
-      const barBg = this.add.graphics();
-      barBg.fillStyle(0x1a1a2e, 1);
-      barBg.fillRoundedRect(barX, barY, barWidth, barHeight, 7);
-      barBg.fillStyle(stat.color, 1);
-      barBg.fillRoundedRect(barX, barY, barWidth * progress, barHeight, 7);
-      barBg.lineStyle(1, stat.color, 0.3);
-      barBg.strokeRoundedRect(barX, barY, barWidth, barHeight, 7);
+      const barBgGraphics = this.add.graphics();
+      barBgGraphics.fillStyle(0x1a1a2e, 1);
+      barBgGraphics.fillRoundedRect(barX, barY, barWidth, barHeight, 7);
+      if (progress > 0) {
+        barBgGraphics.fillStyle(stat.color, 1);
+        barBgGraphics.fillRoundedRect(barX, barY, barWidth * progress, barHeight, 7);
+      }
+      barBgGraphics.lineStyle(1, stat.color, 0.3);
+      barBgGraphics.strokeRoundedRect(barX, barY, barWidth, barHeight, 7);
 
       // Текст прогресса
-      this.add.text(barX + barWidth / 2, barY + barHeight / 2, `${upgradeValue}% / ${maxBonus}%`, {
+      this.add.text(barX + barWidth / 2, barY + barHeight / 2, `+${upgradeValue}% / +${maxBonus}%`, {
         fontSize: '9px',
         color: '#ffffff',
         fontStyle: 'bold',
       }).setOrigin(0.5, 0.5);
-
-      // Кнопка улучшения
-      const btnWidth = 90;
-      const btnHeight = 36;
-      const btnX = width - 75;
-      const btnY = y + 40;
-
-      if (canUpgrade) {
-        const btnContainer = this.add.container(btnX, btnY);
-
-        const btnBg = this.add.graphics();
-        const btnColor = canAfford ? stat.color : 0x666666;
-
-        const drawBtn = (hover: boolean) => {
-          btnBg.clear();
-          btnBg.fillStyle(btnColor, hover ? 0.4 : 0.2);
-          btnBg.fillRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 8);
-          btnBg.lineStyle(2, btnColor, hover ? 1 : 0.6);
-          btnBg.strokeRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 8);
-        };
-
-        drawBtn(false);
-        btnContainer.add(btnBg);
-
-        const btnText = this.add.text(0, -2, '+2%', {
-          fontSize: '14px',
-          color: canAfford ? '#ffffff' : '#666666',
-          fontStyle: 'bold',
-        }).setOrigin(0.5, 0.5);
-        btnContainer.add(btnText);
-
-        const costText = this.add.text(0, 12, `💰${cost}`, {
-          fontSize: '10px',
-          color: canAfford ? '#ffd700' : '#666666',
-        }).setOrigin(0.5, 0.5);
-        btnContainer.add(costText);
-
-        if (canAfford) {
-          const hitArea = this.add.rectangle(0, 0, btnWidth, btnHeight, 0x000000, 0);
-          hitArea.setInteractive({ useHandCursor: true });
-          btnContainer.add(hitArea);
-
-          hitArea.on('pointerover', () => {
-            drawBtn(true);
-            btnContainer.setScale(1.05);
-          });
-
-          hitArea.on('pointerout', () => {
-            drawBtn(false);
-            btnContainer.setScale(1);
-          });
-
-          hitArea.on('pointerdown', () => {
-            if (playerData.upgradeStat(this.selectedSkinId!, stat.key)) {
-              this.showUpgradeEffect(btnX, btnY, stat.color);
-              this.scene.restart();
-            }
-          });
-        }
-      } else {
-        // Максимальный уровень
-        this.add.text(btnX, btnY, 'MAX', {
-          fontSize: '16px',
-          color: hexToString(stat.color),
-          fontStyle: 'bold',
-        }).setOrigin(0.5, 0.5);
-      }
     });
 
+    // Кнопка улучшения (общая для всех статов)
+    const btnY = startY + stats.length * statHeight + 20;
+    const canUpgrade = currentLevel < MAX_CAP_LEVEL;
+    const cost = canUpgrade ? getUpgradeCost(this.selectedSkinId!, currentLevel) : 0;
+    const canAfford = data.coins >= cost;
+
+    if (canUpgrade) {
+      const btnContainer = this.add.container(width / 2, btnY);
+      const btnWidth = 200;
+      const btnHeight = 50;
+
+      const btnBg = this.add.graphics();
+      const btnColor = canAfford ? 0x22c55e : 0x666666;
+
+      const drawBtn = (hover: boolean) => {
+        btnBg.clear();
+        btnBg.fillStyle(btnColor, hover ? 0.4 : 0.2);
+        btnBg.fillRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 12);
+        btnBg.lineStyle(2, btnColor, hover ? 1 : 0.6);
+        btnBg.strokeRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 12);
+      };
+
+      drawBtn(false);
+      btnContainer.add(btnBg);
+
+      const btnText = this.add.text(0, -5, `⬆️ UPGRADE TO LV.${currentLevel + 1}`, {
+        fontSize: '14px',
+        color: canAfford ? '#ffffff' : '#666666',
+        fontStyle: 'bold',
+      }).setOrigin(0.5, 0.5);
+      btnContainer.add(btnText);
+
+      const costText = this.add.text(0, 15, `💰 ${cost}`, {
+        fontSize: '12px',
+        color: canAfford ? '#ffd700' : '#666666',
+      }).setOrigin(0.5, 0.5);
+      btnContainer.add(costText);
+
+      if (canAfford) {
+        const hitArea = this.add.rectangle(0, 0, btnWidth, btnHeight, 0x000000, 0);
+        hitArea.setInteractive({ useHandCursor: true });
+        btnContainer.add(hitArea);
+
+        hitArea.on('pointerover', () => {
+          drawBtn(true);
+          btnContainer.setScale(1.05);
+        });
+
+        hitArea.on('pointerout', () => {
+          drawBtn(false);
+          btnContainer.setScale(1);
+        });
+
+        hitArea.on('pointerdown', () => {
+          if (playerData.upgradeCapSkin(this.selectedSkinId!)) {
+            this.showUpgradeEffect(width / 2, btnY, 0x22c55e);
+            this.scene.restart();
+          }
+        });
+      }
+    } else {
+      // Максимальный уровень
+      this.add.text(width / 2, btnY, '🏆 MAX LEVEL REACHED', {
+        fontSize: '18px',
+        color: hexToString(rarityColor),
+        fontStyle: 'bold',
+      }).setOrigin(0.5, 0.5);
+    }
+
     // Информация о редкости
-    const infoY = startY + stats.length * statHeight + 10;
+    const infoY = btnY + 60;
     const infoContainer = this.add.container(width / 2, infoY);
 
     const infoBg = this.add.graphics();
     infoBg.fillStyle(rarityColor, 0.1);
-    infoBg.fillRoundedRect(-140, -25, 280, 50, 10);
+    infoBg.fillRoundedRect(-160, -30, 320, 60, 10);
     infoBg.lineStyle(1, rarityColor, 0.3);
-    infoBg.strokeRoundedRect(-140, -25, 280, 50, 10);
+    infoBg.strokeRoundedRect(-160, -30, 320, 60, 10);
     infoContainer.add(infoBg);
 
-    infoContainer.add(this.add.text(0, -8, `${getRarityName(skin.rarity)} Rarity Bonus`, {
+    const baseBonus = getSkinBaseBonus(skin);
+    infoContainer.add(this.add.text(0, -10, `${getRarityName(skin.rarity)} Base Bonus`, {
       fontSize: '12px',
       color: hexToString(rarityColor),
       fontStyle: 'bold',
     }).setOrigin(0.5, 0.5));
 
-    const rarityBonus = getSkinTotalBonus(skin);
-    infoContainer.add(this.add.text(0, 10, `Base: +${rarityBonus.power}% All Stats | Max Upgrade: +${maxBonus}%`, {
-      fontSize: '10px',
+    infoContainer.add(this.add.text(0, 10, `💪+${baseBonus.power}% ⚡+${baseBonus.speed}% 🎯+${baseBonus.control}% 🛡️+${baseBonus.weight}%`, {
+      fontSize: '11px',
       color: '#aaaaaa',
     }).setOrigin(0.5, 0.5));
   }
 
   private showUpgradeEffect(x: number, y: number, color: number): void {
-    // Эффект при улучшении
-    for (let i = 0; i < 8; i++) {
-      const angle = (i / 8) * Math.PI * 2;
-      const particle = this.add.circle(x, y, 4, color, 1);
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      const particle = this.add.circle(x, y, 6, color, 1);
       
       this.tweens.add({
         targets: particle,
-        x: x + Math.cos(angle) * 50,
-        y: y + Math.sin(angle) * 50,
+        x: x + Math.cos(angle) * 80,
+        y: y + Math.sin(angle) * 80,
         alpha: 0,
-        scale: 0.5,
-        duration: 400,
+        scale: 0.3,
+        duration: 500,
         ease: 'Power2',
         onComplete: () => particle.destroy(),
       });
     }
 
-    // Текст +2%
-    const text = this.add.text(x, y - 30, '+2%', {
-      fontSize: '20px',
-      color: hexToString(color),
+    const text = this.add.text(x, y - 40, '⬆️ LEVEL UP!', {
+      fontSize: '24px',
+      color: '#22c55e',
       fontStyle: 'bold',
     }).setOrigin(0.5, 0.5);
 
     this.tweens.add({
       targets: text,
-      y: y - 60,
+      y: y - 80,
       alpha: 0,
-      duration: 600,
+      scale: 1.5,
+      duration: 800,
       ease: 'Power2',
       onComplete: () => text.destroy(),
     });
   }
 }
-
-     

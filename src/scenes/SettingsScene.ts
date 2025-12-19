@@ -3,27 +3,27 @@
 import Phaser from 'phaser';
 import { getColors, hexToString } from '../config/themes';
 import { playerData } from '../data/PlayerData';
+import { applyScreenScale, DESIGN_WIDTH, DESIGN_HEIGHT } from '../config/gameConfig';
+import { AudioManager } from '../managers/AudioManager';
 import { i18n, Language } from '../localization/i18n';
-import { Icons } from '../ui/Icons';
-import { PremiumButton } from '../ui/PremiumButton';
-import { AudioManager } from '../managers/AudioManager'; // [AUDIO]
 
 export class SettingsScene extends Phaser.Scene {
-  private confirmModal: Phaser.GameObjects.Container | null = null;
+  private screenScaleValue: number = 1.0;
+  private scaleText!: Phaser.GameObjects.Text;
+  private previewRect!: Phaser.GameObjects.Rectangle;
+  private contentContainer!: Phaser.GameObjects.Container;
 
   constructor() {
     super({ key: 'SettingsScene' });
   }
 
   create(): void {
-    // [AUDIO] Инициализация менеджера
-    AudioManager.getInstance().init(this);
+    const data = playerData.get();
+    this.screenScaleValue = data.settings.screenScale || 1.0;
 
-    this.confirmModal = null;
-    
     this.createBackground();
     this.createHeader();
-    this.createSettings();
+    this.createScrollableContent();
   }
 
   private createBackground(): void {
@@ -31,22 +31,22 @@ export class SettingsScene extends Phaser.Scene {
     const colors = getColors();
 
     const bg = this.add.graphics();
-    bg.fillStyle(0x0a0a12, 1);
+    bg.fillStyle(0x05050a, 1);
     bg.fillRect(0, 0, width, height);
 
-    for (let i = 0; i < 200; i++) {
-      const alpha = 0.1 * Math.pow(1 - i / 200, 2);
-      bg.fillStyle(colors.uiPrimary, alpha);
+    for (let i = 0; i < 150; i++) {
+      const alpha = 0.1 * (1 - i / 150);
+      bg.fillStyle(colors.uiAccent, alpha);
       bg.fillRect(0, i, width, 1);
     }
 
     const grid = this.add.graphics();
-    grid.lineStyle(1, colors.uiPrimary, 0.02);
-    for (let x = 0; x <= width; x += 50) {
+    grid.lineStyle(1, colors.uiAccent, 0.03);
+    for (let x = 0; x < width; x += 30) {
       grid.moveTo(x, 0);
       grid.lineTo(x, height);
     }
-    for (let y = 0; y <= height; y += 50) {
+    for (let y = 0; y < height; y += 30) {
       grid.moveTo(0, y);
       grid.lineTo(width, y);
     }
@@ -57,369 +57,458 @@ export class SettingsScene extends Phaser.Scene {
     const { width } = this.cameras.main;
     const colors = getColors();
 
-    // Фон хедера
     const headerBg = this.add.graphics();
-    headerBg.fillStyle(0x000000, 0.5);
-    headerBg.fillRect(0, 0, width, 70);
-    headerBg.lineStyle(1, colors.uiPrimary, 0.3);
-    headerBg.lineBetween(0, 70, width, 70);
+    headerBg.fillStyle(0x000000, 0.8);
+    headerBg.fillRect(0, 0, width, 60);
+    headerBg.lineStyle(2, colors.uiAccent, 0.3);
+    headerBg.lineBetween(0, 60, width, 60);
+    headerBg.setDepth(100);
 
     // Кнопка назад
-    const backBtn = this.add.container(45, 35);
-    
+    const backBtn = this.add.container(50, 30).setDepth(101);
     const backBg = this.add.graphics();
-    backBg.fillStyle(colors.uiPrimary, 0.1);
-    backBg.fillCircle(0, 0, 22);
-    backBg.lineStyle(2, colors.uiAccent, 0.5);
-    backBg.strokeCircle(0, 0, 22);
+    backBg.fillStyle(0x000000, 0.5);
+    backBg.fillRoundedRect(-35, -15, 70, 30, 8);
+    backBg.lineStyle(1.5, colors.uiAccent, 0.5);
+    backBg.strokeRoundedRect(-35, -15, 70, 30, 8);
     backBtn.add(backBg);
-    
-    const backIcon = Icons.drawBack(this, 0, 0, 10, colors.uiAccent);
-    backBtn.add(backIcon);
-    
-    backBtn.setInteractive(new Phaser.Geom.Circle(0, 0, 22), Phaser.Geom.Circle.Contains);
-    backBtn.on('pointerover', () => backBtn.setScale(1.1));
-    backBtn.on('pointerout', () => backBtn.setScale(1));
+    backBtn.add(this.add.text(0, 0, `← ${i18n.t('back')}`, {
+      fontSize: '14px',
+      color: hexToString(colors.uiAccent),
+      fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    backBtn.setInteractive(new Phaser.Geom.Rectangle(-35, -15, 70, 30), Phaser.Geom.Rectangle.Contains);
     backBtn.on('pointerdown', () => {
-      AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+      AudioManager.getInstance().playSFX('sfx_click');
+      this.saveSettings();
       this.scene.start('MainMenuScene');
     });
 
     // Заголовок
-    const settingsIcon = Icons.drawSettings(this, width / 2 - 70, 35, 16, colors.uiAccent);
-    
-    this.add.text(width / 2, 35, i18n.t('settings').toUpperCase(), {
-      fontSize: '24px',
-      fontFamily: 'Arial Black, Arial',
+    this.add.text(width / 2, 30, `⚙️ ${i18n.t('settings').toUpperCase()}`, {
+      fontSize: '22px',
+      fontFamily: 'Arial Black',
       color: '#ffffff',
-    }).setOrigin(0.5, 0.5);
+    }).setOrigin(0.5).setDepth(101);
   }
 
-  private createSettings(): void {
-    const { width } = this.cameras.main;
-    const colors = getColors();
+  private createScrollableContent(): void {
+    const { width, height } = this.cameras.main;
     const data = playerData.get();
-    
-    let currentY = 100;
-    const itemHeight = 65;
-    const itemWidth = width - 40;
 
-    // === ЯЗЫК ===
-    this.createSectionTitle(currentY, i18n.t('language'));
-    currentY += 40;
-    
-    this.createLanguageSelector(currentY, itemWidth);
-    currentY += 90;
+    // Контейнер для скролла
+    this.contentContainer = this.add.container(0, 0);
 
-    // === ЗВУК ===
-    this.createSectionTitle(currentY, 'Audio');
-    currentY += 40;
-    
-    // Toggle Sound
-    this.createToggle(currentY, itemWidth, i18n.t('sound'), data.settings.soundEnabled, (val) => {
+    let y = 85;
+    const rowHeight = 65;
+
+    // ===== LANGUAGE =====
+    y = this.createLanguageSelector(y);
+
+    y += 15;
+
+    // ===== SOUND =====
+    y = this.createToggle(y, `🔊 ${i18n.t('sound')}`, data.settings.soundEnabled, (val) => {
       data.settings.soundEnabled = val;
+      AudioManager.getInstance().setSoundEnabled(val);
       playerData.save();
-      AudioManager.getInstance().toggleSound(val); // [AUDIO] Применяем настройку
     });
-    currentY += itemHeight + 10;
 
-    // Toggle Music
-    this.createToggle(currentY, itemWidth, i18n.t('music'), data.settings.musicEnabled, (val) => {
+    // ===== MUSIC =====
+    y = this.createToggle(y, `🎵 ${i18n.t('music')}`, data.settings.musicEnabled, (val) => {
       data.settings.musicEnabled = val;
+      AudioManager.getInstance().setMusicEnabled(val);
       playerData.save();
-      AudioManager.getInstance().toggleMusic(val); // [AUDIO] Применяем настройку
     });
-    currentY += itemHeight + 10;
 
-    // Toggle Vibration
-    this.createToggle(currentY, itemWidth, i18n.t('vibration'), data.settings.vibrationEnabled, (val) => {
+    // ===== VIBRATION =====
+    y = this.createToggle(y, `📳 ${i18n.t('vibration')}`, data.settings.vibrationEnabled, (val) => {
       data.settings.vibrationEnabled = val;
+      if (val) {
+        try {
+          window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+        } catch (e) {}
+      }
       playerData.save();
-      // Тут можно добавить тестовую вибрацию, если включили
-      if (val) window.Telegram?.WebApp.HapticFeedback.notificationOccurred('success');
     });
-    currentY += itemHeight + 30;
 
-    // === ДАННЫЕ ===
-    this.createSectionTitle(currentY, 'Data');
-    currentY += 45;
-
-    new PremiumButton(this, {
-      x: width / 2,
-      y: currentY + 25,
-      width: itemWidth,
-      height: 55,
-      text: i18n.t('resetProgress'),
-      fontSize: 16,
-      style: 'secondary',
-      onClick: () => {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
-        this.showResetConfirmation();
-      },
-    });
+    // ===== SCREEN SCALE =====
+    y += 15;
+    this.createScreenScaleSlider(y);
   }
 
-  private createSectionTitle(y: number, title: string): void {
-    const { width } = this.cameras.main;
-    const colors = getColors();
-    
-    this.add.text(30, y, title.toUpperCase(), {
-      fontSize: '13px',
-      fontFamily: 'Arial',
-      color: hexToString(colors.uiAccent),
-      fontStyle: 'bold',
-    });
-    
-    const line = this.add.graphics();
-    line.lineStyle(1, colors.uiAccent, 0.2);
-    line.lineBetween(30, y + 20, width - 30, y + 20);
-  }
+  // ==================== LANGUAGE SELECTOR ====================
 
-  private createLanguageSelector(y: number, itemWidth: number): void {
+  private createLanguageSelector(y: number): number {
     const { width } = this.cameras.main;
     const colors = getColors();
     const currentLang = i18n.getLanguage();
 
-    const container = this.add.container(width / 2, y);
+    // Заголовок секции
+    this.add.text(30, y + 5, `🌍 ${i18n.t('language')}`, {
+      fontSize: '18px',
+      color: '#ffffff',
+    }).setOrigin(0, 0.5);
 
-    // Фон
-    const bg = this.add.graphics();
-    bg.fillStyle(0x12121f, 0.9);
-    bg.fillRoundedRect(-itemWidth / 2, 0, itemWidth, 70, 14);
-    bg.lineStyle(1, colors.uiPrimary, 0.3);
-    bg.strokeRoundedRect(-itemWidth / 2, 0, itemWidth, 70, 14);
-    container.add(bg);
+    // Контейнер для кнопок языков
+    const btnContainer = this.add.container(width - 30, y + 5);
 
-    const languages: Language[] = ['en', 'ru'];
-    const btnWidth = (itemWidth - 30) / 2;
+    const languages = i18n.getAvailableLanguages();
+    const btnWidth = 55;
+    const btnHeight = 36;
+    const gap = 8;
+    const totalWidth = languages.length * btnWidth + (languages.length - 1) * gap;
 
     languages.forEach((lang, i) => {
-      const x = -itemWidth / 2 + 15 + i * (btnWidth + 10) + btnWidth / 2;
-      const isActive = lang === currentLang;
+      const btnX = -totalWidth + i * (btnWidth + gap) + btnWidth / 2;
+      const isSelected = lang === currentLang;
 
-      const btnBg = this.add.graphics();
-      
-      const drawBtn = (hover: boolean) => {
-        btnBg.clear();
-        if (isActive) {
-          btnBg.fillStyle(colors.uiAccent, 0.3);
-          btnBg.fillRoundedRect(x - btnWidth / 2, 10, btnWidth, 50, 10);
-          btnBg.lineStyle(2, colors.uiAccent, 1);
-          btnBg.strokeRoundedRect(x - btnWidth / 2, 10, btnWidth, 50, 10);
+      const btn = this.add.container(btnX, 0);
+
+      const bg = this.add.graphics();
+      const drawBg = (hover: boolean) => {
+        bg.clear();
+        
+        if (isSelected) {
+          bg.fillStyle(colors.uiAccent, 0.3);
+          bg.fillRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 8);
+          bg.lineStyle(2, colors.uiAccent, 1);
         } else {
-          btnBg.fillStyle(0x1a1a2e, hover ? 0.9 : 0.6);
-          btnBg.fillRoundedRect(x - btnWidth / 2, 10, btnWidth, 50, 10);
-          btnBg.lineStyle(1, colors.uiTextSecondary, hover ? 0.5 : 0.2);
-          btnBg.strokeRoundedRect(x - btnWidth / 2, 10, btnWidth, 50, 10);
+          bg.fillStyle(0x1a1a2e, hover ? 0.8 : 0.6);
+          bg.fillRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 8);
+          bg.lineStyle(1.5, hover ? 0x4a4a5a : 0x3a3a4a, 1);
         }
+        bg.strokeRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 8);
       };
-      
-      drawBtn(false);
-      container.add(btnBg);
+      drawBg(false);
+      btn.add(bg);
 
       // Флаг
-      container.add(this.add.text(x - 25, 35, i18n.getLanguageFlag(lang), {
-        fontSize: '22px',
-      }).setOrigin(0.5, 0.5));
+      btn.add(this.add.text(0, 0, i18n.getLanguageFlag(lang), {
+        fontSize: '20px',
+      }).setOrigin(0.5));
 
-      // Название языка
-      container.add(this.add.text(x + 10, 35, i18n.getLanguageName(lang), {
-        fontSize: '14px',
-        color: isActive ? hexToString(colors.uiAccent) : '#aaaaaa',
-        fontStyle: 'bold',
-      }).setOrigin(0.5, 0.5));
+      // Интерактивность
+      const hitArea = this.add.rectangle(0, 0, btnWidth, btnHeight, 0x000000, 0)
+        .setInteractive({ useHandCursor: true });
+      btn.add(hitArea);
 
-      if (!isActive) {
-        const hitArea = this.add.rectangle(x, 35, btnWidth, 50, 0x000000, 0);
-        hitArea.setInteractive({ useHandCursor: true });
-        container.add(hitArea);
+      hitArea.on('pointerover', () => { if (!isSelected) drawBg(true); });
+      hitArea.on('pointerout', () => { if (!isSelected) drawBg(false); });
+      hitArea.on('pointerdown', () => {
+        if (!isSelected) {
+          AudioManager.getInstance().playSFX('sfx_click');
+          this.changeLanguage(lang);
+        }
+      });
 
-        hitArea.on('pointerover', () => drawBtn(true));
-        hitArea.on('pointerout', () => drawBtn(false));
-        hitArea.on('pointerdown', () => {
-          AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
-          i18n.setLanguage(lang);
-          this.scene.restart();
-        });
-      }
+      btnContainer.add(btn);
     });
+
+    return y + 60;
   }
 
-  private createToggle(
-    y: number, 
-    itemWidth: number, 
-    label: string, 
-    value: boolean, 
-    onChange: (val: boolean) => void
-  ): void {
+  private changeLanguage(lang: Language): void {
+    i18n.setLanguage(lang);
+    
+    // Синхронизируем с PlayerData
+    const data = playerData.get();
+    data.settings.language = lang;
+    playerData.save();
+
+    // Перезапускаем сцену для применения изменений
+    this.scene.restart();
+  }
+
+  // ==================== TOGGLES ====================
+
+  private createToggle(y: number, label: string, initialValue: boolean, onChange: (val: boolean) => void): number {
     const { width } = this.cameras.main;
     const colors = getColors();
 
-    const container = this.add.container(width / 2, y);
-
-    // Фон
-    const bg = this.add.graphics();
-    bg.fillStyle(0x12121f, 0.9);
-    bg.fillRoundedRect(-itemWidth / 2, 0, itemWidth, 55, 12);
-    bg.lineStyle(1, colors.uiPrimary, 0.2);
-    bg.strokeRoundedRect(-itemWidth / 2, 0, itemWidth, 55, 12);
-    container.add(bg);
-
     // Лейбл
-    container.add(this.add.text(-itemWidth / 2 + 20, 27, label, {
-      fontSize: '16px',
+    this.add.text(30, y + 25, label, {
+      fontSize: '18px',
       color: '#ffffff',
-    }).setOrigin(0, 0.5));
+    }).setOrigin(0, 0.5);
 
-    // Тоггл
-    const toggleX = itemWidth / 2 - 45;
-    const toggleWidth = 52;
-    const toggleHeight = 28;
+    // Переключатель
+    const toggleWidth = 60;
+    const toggleHeight = 30;
+    const toggleX = width - 50;
 
-    const toggle = this.add.graphics();
-    
-    const drawToggle = (on: boolean) => {
-      toggle.clear();
-      toggle.fillStyle(on ? colors.uiAccent : 0x3a3a4a, 1);
-      toggle.fillRoundedRect(toggleX - toggleWidth / 2, 27 - toggleHeight / 2, toggleWidth, toggleHeight, 14);
-      
-      // Круглый индикатор
-      const circleX = on ? toggleX + toggleWidth / 2 - 16 : toggleX - toggleWidth / 2 + 16;
-      toggle.fillStyle(0xffffff, 1);
-      toggle.fillCircle(circleX, 27, 10);
+    let isOn = initialValue;
+
+    const toggleBg = this.add.graphics();
+    const toggleCircle = this.add.circle(0, 0, 11, 0xffffff);
+
+    const drawToggle = () => {
+      toggleBg.clear();
+      toggleBg.fillStyle(isOn ? colors.uiAccent : 0x374151, 1);
+      toggleBg.fillRoundedRect(toggleX - toggleWidth / 2, y + 25 - toggleHeight / 2, toggleWidth, toggleHeight, 15);
+
+      toggleCircle.setPosition(
+        isOn ? toggleX + toggleWidth / 2 - 15 : toggleX - toggleWidth / 2 + 15,
+        y + 25
+      );
     };
-    
-    drawToggle(value);
-    container.add(toggle);
 
-    // Интерактивность
-    const hitArea = this.add.rectangle(toggleX, 27, toggleWidth + 20, toggleHeight + 10, 0x000000, 0);
+    drawToggle();
+
+    const hitArea = this.add.rectangle(toggleX, y + 25, toggleWidth + 20, toggleHeight + 20, 0x000000, 0);
     hitArea.setInteractive({ useHandCursor: true });
-    container.add(hitArea);
-
-    let currentValue = value;
 
     hitArea.on('pointerdown', () => {
-      AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
-      currentValue = !currentValue;
-      drawToggle(currentValue);
-      onChange(currentValue);
+      AudioManager.getInstance().playSFX('sfx_click');
+      isOn = !isOn;
+      drawToggle();
+      onChange(isOn);
     });
+
+    return y + 65;
   }
 
-  private showResetConfirmation(): void {
+  // ==================== SCREEN SCALE SLIDER ====================
+
+  private createScreenScaleSlider(y: number): void {
     const { width, height } = this.cameras.main;
     const colors = getColors();
 
-    // Overlay
-    const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.8);
-    overlay.setOrigin(0, 0).setDepth(300);
+    // Заголовок секции
+    this.add.text(width / 2, y, '📐 Screen Scale', {
+      fontSize: '20px',
+      fontFamily: 'Arial Black',
+      color: '#ffffff',
+    }).setOrigin(0.5);
 
-    this.confirmModal = this.add.container(width / 2, height / 2);
-    this.confirmModal.setDepth(301);
+    y += 35;
 
-    const modalWidth = 280;
-    const modalHeight = 180;
+    // Описание
+    this.add.text(width / 2, y, 'Adjust to remove black bars', {
+      fontSize: '12px',
+      color: '#888888',
+    }).setOrigin(0.5);
 
-    // Фон модала
+    y += 30;
+
+    // Слайдер
+    const sliderWidth = width - 100;
+    const sliderX = 50;
+    const sliderY = y;
+
+    // Фон слайдера
+    const sliderBg = this.add.graphics();
+    sliderBg.fillStyle(0x1a1a2e, 1);
+    sliderBg.fillRoundedRect(sliderX, sliderY, sliderWidth, 10, 5);
+    sliderBg.lineStyle(1, colors.uiAccent, 0.3);
+    sliderBg.strokeRoundedRect(sliderX, sliderY, sliderWidth, 10, 5);
+
+    // Заполнение слайдера
+    const sliderFill = this.add.graphics();
+
+    // Ручка слайдера
+    const handle = this.add.circle(0, sliderY + 5, 15, colors.uiAccent);
+    handle.setStrokeStyle(3, 0xffffff);
+
+    // Текст значения
+    this.scaleText = this.add.text(width / 2, sliderY + 40, '', {
+      fontSize: '16px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+
+    // Кнопки -/+
+    const minusBtn = this.createScaleButton(sliderX - 30, sliderY + 5, '-', () => {
+      this.screenScaleValue = Math.max(0.8, this.screenScaleValue - 0.05);
+      updateSlider();
+      this.applyScale();
+    });
+
+    const plusBtn = this.createScaleButton(sliderX + sliderWidth + 30, sliderY + 5, '+', () => {
+      this.screenScaleValue = Math.min(1.3, this.screenScaleValue + 0.05);
+      updateSlider();
+      this.applyScale();
+    });
+
+    // Обновление слайдера
+    const updateSlider = () => {
+      const minScale = 0.8;
+      const maxScale = 1.3;
+      const percent = (this.screenScaleValue - minScale) / (maxScale - minScale);
+      const handleX = sliderX + percent * sliderWidth;
+
+      handle.setPosition(handleX, sliderY + 5);
+
+      sliderFill.clear();
+      sliderFill.fillStyle(colors.uiAccent, 1);
+      sliderFill.fillRoundedRect(sliderX, sliderY, handleX - sliderX, 10, 5);
+
+      this.scaleText.setText(`${Math.round(this.screenScaleValue * 100)}%`);
+    };
+
+    // Интерактивность слайдера
+    const sliderHitArea = this.add.rectangle(sliderX + sliderWidth / 2, sliderY + 5, sliderWidth, 40, 0x000000, 0);
+    sliderHitArea.setInteractive({ useHandCursor: true, draggable: true });
+
+    sliderHitArea.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      this.updateScaleFromPointer(pointer.x, sliderX, sliderWidth);
+      updateSlider();
+      this.applyScale();
+    });
+
+    sliderHitArea.on('drag', (pointer: Phaser.Input.Pointer, dragX: number) => {
+      this.updateScaleFromPointer(dragX, sliderX, sliderWidth);
+      updateSlider();
+      this.applyScale();
+    });
+
+    // Инициализация
+    updateSlider();
+
+    // Превью
+    y += 80;
+    this.createPreview(y);
+
+    // Кнопка сброса
+    y += 150;
+    this.createResetButton(y, updateSlider);
+  }
+
+  private createScaleButton(x: number, y: number, text: string, onClick: () => void): Phaser.GameObjects.Container {
+    const colors = getColors();
+    const btn = this.add.container(x, y);
+
+    const bg = this.add.circle(0, 0, 20, 0x1a1a2e);
+    bg.setStrokeStyle(2, colors.uiAccent);
+    btn.add(bg);
+
+    btn.add(this.add.text(0, 0, text, {
+      fontSize: '24px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    btn.setInteractive(new Phaser.Geom.Circle(0, 0, 20), Phaser.Geom.Circle.Contains);
+    btn.on('pointerdown', () => {
+      AudioManager.getInstance().playSFX('sfx_click');
+      onClick();
+    });
+    btn.on('pointerover', () => bg.setFillStyle(colors.uiAccent, 0.3));
+    btn.on('pointerout', () => bg.setFillStyle(0x1a1a2e));
+
+    return btn;
+  }
+
+  private updateScaleFromPointer(x: number, sliderX: number, sliderWidth: number): void {
+    const minScale = 0.8;
+    const maxScale = 1.3;
+
+    let percent = (x - sliderX) / sliderWidth;
+    percent = Phaser.Math.Clamp(percent, 0, 1);
+
+    this.screenScaleValue = minScale + percent * (maxScale - minScale);
+    this.screenScaleValue = Math.round(this.screenScaleValue * 20) / 20;
+  }
+
+  private createPreview(y: number): void {
+    const { width } = this.cameras.main;
+    const colors = getColors();
+
+    this.add.text(width / 2, y, 'Preview:', {
+      fontSize: '14px',
+      color: '#888888',
+    }).setOrigin(0.5);
+
+    y += 20;
+
+    const previewWidth = 80;
+    const previewHeight = 140;
+
+    const frame = this.add.graphics();
+    frame.lineStyle(2, 0x666666);
+    frame.strokeRoundedRect(width / 2 - previewWidth / 2, y, previewWidth, previewHeight, 8);
+
+    this.previewRect = this.add.rectangle(
+      width / 2,
+      y + previewHeight / 2,
+      previewWidth * 0.9,
+      previewHeight * 0.9,
+      colors.uiAccent,
+      0.3
+    );
+    this.previewRect.setStrokeStyle(2, colors.uiAccent);
+
+    this.updatePreview();
+  }
+
+  private updatePreview(): void {
+    if (!this.previewRect) return;
+
+    const baseWidth = 72;
+    const baseHeight = 126;
+
+    const newWidth = baseWidth * this.screenScaleValue;
+    const newHeight = baseHeight * this.screenScaleValue;
+
+    this.previewRect.setSize(
+      Math.min(newWidth, 78),
+      Math.min(newHeight, 138)
+    );
+  }
+
+  private createResetButton(y: number, updateSlider: () => void): void {
+    const { width } = this.cameras.main;
+
+    const btn = this.add.container(width / 2, y);
+
     const bg = this.add.graphics();
-    bg.fillStyle(0x12121f, 1);
-    bg.fillRoundedRect(-modalWidth / 2, -modalHeight / 2, modalWidth, modalHeight, 16);
-    bg.lineStyle(2, 0xef4444, 0.6);
-    bg.strokeRoundedRect(-modalWidth / 2, -modalHeight / 2, modalWidth, modalHeight, 16);
-    this.confirmModal.add(bg);
+    bg.fillStyle(0x374151, 1);
+    bg.fillRoundedRect(-70, -20, 140, 40, 10);
+    bg.lineStyle(2, 0x6b7280);
+    bg.strokeRoundedRect(-70, -20, 140, 40, 10);
+    btn.add(bg);
 
-    // Иконка предупреждения
-    const warningIcon = this.add.graphics();
-    warningIcon.fillStyle(0xef4444, 1);
-    warningIcon.beginPath();
-    warningIcon.moveTo(0, -modalHeight / 2 + 40);
-    warningIcon.lineTo(-15, -modalHeight / 2 + 65);
-    warningIcon.lineTo(15, -modalHeight / 2 + 65);
-    warningIcon.closePath();
-    warningIcon.fillPath();
-    warningIcon.fillStyle(0x12121f, 1);
-    warningIcon.fillRect(-2, -modalHeight / 2 + 48, 4, 10);
-    warningIcon.fillCircle(0, -modalHeight / 2 + 60, 2);
-    this.confirmModal.add(warningIcon);
+    btn.add(this.add.text(0, 0, '↺ Reset to 100%', {
+      fontSize: '14px',
+      color: '#ffffff',
+    }).setOrigin(0.5));
 
-    // Текст
-    this.confirmModal.add(this.add.text(0, -10, i18n.t('confirmReset'), {
-      fontSize: '13px',
-      color: '#cccccc',
-      align: 'center',
-      wordWrap: { width: modalWidth - 40 },
-    }).setOrigin(0.5, 0.5));
+    btn.setInteractive(new Phaser.Geom.Rectangle(-70, -20, 140, 40), Phaser.Geom.Rectangle.Contains);
 
-    // Кнопки
-    const btnY = modalHeight / 2 - 40;
-    const btnWidth = 100;
-
-    // NO
-    const noBtn = this.createModalButton(-60, btnY, btnWidth, i18n.t('no'), 0x4a4a5a, () => {
-      AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
-      overlay.destroy();
-      this.confirmModal?.destroy();
-      this.confirmModal = null;
+    btn.on('pointerdown', () => {
+      AudioManager.getInstance().playSFX('sfx_click');
+      this.screenScaleValue = 1.0;
+      updateSlider();
+      this.applyScale();
+      this.updatePreview();
     });
-    this.confirmModal.add(noBtn);
 
-    // YES
-    const yesBtn = this.createModalButton(60, btnY, btnWidth, i18n.t('yes'), 0xef4444, () => {
-      AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
-      playerData.reset();
-      this.scene.start('MainMenuScene');
+    btn.on('pointerover', () => {
+      bg.clear();
+      bg.fillStyle(0x4b5563, 1);
+      bg.fillRoundedRect(-70, -20, 140, 40, 10);
+      bg.lineStyle(2, 0x9ca3af);
+      bg.strokeRoundedRect(-70, -20, 140, 40, 10);
     });
-    this.confirmModal.add(yesBtn);
 
-    // Анимация
-    this.confirmModal.setScale(0.9).setAlpha(0);
-    this.tweens.add({
-      targets: this.confirmModal,
-      scale: 1,
-      alpha: 1,
-      duration: 200,
-      ease: 'Back.easeOut',
+    btn.on('pointerout', () => {
+      bg.clear();
+      bg.fillStyle(0x374151, 1);
+      bg.fillRoundedRect(-70, -20, 140, 40, 10);
+      bg.lineStyle(2, 0x6b7280);
+      bg.strokeRoundedRect(-70, -20, 140, 40, 10);
     });
   }
 
-  private createModalButton(
-    x: number, 
-    y: number, 
-    w: number, 
-    text: string, 
-    color: number, 
-    onClick: () => void
-  ): Phaser.GameObjects.Container {
-    const container = this.add.container(x, y);
+  private applyScale(): void {
+    applyScreenScale(this.game, this.screenScaleValue);
+    this.updatePreview();
+  }
 
-    const bg = this.add.graphics();
-    
-    const draw = (hover: boolean) => {
-      bg.clear();
-      bg.fillStyle(color, hover ? 0.4 : 0.2);
-      bg.fillRoundedRect(-w / 2, -18, w, 36, 8);
-      bg.lineStyle(2, color, hover ? 1 : 0.6);
-      bg.strokeRoundedRect(-w / 2, -18, w, 36, 8);
-    };
-    
-    draw(false);
-    container.add(bg);
-
-    container.add(this.add.text(0, 0, text, {
-      fontSize: '14px',
-      color: hexToString(color),
-      fontStyle: 'bold',
-    }).setOrigin(0.5, 0.5));
-
-    const hitArea = this.add.rectangle(0, 0, w, 36, 0x000000, 0);
-    hitArea.setInteractive({ useHandCursor: true });
-    container.add(hitArea);
-
-    hitArea.on('pointerover', () => draw(true));
-    hitArea.on('pointerout', () => draw(false));
-    hitArea.on('pointerdown', onClick);
-
-    return container;
+  private saveSettings(): void {
+    const data = playerData.get();
+    data.settings.screenScale = this.screenScaleValue;
+    playerData.save();
   }
 }

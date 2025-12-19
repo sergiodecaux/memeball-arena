@@ -7,10 +7,8 @@ import {
   MAX_CAP_LEVEL 
 } from './SkinsCatalog';
 import { CapClass } from '../constants/gameConstants';
-import { Formation, FormationSlot } from '../types';
-import { AudioManager } from '../managers/AudioManager'; // [AUDIO] Импорт
-
-export type SkinRarity = 'basic' | 'common' | 'rare' | 'epic' | 'legendary';
+import { Formation, FormationSlot, SkinRarity } from '../types';
+import { AudioManager } from '../managers/AudioManager';
 
 export interface OwnedSkin {
   id: string;
@@ -53,7 +51,6 @@ export interface PlayerData {
   equippedBallSkin: string;
   equippedFieldSkin: string;
   
-  // Расстановки (новый формат со слотами)
   selectedFormation: string;
   customFormations: Formation[];
   
@@ -63,6 +60,7 @@ export interface PlayerData {
     musicEnabled: boolean;
     vibrationEnabled: boolean;
     language: string;
+    screenScale: number;  // НОВОЕ: масштаб экрана (0.8 - 1.3)
   };
 }
 
@@ -174,6 +172,7 @@ function createDefaultPlayerData(): PlayerData {
       musicEnabled: true,
       vibrationEnabled: true,
       language: 'en',
+      screenScale: 1.0,  // НОВОЕ: по умолчанию 100%
     },
   };
 }
@@ -191,14 +190,11 @@ export function getRankByLevel(level: number): { name: string; icon: string; col
   return { name: 'Bronze', icon: '🥉', color: 0xcd7f32 };
 }
 
-// Хелпер для конвертации старого формата в новый
 function convertOldFormationToNew(oldFormation: any): Formation {
-  // Если уже новый формат
   if (oldFormation.slots) {
     return oldFormation as Formation;
   }
   
-  // Конвертируем старый формат с positions
   const slots: FormationSlot[] = (oldFormation.positions || []).map((pos: any, i: number) => ({
     id: `slot_${i}`,
     x: pos.x,
@@ -229,7 +225,6 @@ class PlayerDataManager {
         const parsed = JSON.parse(saved);
         this.migrateData(parsed);
         
-        // [AUDIO] Применяем настройки к менеджеру звука сразу при загрузке
         if (parsed.settings) {
           AudioManager.getInstance().loadSettings(parsed.settings);
         }
@@ -244,7 +239,6 @@ class PlayerDataManager {
     console.log('📂 Creating new player data');
     const newData = createDefaultPlayerData();
     
-    // [AUDIO] Применяем дефолтные настройки
     AudioManager.getInstance().loadSettings(newData.settings);
 
     this.data = newData;
@@ -272,7 +266,6 @@ class PlayerDataManager {
       data.customFormations = [];
     }
 
-    // Конвертируем кастомные формации в новый формат
     data.customFormations = data.customFormations.map(convertOldFormationToNew);
 
     // Миграция настроек
@@ -282,13 +275,17 @@ class PlayerDataManager {
         musicEnabled: true,
         vibrationEnabled: true,
         language: 'en',
+        screenScale: 1.0,
       };
     }
     if (!data.settings.language) {
       data.settings.language = 'en';
     }
+    // НОВОЕ: миграция screenScale
+    if (data.settings.screenScale === undefined) {
+      data.settings.screenScale = 1.0;
+    }
 
-    // Удаляем старые данные
     delete data.capUpgrades;
 
     // Миграция статистики
@@ -426,15 +423,12 @@ class PlayerDataManager {
   // ==================== ФОРМАЦИИ ====================
 
   getSelectedFormation(): Formation {
-    // Ищем в предустановленных
     const preset = DEFAULT_FORMATIONS.find(f => f.id === this.data.selectedFormation);
     if (preset) {
-      // Возвращаем копию с возможными изменёнными классами из кастомных
       const customized = this.data.customFormations.find(f => f.id === preset.id);
       return customized || preset;
     }
 
-    // Ищем в кастомных
     const custom = this.data.customFormations.find(f => f.id === this.data.selectedFormation);
     if (custom) return custom;
 
@@ -446,24 +440,18 @@ class PlayerDataManager {
     this.save();
   }
 
-  /**
-   * Изменить класс фишки в слоте формации
-   */
   setSlotClass(formationId: string, slotId: string, capClass: CapClass): void {
-    // Ищем формацию в кастомных
     let formation = this.data.customFormations.find(f => f.id === formationId);
 
-    // Если это дефолтная формация — копируем её в кастомные для персонализации
     if (!formation) {
       const preset = DEFAULT_FORMATIONS.find(f => f.id === formationId);
       if (!preset) return;
 
-      // Делаем глубокую копию
       formation = {
         id: preset.id,
         name: preset.name,
         slots: preset.slots.map(s => ({ ...s })),
-        isCustom: false, // Помечаем как изменённый пресет
+        isCustom: false,
       };
       this.data.customFormations.push(formation);
     }
@@ -475,9 +463,6 @@ class PlayerDataManager {
     }
   }
 
-  /**
-   * Изменить класс фишки в активной формации
-   */
   setActiveFormationSlotClass(slotId: string, capClass: CapClass): void {
     this.setSlotClass(this.data.selectedFormation, slotId, capClass);
   }
@@ -510,7 +495,6 @@ class PlayerDataManager {
   }
 
   getAllFormations(): Formation[] {
-    // Объединяем дефолтные и кастомные, с приоритетом кастомных
     const result: Formation[] = [];
 
     DEFAULT_FORMATIONS.forEach(preset => {
@@ -518,7 +502,6 @@ class PlayerDataManager {
       result.push(customized || preset);
     });
 
-    // Добавляем чисто кастомные (с id начинающимся на 'custom_')
     this.data.customFormations
       .filter(f => f.id.startsWith('custom_'))
       .forEach(f => result.push(f));
@@ -587,6 +570,17 @@ class PlayerDataManager {
     return this.data.achievements.some(a => a.id === id);
   }
 
+  // ==================== НАСТРОЙКИ ЭКРАНА ====================
+
+  setScreenScale(scale: number): void {
+    this.data.settings.screenScale = Phaser.Math.Clamp(scale, 0.8, 1.3);
+    this.save();
+  }
+
+  getScreenScale(): number {
+    return this.data.settings.screenScale || 1.0;
+  }
+
   // ==================== СБРОС ====================
 
   reset(): void {
@@ -597,5 +591,4 @@ class PlayerDataManager {
 
 export const playerData = new PlayerDataManager();
 
-// Реэкспорт Formation для совместимости
 export type { Formation, FormationSlot } from '../types';

@@ -100,26 +100,25 @@ export class ShootingController {
     const { x: capX, y: capY } = cap.body.position;
     this.aimGraphics.clear();
 
-    // Линия прицеливания
     const aimDirection = dragVector.clone().normalize().negate();
     const aimLength = distance * 1.5 * cap.getAimLineLength();
 
     this.aimGraphics.lineStyle(SHOOTING.AIM_LINE_WIDTH, SHOOTING.AIM_LINE_COLOR, SHOOTING.AIM_LINE_ALPHA);
     this.aimGraphics.lineBetween(capX, capY, capX + aimDirection.x * aimLength, capY + aimDirection.y * aimLength);
 
-    // Точки траектории
     this.drawTrajectoryDots(capX, capY, aimDirection);
 
-    // Индикатор силы
+    // ИСПРАВЛЕНО: используем правильный формат для интерполяции цвета
     const powerRatio = distance / SHOOTING.MAX_DRAG_DISTANCE;
-    const color = Phaser.Display.Color.Interpolate.ColorWithColor(
-      { r: 100, g: 255, b: 100, a: 255 },
-      { r: 255, g: 50, b: 50, a: 255 },
-      100,
-      powerRatio * 100
-    );
+    
+    // Интерполяция от зелёного к красному
+    const r = Math.floor(100 + (255 - 100) * powerRatio);
+    const g = Math.floor(255 + (50 - 255) * powerRatio);
+    const b = Math.floor(100 + (50 - 100) * powerRatio);
+    
+    const color = Phaser.Display.Color.GetColor(r, g, b);
 
-    this.aimGraphics.lineStyle(4, Phaser.Display.Color.GetColor(color.r, color.g, color.b), 0.8);
+    this.aimGraphics.lineStyle(4, color, 0.8);
     this.aimGraphics.strokeCircle(capX, capY, cap.getRadius() + 8);
   }
 

@@ -3,10 +3,10 @@
 import Phaser from 'phaser';
 import { getColors, hexToString } from '../config/themes';
 import { playerData, getRankByLevel } from '../data/PlayerData';
-import { i18n } from '../localization/i18n';
+import { i18n, Language } from '../localization/i18n';
 import { Icons } from '../ui/Icons';
 import { AIDifficulty } from '../types';
-import { AudioManager } from '../managers/AudioManager'; // [AUDIO]
+import { AudioManager } from '../managers/AudioManager';
 
 interface ButtonStyle {
   bgTop: number;
@@ -34,13 +34,11 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
-    // [AUDIO] Инициализация звука
     const audio = AudioManager.getInstance();
     audio.init(this);
     
-    // ФИКС: Останавливаем только шум стадиона, если вернулись из матча.
-    // Музыка меню не прервется, если она уже играет (логика внутри playMusic).
-    audio.stopAmbience(); 
+    // ИСПРАВЛЕНИЕ БАГА 1: Останавливаем ВСЕ звуки перед запуском музыки меню
+    audio.stopAll();
     audio.playMusic('bgm_menu'); 
 
     this.resetState();
@@ -51,6 +49,11 @@ export class MainMenuScene extends Phaser.Scene {
     this.createMainButtons();
     this.createFooter();
     this.startAmbientAnimations();
+
+    // ИСПРАВЛЕНИЕ БАГА 2: Проверка первого запуска для выбора языка
+    if (i18n.isFirstLaunch()) {
+      this.time.delayedCall(300, () => this.showLanguageSelection(true));
+    }
   }
 
   private resetState(): void {
@@ -70,13 +73,8 @@ export class MainMenuScene extends Phaser.Scene {
     bg.fillStyle(0x08080f, 1);
     bg.fillRect(0, 0, width, height);
 
-    // Радиальное свечение
     this.drawRadialGradient(bg, width / 2, height * 0.35, 400, colors.uiPrimary, 0.12);
-    
-    // Нижний градиент
     this.drawVerticalGradient(bg, 0, height - 150, width, 150, colors.uiAccent, 0.06, 'up');
-
-    // Сетка
     this.drawGrid(60, 0x1a1a2a, 0.4);
     this.createParticles();
   }
@@ -145,7 +143,6 @@ export class MainMenuScene extends Phaser.Scene {
     const colors = getColors();
     const logoY = 70;
 
-    // Свечение
     const logoGlow = this.add.graphics();
     logoGlow.fillStyle(colors.uiPrimary, 0.08);
     logoGlow.fillEllipse(width / 2, logoY, 260, 70);
@@ -161,10 +158,8 @@ export class MainMenuScene extends Phaser.Scene {
       ease: 'Sine.easeInOut',
     });
 
-    // Тень и текст
     this.createTextWithShadow(width / 2, logoY, 'MEMEBALL', '38px', 'Arial Black, Arial');
 
-    // Подзаголовок
     const subtitleY = logoY + 32;
     this.createSubtitleDecorations(width / 2, subtitleY, colors.uiAccent);
     
@@ -211,7 +206,6 @@ export class MainMenuScene extends Phaser.Scene {
 
     const container = this.add.container(width / 2, badgeY);
 
-    // Фон
     const bg = this.add.graphics();
     bg.fillStyle(0x000000, 0.3);
     bg.fillRoundedRect(-badgeW / 2 + 3, 3, badgeW, badgeH, 28);
@@ -221,7 +215,6 @@ export class MainMenuScene extends Phaser.Scene {
     bg.strokeRoundedRect(-badgeW / 2, 0, badgeW, badgeH, 28);
     container.add(bg);
 
-    // Аватар
     const avatarX = -badgeW / 2 + 32;
     const avatarY = badgeH / 2;
     
@@ -247,7 +240,6 @@ export class MainMenuScene extends Phaser.Scene {
 
     container.add(Icons.drawProfile(this, avatarX, avatarY, 14, 0xffffff));
 
-    // Информация
     const infoX = avatarX + 35;
     container.add(this.add.text(infoX, avatarY - 8, data.username, {
       fontSize: '14px',
@@ -261,7 +253,6 @@ export class MainMenuScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0, 0.5));
 
-    // Win rate
     const winRate = data.stats.gamesPlayed > 0 
       ? Math.round((data.stats.wins / data.stats.gamesPlayed) * 100) 
       : 0;
@@ -272,13 +263,12 @@ export class MainMenuScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    // Интерактивность
     const hitArea = this.add.rectangle(0, badgeH / 2, badgeW, badgeH, 0x000000, 0)
       .setInteractive({ useHandCursor: true })
       .on('pointerover', () => container.setScale(1.03))
       .on('pointerout', () => container.setScale(1))
       .on('pointerdown', () => {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.scene.start('ProfileScene');
       });
     container.add(hitArea);
@@ -300,7 +290,6 @@ export class MainMenuScene extends Phaser.Scene {
     bg.strokeRoundedRect(-125, -22, 125, 50, 12);
     container.add(bg);
 
-    // Coins
     container.add(Icons.drawCoin(this, -105, -6, 14));
     container.add(this.add.text(-85, -6, this.formatNumber(data.coins), {
       fontSize: '13px',
@@ -308,7 +297,6 @@ export class MainMenuScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0, 0.5));
 
-    // Stars
     container.add(Icons.drawStar(this, -105, 16, 8, 0xff69b4, true));
     container.add(this.add.text(-85, 16, this.formatNumber(data.stars), {
       fontSize: '13px',
@@ -316,7 +304,6 @@ export class MainMenuScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0, 0.5));
 
-    // Plus button
     const plusBtn = this.createPlusButton(colors.uiAccent);
     plusBtn.setPosition(-15, 3);
     container.add(plusBtn);
@@ -342,7 +329,7 @@ export class MainMenuScene extends Phaser.Scene {
       .on('pointerover', () => btn.setScale(1.15))
       .on('pointerout', () => btn.setScale(1))
       .on('pointerdown', () => {
-        AudioManager.getInstance().playSFX('sfx_cash'); // [AUDIO] Звук монет
+        AudioManager.getInstance().playSFX('sfx_cash');
         playerData.addCoins(100);
         this.scene.restart();
       });
@@ -385,7 +372,6 @@ export class MainMenuScene extends Phaser.Scene {
       container.removeAll(true);
       const yOff = isPressed ? 2 : 0;
 
-      // Тень
       if (!isPressed) {
         const shadow = this.add.graphics();
         shadow.fillStyle(0x000000, 0.35);
@@ -393,7 +379,6 @@ export class MainMenuScene extends Phaser.Scene {
         container.add(shadow);
       }
 
-      // Фон
       const bg = this.add.graphics();
       bg.fillStyle(config.style.bgBottom, 1);
       bg.fillRoundedRect(-w / 2, -h / 2 + yOff, w, h, 14);
@@ -409,7 +394,6 @@ export class MainMenuScene extends Phaser.Scene {
       bg.strokeRoundedRect(-w / 2, -h / 2 + yOff, w, h, 14);
       container.add(bg);
 
-      // Glow при hover
       if (isHovered && !isPressed) {
         const glow = this.add.graphics();
         for (let i = 3; i >= 1; i--) {
@@ -419,7 +403,6 @@ export class MainMenuScene extends Phaser.Scene {
         container.addAt(glow, 0);
       }
 
-      // Иконка и текст
       container.add(config.iconDraw(this, -w / 2 + 38, yOff, 16, 0xffffff));
       
       const label = this.add.text(5, yOff, config.text, {
@@ -438,7 +421,7 @@ export class MainMenuScene extends Phaser.Scene {
       .on('pointerout', () => { isHovered = false; isPressed = false; redraw(); this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 100 }); })
       .on('pointerdown', () => { isPressed = true; redraw(); container.setScale(0.98); })
       .on('pointerup', () => { 
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO] Клик
+        AudioManager.getInstance().playSFX('sfx_click');
         isPressed = false; 
         redraw(); 
         container.setScale(1.02); 
@@ -462,12 +445,134 @@ export class MainMenuScene extends Phaser.Scene {
     line.fillCircle(width - 25, height - 40, 2);
   }
 
-  // ==================== MODALS ====================
+  // ==================== LANGUAGE SELECTION (FIRST LAUNCH) ====================
+
+  private showLanguageSelection(isFirstLaunch: boolean = false): void {
+    if (this.modalContainer || this.isTransitioning) return;
+    this.isTransitioning = true;
+    AudioManager.getInstance().playSFX('sfx_swish');
+
+    const { width, height } = this.cameras.main;
+    const colors = getColors();
+
+    this.createOverlay();
+    
+    // Если первый запуск — оверлей нельзя закрыть кликом
+    if (isFirstLaunch && this.overlay) {
+      this.overlay.removeAllListeners();
+    }
+
+    this.modalContainer = this.createModalContainer(280, 280);
+
+    // Заголовок
+    this.modalContainer.add(this.add.text(0, -110, '🌍', {
+      fontSize: '36px',
+    }).setOrigin(0.5));
+
+    this.modalContainer.add(this.add.text(0, -65, i18n.t('selectLanguage'), {
+      fontSize: '20px',
+      fontFamily: 'Arial Black',
+      color: '#ffffff',
+    }).setOrigin(0.5));
+
+    // Кнопки языков
+    const languages = i18n.getAvailableLanguages();
+    const currentLang = i18n.getLanguage();
+
+    languages.forEach((lang, i) => {
+      this.createLanguageButton(0, -5 + i * 70, 230, 58, lang, lang === currentLang, isFirstLaunch);
+    });
+
+    this.animateModalIn();
+  }
+
+  private createLanguageButton(x: number, y: number, w: number, h: number, lang: Language, isSelected: boolean, isFirstLaunch: boolean): void {
+    const container = this.add.container(x, y);
+    this.modalContainer!.add(container);
+
+    const colors = getColors();
+    const flag = i18n.getLanguageFlag(lang);
+    const name = i18n.getLanguageName(lang);
+
+    const bg = this.add.graphics();
+    const drawBg = (hover: boolean) => {
+      bg.clear();
+      
+      const baseColor = isSelected ? colors.uiAccent : 0x2a2a3a;
+      const borderColor = isSelected ? colors.uiAccent : (hover ? 0x4a4a5a : 0x3a3a4a);
+      
+      if (!hover) {
+        bg.fillStyle(0x000000, 0.2);
+        bg.fillRoundedRect(-w / 2 + 2, -h / 2 + 3, w, h, 12);
+      }
+      
+      bg.fillStyle(baseColor, isSelected ? 0.25 : 0.15);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+      bg.lineStyle(2, borderColor, hover || isSelected ? 0.9 : 0.5);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
+    };
+    drawBg(false);
+    container.add(bg);
+
+    // Флаг
+    container.add(this.add.text(-w / 2 + 35, 0, flag, {
+      fontSize: '28px',
+    }).setOrigin(0.5));
+
+    // Название языка
+    container.add(this.add.text(-w / 2 + 75, 0, name, {
+      fontSize: '18px',
+      fontFamily: 'Arial Black',
+      color: isSelected ? hexToString(colors.uiAccent) : '#ffffff',
+    }).setOrigin(0, 0.5));
+
+    // Галочка если выбран
+    if (isSelected) {
+      container.add(this.add.text(w / 2 - 30, 0, '✓', {
+        fontSize: '20px',
+        color: hexToString(colors.uiAccent),
+        fontStyle: 'bold',
+      }).setOrigin(0.5));
+    }
+
+    const hitArea = this.add.rectangle(0, 0, w, h, 0x000000, 0).setInteractive({ useHandCursor: true });
+    container.add(hitArea);
+
+    hitArea.on('pointerover', () => { drawBg(true); container.setScale(1.02); });
+    hitArea.on('pointerout', () => { drawBg(false); container.setScale(1); });
+    hitArea.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      p.event.stopPropagation();
+      if (!this.isTransitioning) {
+        AudioManager.getInstance().playSFX('sfx_click');
+        this.selectLanguage(lang, isFirstLaunch);
+      }
+    });
+  }
+
+  private selectLanguage(lang: Language, isFirstLaunch: boolean): void {
+    i18n.setLanguage(lang);
+    
+    // Синхронизируем с PlayerData
+    const data = playerData.get();
+    data.settings.language = lang;
+    playerData.save();
+
+    if (isFirstLaunch) {
+      i18n.setFirstLaunchComplete();
+    }
+
+    this.closeModal(() => {
+      // Перезапускаем сцену для применения нового языка
+      this.scene.restart();
+    });
+  }
+
+  // ==================== MODE SELECTION ====================
 
   private showModeSelection(): void {
     if (this.modalContainer || this.isTransitioning) return;
     this.isTransitioning = true;
-    AudioManager.getInstance().playSFX('sfx_swish'); // [AUDIO]
+    AudioManager.getInstance().playSFX('sfx_swish');
 
     const { width, height } = this.cameras.main;
     const colors = getColors();
@@ -475,14 +580,12 @@ export class MainMenuScene extends Phaser.Scene {
     this.createOverlay();
     this.modalContainer = this.createModalContainer(290, 380);
 
-    // Заголовок
     this.modalContainer.add(this.add.text(0, -160, i18n.t('selectMode'), {
       fontSize: '20px',
       fontFamily: 'Arial Black',
       color: '#ffffff',
     }).setOrigin(0.5));
 
-    // Кнопки режимов
     const modes = [
       { title: i18n.t('vsAI'), desc: i18n.t('vsAIDesc'), icon: Icons.drawRobot, color: colors.uiAccent, onClick: () => this.showDifficultySelection() },
       { title: i18n.t('pvp'), desc: i18n.t('pvpDesc'), icon: Icons.drawPlayers, color: colors.uiPrimary, onClick: () => this.closeModal(() => this.scene.start('GameScene', { vsAI: false })) },
@@ -497,7 +600,7 @@ export class MainMenuScene extends Phaser.Scene {
   private showDifficultySelection(): void {
     if (this.isTransitioning) return;
     this.isTransitioning = true;
-    AudioManager.getInstance().playSFX('sfx_swish'); // [AUDIO]
+    AudioManager.getInstance().playSFX('sfx_swish');
 
     this.tweens.add({
       targets: this.modalContainer,
@@ -515,26 +618,23 @@ export class MainMenuScene extends Phaser.Scene {
     const colors = getColors();
     this.modalContainer = this.createModalContainer(290, 340);
 
-    // Кнопка назад
     const backBtn = this.add.container(-115, -140);
     backBtn.add(Icons.drawBack(this, 0, 0, 10, colors.uiAccent));
     const backHit = this.add.circle(0, 0, 18, 0x000000, 0).setInteractive({ useHandCursor: true });
     backHit.on('pointerdown', (p: Phaser.Input.Pointer) => { 
       p.event.stopPropagation(); 
-      AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+      AudioManager.getInstance().playSFX('sfx_click');
       this.backToModeSelection(); 
     });
     backBtn.add(backHit);
     this.modalContainer.add(backBtn);
 
-    // Заголовок
     this.modalContainer.add(this.add.text(15, -140, i18n.t('selectDifficulty'), {
       fontSize: '18px',
       fontFamily: 'Arial Black',
       color: '#ffffff',
     }).setOrigin(0.5));
 
-    // Кнопки сложности
     const difficulties: { id: AIDifficulty; name: string; desc: string; color: number; icon: typeof Icons.drawStar }[] = [
       { id: 'easy', name: i18n.t('easy'), desc: i18n.t('easyDesc'), color: 0x4ade80, icon: Icons.drawStar },
       { id: 'medium', name: i18n.t('medium'), desc: i18n.t('mediumDesc'), color: 0xfbbf24, icon: Icons.drawFire },
@@ -561,13 +661,11 @@ export class MainMenuScene extends Phaser.Scene {
     const colors = getColors();
     const container = this.add.container(width / 2, height / 2).setDepth(200);
 
-    // Тень
     const shadow = this.add.graphics();
     shadow.fillStyle(0x000000, 0.4);
     shadow.fillRoundedRect(-w / 2 + 5, -h / 2 + 7, w, h, 18);
     container.add(shadow);
 
-    // Фон
     const bg = this.add.graphics();
     bg.fillStyle(0x0f0f18, 0.98);
     bg.fillRoundedRect(-w / 2, -h / 2, w, h, 18);
@@ -636,7 +734,7 @@ export class MainMenuScene extends Phaser.Scene {
     hitArea.on('pointerdown', (p: Phaser.Input.Pointer) => {
       p.event.stopPropagation();
       if (!this.isTransitioning) {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         config.onClick();
       }
     });
@@ -685,7 +783,7 @@ export class MainMenuScene extends Phaser.Scene {
     hitArea.on('pointerdown', (p: Phaser.Input.Pointer) => {
       p.event.stopPropagation();
       if (!this.isTransitioning) {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.closeModal(() => this.scene.start('GameScene', { vsAI: true, difficulty: diff.id }));
       }
     });
@@ -723,7 +821,7 @@ export class MainMenuScene extends Phaser.Scene {
     };
 
     if (this.modalContainer) {
-      AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+      AudioManager.getInstance().playSFX('sfx_click');
       this.tweens.add({ targets: this.modalContainer, scale: 0.9, alpha: 0, duration: 150 });
     }
 

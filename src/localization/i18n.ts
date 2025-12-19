@@ -145,6 +145,11 @@ const translations: Record<Language, Translations> = {
     dragToShoot: 'Drag a cap to shoot!',
     aiThinking: 'AI is thinking...',
     
+    // Выбор языка
+    selectLanguage: 'Select Language',
+    languageChanged: 'Language Changed',
+    restartToApply: 'Some changes will apply after restart',
+    
     // Общее
     back: 'Back',
     level: 'Level',
@@ -297,6 +302,11 @@ const translations: Record<Language, Translations> = {
     dragToShoot: 'Тяните фишку для удара!',
     aiThinking: 'ИИ думает...',
     
+    // Выбор языка
+    selectLanguage: 'Выберите язык',
+    languageChanged: 'Язык изменён',
+    restartToApply: 'Некоторые изменения применятся после перезапуска',
+    
     // Общее
     back: 'Назад',
     level: 'Уровень',
@@ -311,6 +321,9 @@ const translations: Record<Language, Translations> = {
     comingSoon: 'Скоро',
   },
 };
+
+// Ключ для хранения флага первого запуска
+const FIRST_LAUNCH_KEY = 'memeball_first_launch_complete';
 
 class I18n {
   private currentLanguage: Language = 'en';
@@ -358,6 +371,30 @@ class I18n {
     switch (lang) {
       case 'en': return '🇬🇧';
       case 'ru': return '🇷🇺';
+    }
+  }
+
+  // Получить все доступные языки
+  getAvailableLanguages(): Language[] {
+    return ['en', 'ru'];
+  }
+
+  // Проверка первого запуска
+  isFirstLaunch(): boolean {
+    try {
+      const completed = localStorage.getItem(FIRST_LAUNCH_KEY);
+      return completed !== 'true';
+    } catch (e) {
+      return true;
+    }
+  }
+
+  // Отметить первый запуск как завершённый
+  setFirstLaunchComplete(): void {
+    try {
+      localStorage.setItem(FIRST_LAUNCH_KEY, 'true');
+    } catch (e) {
+      console.warn('Could not save first launch state');
     }
   }
 }

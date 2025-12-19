@@ -3,55 +3,59 @@
 import Phaser from 'phaser';
 import { gameConfig } from './config/gameConfig';
 
-// Ждём загрузку DOM
 const startGame = () => {
   const tg = (window as any).Telegram?.WebApp;
   
   if (tg) {
-    // Инициализация Telegram Mini App
-    tg.ready();
-    tg.expand();
+    try {
+      tg.ready();
+    } catch (e) {
+      console.warn('tg.ready() failed:', e);
+    }
     
-    // Отключаем вертикальные свайпы (чтобы не закрывалось приложение)
-    tg.disableVerticalSwipes?.();
+    try {
+      tg.expand();
+    } catch (e) {
+      console.warn('tg.expand() failed:', e);
+    }
     
-    // Устанавливаем цвет хедера
-    tg.setHeaderColor('#0a0a12');
-    tg.setBackgroundColor('#0a0a12');
+    // Эти функции могут не поддерживаться в старых версиях
+    try {
+      if (tg.disableVerticalSwipes) {
+        tg.disableVerticalSwipes();
+      }
+    } catch (e) {
+      console.warn('disableVerticalSwipes not supported');
+    }
     
-    console.log('Telegram WebApp initialized:', {
-      platform: tg.platform,
-      viewportWidth: tg.viewportWidth,
-      viewportHeight: tg.viewportHeight,
-      viewportStableHeight: tg.viewportStableHeight
-    });
+    try {
+      if (tg.setHeaderColor) {
+        tg.setHeaderColor('#0a0a12');
+      }
+    } catch (e) {
+      console.warn('setHeaderColor not supported');
+    }
+    
+    try {
+      if (tg.setBackgroundColor) {
+        tg.setBackgroundColor('#0a0a12');
+      }
+    } catch (e) {
+      console.warn('setBackgroundColor not supported');
+    }
   }
   
   // Создаём игру
   const game = new Phaser.Game(gameConfig);
   
-  // Обработка изменения размера окна в Telegram
-  if (tg) {
-    tg.onEvent('viewportChanged', (event: { isStateStable: boolean }) => {
-      if (event.isStateStable) {
-        game.scale.resize(tg.viewportWidth, tg.viewportStableHeight);
-      }
-    });
-  }
-  
-  // Fallback для обычного браузера
-  window.addEventListener('resize', () => {
-    if (!tg) {
-      game.scale.resize(window.innerWidth, window.innerHeight);
-    }
-  });
-  
   return game;
 };
 
-// Запуск
-if (document.readyState === 'complete') {
-  startGame();
+// Запуск после загрузки DOM
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  setTimeout(startGame, 100);
 } else {
-  window.addEventListener('load', startGame);
+  window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(startGame, 100);
+  });
 }

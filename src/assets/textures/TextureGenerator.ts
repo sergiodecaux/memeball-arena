@@ -9,8 +9,11 @@ export class TextureGenerator {
     this.scene = scene;
   }
 
+  // ИСПРАВЛЕНО: используем add.graphics() вместо make.graphics()
   protected createGraphics(): Phaser.GameObjects.Graphics {
-    return this.scene.make.graphics({ x: 0, y: 0, add: false });
+    const g = this.scene.add.graphics();
+    g.setVisible(false);  // Скрываем, так как используем только для генерации текстур
+    return g;
   }
 
   protected drawHexagon(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, fill = false): void {
@@ -46,7 +49,6 @@ export class TextureGenerator {
       const x2 = cx + Math.cos(angle) * size;
       const y2 = cy + Math.sin(angle) * size;
       g.lineBetween(cx, cy, x2, y2);
-      // Веточки
       const bx = cx + Math.cos(angle) * size * 0.6;
       const by = cy + Math.sin(angle) * size * 0.6;
       g.lineBetween(bx, by, bx + Math.cos(angle + 0.5) * size * 0.3, by + Math.sin(angle + 0.5) * size * 0.3);
@@ -55,7 +57,6 @@ export class TextureGenerator {
   }
 
   protected drawLightning(g: Phaser.GameObjects.Graphics, x1: number, y1: number, x2: number, y2: number, segments: number = 5): void {
-    let px = x1, py = y1;
     const dx = (x2 - x1) / segments;
     const dy = (y2 - y1) / segments;
     

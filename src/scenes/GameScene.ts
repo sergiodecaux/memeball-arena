@@ -18,7 +18,7 @@ import { FormationMenu } from '../ui/game/FormationMenu';
 import { ResultScreen } from '../ui/game/ResultScreen';
 import { InGameSettings } from '../ui/game/InGameSettings';
 import { playerData } from '../data/PlayerData';
-import { AudioManager } from '../managers/AudioManager'; // [AUDIO]
+import { AudioManager } from '../managers/AudioManager';
 
 export class GameScene extends Phaser.Scene {
   // Field
@@ -75,12 +75,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
-    // [AUDIO] Инициализация звука
+    // Инициализация звука
     const audio = AudioManager.getInstance();
     audio.init(this);
     audio.stopMusic(); // Останавливаем музыку меню
     audio.playAmbience('bgm_match'); // Включаем шум стадиона
-    audio.playSFX('sfx_whistle');    // Стартовый свисток
+    audio.playSFX('sfx_whistle'); // Стартовый свисток
 
     this.matchController = new MatchController();
     this.calculateFieldBounds();
@@ -127,7 +127,6 @@ export class GameScene extends Phaser.Scene {
 
     this.shootingController.setCurrentPlayer(1);
     this.shootingController.onShoot(() => {
-      // [AUDIO] Звук натяжения или удара обрабатывается в коллизиях, но можно добавить 'sfx_swish' тут
       this.isProcessingTurn = true;
       this.gameStateManager.onShot();
     });
@@ -202,7 +201,7 @@ export class GameScene extends Phaser.Scene {
         const bodyA = pair.bodyA;
         const bodyB = pair.bodyB;
 
-        // [AUDIO] Обработка звуков столкновений
+        // Обработка звуков столкновений
         const soundPlayed = this.handleCollisionSound(bodyA, bodyB);
         if (soundPlayed) {
           this.lastCollisionTime = now;
@@ -222,7 +221,7 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // [AUDIO] Новая логика для расчета громкости и типа звука
+  // Логика для расчета громкости и типа звука
   private handleCollisionSound(bodyA: MatterJS.BodyType, bodyB: MatterJS.BodyType): boolean {
     const isBallA = bodyA.label === 'ball';
     const isBallB = bodyB.label === 'ball';
@@ -297,7 +296,7 @@ export class GameScene extends Phaser.Scene {
     const speed = this.ballSpeedBeforeCollision;
     if (speed < 1) return;
 
-    // [AUDIO] Звук штанги
+    // Звук штанги
     const audio = AudioManager.getInstance();
     const volume = Phaser.Math.Clamp(speed / 15, 0.4, 1.0);
     audio.playSFX('sfx_post', { volume });
@@ -368,7 +367,7 @@ export class GameScene extends Phaser.Scene {
     this.goalDetector.update();
     this.checkBoundaries();
 
-    // [AUDIO] Динамическая громкость толпы
+    // Динамическая громкость толпы
     this.updateCrowdIntensity();
   }
 
@@ -438,7 +437,7 @@ export class GameScene extends Phaser.Scene {
       aiDifficulty: this.aiDifficulty,
     });
     this.gameHUD.onPause(() => {
-      AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+      AudioManager.getInstance().playSFX('sfx_click');
       this.showPauseMenu();
     });
     this.updateHUD();
@@ -457,7 +456,7 @@ export class GameScene extends Phaser.Scene {
   // ==================== GOALS & WIN ====================
 
   private handleGoal(scoringPlayer: PlayerNumber): void {
-    // [AUDIO] Звуки гола
+    // Звуки гола
     const audio = AudioManager.getInstance();
     
     // Сетка сразу
@@ -508,7 +507,7 @@ export class GameScene extends Phaser.Scene {
     this.updateHUD();
     this.isProcessingTurn = false;
     
-    // [AUDIO] Свисток на возобновление игры
+    // Свисток на возобновление игры
     AudioManager.getInstance().playSFX('sfx_whistle', { volume: 0.5 });
 
     if (nextPlayer === 1 || !this.aiController) {
@@ -525,7 +524,7 @@ export class GameScene extends Phaser.Scene {
     this.isProcessingTurn = true;
     this.gameHUD.setPauseEnabled(false);
 
-    // [AUDIO] Звуки конца матча
+    // Звуки конца матча
     const audio = AudioManager.getInstance();
     audio.stopAmbience();
     audio.playSFX('sfx_whistle');
@@ -543,12 +542,12 @@ export class GameScene extends Phaser.Scene {
   private showResultScreen(result: any): void {
     this.resultScreen = new ResultScreen(this, result, this.isAIEnabled, {
       onRematch: () => {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.resultScreen = undefined;
         this.restartGame();
       },
       onMainMenu: () => {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.resultScreen = undefined;
         this.scene.start('MainMenuScene');
       },
@@ -563,22 +562,22 @@ export class GameScene extends Phaser.Scene {
     this.gameStateManager.pause();
     this.pauseMenu = new PauseMenu(this, {
       onResume: () => { 
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.pauseMenu = undefined; 
         this.gameStateManager.resume(); 
       },
       onChangeFormation: () => { 
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.pauseMenu = undefined; 
         this.showFormationMenu(); 
       },
       onSettings: () => { 
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.pauseMenu = undefined; 
         this.showInGameSettings(); 
       },
       onSurrender: () => { 
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.pauseMenu = undefined; 
         this.handleSurrender(); 
       },
@@ -590,13 +589,13 @@ export class GameScene extends Phaser.Scene {
 
     this.formationMenu = new FormationMenu(this, this.matchController.getCurrentFormation().id, {
       onSelect: (formation: Formation) => {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.formationMenu = undefined;
         this.handleFormationSelect(formation);
         this.gameStateManager.resume();
       },
       onCancel: () => {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.formationMenu = undefined;
         this.gameStateManager.resume();
       },
@@ -618,7 +617,7 @@ export class GameScene extends Phaser.Scene {
 
     this.inGameSettings = new InGameSettings(this, {
       onClose: () => {
-        AudioManager.getInstance().playSFX('sfx_click'); // [AUDIO]
+        AudioManager.getInstance().playSFX('sfx_click');
         this.inGameSettings = undefined;
         this.gameStateManager.resume();
       },
@@ -632,7 +631,7 @@ export class GameScene extends Phaser.Scene {
     this.isProcessingTurn = true;
     this.gameHUD.setPauseEnabled(false);
     
-    // [AUDIO] Звук поражения
+    // Звук поражения
     AudioManager.getInstance().stopAmbience();
     AudioManager.getInstance().playSFX('sfx_lose');
     
@@ -680,7 +679,7 @@ export class GameScene extends Phaser.Scene {
     this.highlightCurrentPlayerCaps();
     this.updateHUD();
 
-    // [AUDIO] Перезапуск звуков матча
+    // Перезапуск звуков матча
     const audio = AudioManager.getInstance();
     audio.stopAll(); // Остановить всё старое (музыку победы)
     audio.playAmbience('bgm_match');
@@ -822,9 +821,12 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // ==================== SHUTDOWN ====================
+  // ИСПРАВЛЕНИЕ БАГА: Останавливаем ВСЕ звуки при выходе из сцены
+
   shutdown(): void {
-    // [AUDIO] Останавливаем шум стадиона при выходе
-    AudioManager.getInstance().stopAmbience();
+    // Останавливаем ВСЕ звуки (включая SFX победы/поражения)
+    AudioManager.getInstance().stopAll();
     
     this.gameHUD?.destroy();
     this.pauseMenu?.destroy();

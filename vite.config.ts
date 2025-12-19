@@ -2,11 +2,10 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  // ВАЖНО: укажите имя будущего репозитория
-  base: '/memeball-arena/',
+  base: './',  // Точка вместо /memeball-arena/
   
   build: {
     outDir: 'dist',
-    assetsDir: 'assets',
+    chunkSizeWarningLimit: 2000,
   },
 });
