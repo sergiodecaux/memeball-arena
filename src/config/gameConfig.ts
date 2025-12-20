@@ -3,6 +3,7 @@
 import Phaser from 'phaser';
 import { BootScene } from '../scenes/BootScene';
 import { MainMenuScene } from '../scenes/MainMenuScene';
+import { MatchmakingScene } from '../scenes/MatchmakingScene';
 import { GameScene } from '../scenes/GameScene';
 import { ShopScene } from '../scenes/ShopScene';
 import { ProfileScene } from '../scenes/ProfileScene';
@@ -32,6 +33,7 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   scene: [
     BootScene,
     MainMenuScene,
+    MatchmakingScene,  // ← Добавлена сцена поиска соперника
     GameScene,
     ShopScene,
     ProfileScene,
