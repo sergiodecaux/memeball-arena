@@ -1,5 +1,3 @@
-// src/scenes/GameScene.ts
-
 import Phaser from 'phaser';
 import { FIELD, GOAL, COLLISION_CATEGORIES, STARTING_POSITIONS, BALL, GAME, CapClass } from '../constants/gameConstants';
 import { FieldBounds, PlayerNumber, AIDifficulty, Formation } from '../types';
@@ -204,6 +202,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private applyPositionsFromHost(data: any): void {
+    // Не применяем синхронизацию во время своего удара
+    if (this.gameStateManager.getState() === 'moving') {
+      return;
+    }
+    
     if (!data.ball || !data.caps) return;
     
     this.matter.body.setPosition(this.ball.body, { 
@@ -272,12 +275,19 @@ export class GameScene extends Phaser.Scene {
     this.shootingController.setEnabled(false);
     cap.highlight(true);
     
-    // Применяем силу с небольшой задержкой
-    this.time.delayedCall(50, () => {
-      cap.applyForce(-data.force.x, -data.force.y);
-      this.gameStateManager.onShot();
-      this.time.delayedCall(100, () => cap.highlight(false));
+    // ВАЖНОЕ ИСПРАВЛЕНИЕ: Используем setVelocity вместо applyForce,
+    // так как мы получаем velocity (скорость), а не силу.
+    // Если применить velocity как force, удар будет в 1000 раз сильнее.
+    this.matter.body.setVelocity(cap.body, { 
+      x: -data.force.x, 
+      y: -data.force.y 
     });
+    
+    // Обновляем состояние игры сразу
+    this.gameStateManager.onShot();
+    
+    // Убираем подсветку через время, но физику уже применили
+    this.time.delayedCall(150, () => cap.highlight(false));
   }
 
   private handleOpponentSurrendered(): void {
@@ -348,11 +358,15 @@ export class GameScene extends Phaser.Scene {
     this.gameStateManager.setIsHost(this.isHost);
     
     if (this.isPvPMode) {
-      // Только хост отправляет objects_stopped
       this.gameStateManager.onAllObjectsStopped(() => {
         if (this.isHost) {
-          console.log('[PvP] Host: sending objects_stopped');
-          this.mp.sendObjectsStopped();
+          // Отправляем сигнал остановки, только если мы действительно были в движении.
+          // Это предотвращает случайную отправку 'objects_stopped', если противник
+          // еще не успел начать движение на нашем экране из-за пинга.
+          if (this.gameStateManager.getState() === 'moving') {
+            console.log('[PvP] Host: sending objects_stopped');
+            this.mp.sendObjectsStopped();
+          }
         }
       });
     } else {
@@ -418,7 +432,6 @@ export class GameScene extends Phaser.Scene {
       if (state === 'moving') {
         this.shootingController.setEnabled(false);
       }
-      // В waiting управление включается через applyTurnChange
     } else {
       const isPlayerTurn = this.gameStateManager.getCurrentPlayer() === 1;
       const canShoot = state === 'waiting' && (!this.aiController || isPlayerTurn);
