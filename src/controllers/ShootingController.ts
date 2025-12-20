@@ -13,6 +13,9 @@ export class ShootingController {
   private aimGraphics: Phaser.GameObjects.Graphics;
   private currentPlayer: PlayerNumber = 1;
   private onShootCallback: ((cap: Cap) => void) | null = null;
+  
+  // Флаг включения контроллера
+  private isEnabled = true;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -33,7 +36,15 @@ export class ShootingController {
   }
 
   setEnabled(enabled: boolean): void {
-    if (!enabled) this.cancelDrag();
+    this.isEnabled = enabled;
+    if (!enabled) {
+      this.cancelDrag();
+    }
+    console.log('[ShootingController] setEnabled:', enabled);
+  }
+  
+  getEnabled(): boolean {
+    return this.isEnabled;
   }
 
   registerCap(cap: Cap): void {
@@ -49,16 +60,34 @@ export class ShootingController {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer, cap: Cap): void {
-    if (cap.owner !== this.currentPlayer) return;
+    // Проверяем включён ли контроллер
+    if (!this.isEnabled) {
+      console.log('[ShootingController] Disabled, ignoring pointerdown');
+      return;
+    }
+    
+    if (cap.owner !== this.currentPlayer) {
+      console.log('[ShootingController] Not my cap, owner:', cap.owner, 'currentPlayer:', this.currentPlayer);
+      return;
+    }
 
     this.isDragging = true;
     this.selectedCap = cap;
     this.dragStartPoint = new Phaser.Math.Vector2(pointer.x, pointer.y);
     cap.highlight(true);
+    
+    console.log('[ShootingController] Started dragging cap:', cap.id);
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
     if (!this.isDragging || !this.selectedCap || !this.dragStartPoint) return;
+    
+    // Проверяем isEnabled во время drag
+    if (!this.isEnabled) {
+      console.log('[ShootingController] Disabled during drag, cancelling');
+      this.cancelDrag();
+      return;
+    }
 
     const dragVector = new Phaser.Math.Vector2(
       pointer.x - this.dragStartPoint.x,
@@ -73,6 +102,13 @@ export class ShootingController {
 
   private onPointerUp(pointer: Phaser.Input.Pointer): void {
     if (!this.isDragging || !this.selectedCap || !this.dragStartPoint) return;
+    
+    // Проверяем isEnabled перед ударом
+    if (!this.isEnabled) {
+      console.log('[ShootingController] Disabled, cancelling shot');
+      this.cancelDrag();
+      return;
+    }
 
     const dragVector = new Phaser.Math.Vector2(
       pointer.x - this.dragStartPoint.x,
@@ -86,10 +122,13 @@ export class ShootingController {
       return;
     }
 
-    const force = this.selectedCap.calculateShotForce(distance, dragVector.normalize());
-    this.selectedCap.applyForce(force.x, force.y);
+    const cap = this.selectedCap;
+    const force = cap.calculateShotForce(distance, dragVector.normalize());
+    cap.applyForce(force.x, force.y);
+    
+    console.log('[ShootingController] Shot executed, cap:', cap.id);
 
-    this.onShootCallback?.(this.selectedCap);
+    this.onShootCallback?.(cap);
     this.finishDrag();
   }
 
@@ -108,10 +147,8 @@ export class ShootingController {
 
     this.drawTrajectoryDots(capX, capY, aimDirection);
 
-    // ИСПРАВЛЕНО: используем правильный формат для интерполяции цвета
     const powerRatio = distance / SHOOTING.MAX_DRAG_DISTANCE;
     
-    // Интерполяция от зелёного к красному
     const r = Math.floor(100 + (255 - 100) * powerRatio);
     const g = Math.floor(255 + (50 - 255) * powerRatio);
     const b = Math.floor(100 + (50 - 100) * powerRatio);

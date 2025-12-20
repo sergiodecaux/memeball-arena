@@ -36,11 +36,9 @@ export class MainMenuScene extends Phaser.Scene {
   create(): void {
     const audio = AudioManager.getInstance();
     audio.init(this);
+    audio.stopAmbience();
+    audio.playMusic('bgm_menu');
     
-    // ИСПРАВЛЕНИЕ БАГА 1: Останавливаем ВСЕ звуки перед запуском музыки меню
-    audio.stopAll();
-    audio.playMusic('bgm_menu'); 
-
     this.resetState();
     this.createBackground();
     this.createLogo();
@@ -50,7 +48,6 @@ export class MainMenuScene extends Phaser.Scene {
     this.createFooter();
     this.startAmbientAnimations();
 
-    // ИСПРАВЛЕНИЕ БАГА 2: Проверка первого запуска для выбора языка
     if (i18n.isFirstLaunch()) {
       this.time.delayedCall(300, () => this.showLanguageSelection(true));
     }
@@ -343,24 +340,83 @@ export class MainMenuScene extends Phaser.Scene {
     const { width } = this.cameras.main;
     const colors = getColors();
     
-    const startY = 235;
+    const startY = 230;
     const buttonW = width - 50;
-    const gap = 62;
+    const gap = 58;
 
     const styles = {
       play: { bgTop: 0x00b894, bgBottom: 0x007a63, border: colors.uiAccent, glow: colors.uiAccent },
+      pvp: { bgTop: 0xff6b6b, bgBottom: 0xcc4444, border: 0xff4757, glow: 0xff4757 },
       primary: { bgTop: 0x6c5ce7, bgBottom: 0x4a3f9f, border: colors.uiPrimary, glow: colors.uiPrimary },
       secondary: { bgTop: 0x2d3436, bgBottom: 0x1a1d1e, border: 0x4a4a5a, glow: 0x4a4a5a },
     };
 
     const buttons: { y: number; h: number; config: MenuButtonConfig }[] = [
-      { y: startY, h: 62, config: { text: i18n.t('play'), fontSize: 22, style: styles.play, iconDraw: Icons.drawPlay, onClick: () => this.showModeSelection() }},
-      { y: startY + gap, h: 56, config: { text: i18n.t('shop'), fontSize: 17, style: styles.primary, iconDraw: Icons.drawShop, onClick: () => this.scene.start('ShopScene') }},
-      { y: startY + gap * 2, h: 56, config: { text: i18n.t('tactics'), fontSize: 17, style: styles.primary, iconDraw: Icons.drawTactics, onClick: () => this.scene.start('TacticsScene') }},
-      { y: startY + gap * 3, h: 56, config: { text: i18n.t('settings'), fontSize: 17, style: styles.secondary, iconDraw: Icons.drawSettings, onClick: () => this.scene.start('SettingsScene') }},
+      { 
+        y: startY, 
+        h: 58, 
+        config: { 
+          text: '🤖 ' + i18n.t('vsAI'), 
+          fontSize: 20, 
+          style: styles.play, 
+          iconDraw: Icons.drawRobot, 
+          onClick: () => this.showDifficultySelection() 
+        }
+      },
+      { 
+        y: startY + gap, 
+        h: 58, 
+        config: { 
+          text: '⚔️ PVP ONLINE', 
+          fontSize: 20, 
+          style: styles.pvp, 
+          iconDraw: Icons.drawPlayers, 
+          onClick: () => this.startPvPMatchmaking() 
+        }
+      },
+      { 
+        y: startY + gap * 2, 
+        h: 52, 
+        config: { 
+          text: i18n.t('shop'), 
+          fontSize: 16, 
+          style: styles.primary, 
+          iconDraw: Icons.drawShop, 
+          onClick: () => this.scene.start('ShopScene') 
+        }
+      },
+      { 
+        y: startY + gap * 3, 
+        h: 52, 
+        config: { 
+          text: i18n.t('tactics'), 
+          fontSize: 16, 
+          style: styles.primary, 
+          iconDraw: Icons.drawTactics, 
+          onClick: () => this.scene.start('TacticsScene') 
+        }
+      },
+      { 
+        y: startY + gap * 4, 
+        h: 52, 
+        config: { 
+          text: i18n.t('settings'), 
+          fontSize: 16, 
+          style: styles.secondary, 
+          iconDraw: Icons.drawSettings, 
+          onClick: () => this.scene.start('SettingsScene') 
+        }
+      },
     ];
 
     buttons.forEach(({ y, h, config }) => this.createMenuButton(width / 2, y, buttonW, h, config));
+  }
+
+  // ==================== PVP MATCHMAKING ====================
+
+  private startPvPMatchmaking(): void {
+    AudioManager.getInstance().playSFX('sfx_click');
+    this.scene.start('MatchmakingScene');
   }
 
   private createMenuButton(x: number, y: number, w: number, h: number, config: MenuButtonConfig): void {
@@ -435,7 +491,7 @@ export class MainMenuScene extends Phaser.Scene {
     const { width, height } = this.cameras.main;
     const colors = getColors();
 
-    this.add.text(15, height - 18, 'v0.5.0', { fontSize: '10px', color: '#333344' });
+    this.add.text(15, height - 18, 'v0.6.0-pvp', { fontSize: '10px', color: '#333344' });
 
     const line = this.add.graphics();
     line.lineStyle(1, colors.uiPrimary, 0.1);
@@ -445,7 +501,7 @@ export class MainMenuScene extends Phaser.Scene {
     line.fillCircle(width - 25, height - 40, 2);
   }
 
-  // ==================== LANGUAGE SELECTION (FIRST LAUNCH) ====================
+  // ==================== LANGUAGE SELECTION ====================
 
   private showLanguageSelection(isFirstLaunch: boolean = false): void {
     if (this.modalContainer || this.isTransitioning) return;
@@ -457,14 +513,12 @@ export class MainMenuScene extends Phaser.Scene {
 
     this.createOverlay();
     
-    // Если первый запуск — оверлей нельзя закрыть кликом
     if (isFirstLaunch && this.overlay) {
       this.overlay.removeAllListeners();
     }
 
     this.modalContainer = this.createModalContainer(280, 280);
 
-    // Заголовок
     this.modalContainer.add(this.add.text(0, -110, '🌍', {
       fontSize: '36px',
     }).setOrigin(0.5));
@@ -475,7 +529,6 @@ export class MainMenuScene extends Phaser.Scene {
       color: '#ffffff',
     }).setOrigin(0.5));
 
-    // Кнопки языков
     const languages = i18n.getAvailableLanguages();
     const currentLang = i18n.getLanguage();
 
@@ -514,19 +567,16 @@ export class MainMenuScene extends Phaser.Scene {
     drawBg(false);
     container.add(bg);
 
-    // Флаг
     container.add(this.add.text(-w / 2 + 35, 0, flag, {
       fontSize: '28px',
     }).setOrigin(0.5));
 
-    // Название языка
     container.add(this.add.text(-w / 2 + 75, 0, name, {
       fontSize: '18px',
       fontFamily: 'Arial Black',
       color: isSelected ? hexToString(colors.uiAccent) : '#ffffff',
     }).setOrigin(0, 0.5));
 
-    // Галочка если выбран
     if (isSelected) {
       container.add(this.add.text(w / 2 - 30, 0, '✓', {
         fontSize: '20px',
@@ -552,7 +602,6 @@ export class MainMenuScene extends Phaser.Scene {
   private selectLanguage(lang: Language, isFirstLaunch: boolean): void {
     i18n.setLanguage(lang);
     
-    // Синхронизируем с PlayerData
     const data = playerData.get();
     data.settings.language = lang;
     playerData.save();
@@ -562,74 +611,26 @@ export class MainMenuScene extends Phaser.Scene {
     }
 
     this.closeModal(() => {
-      // Перезапускаем сцену для применения нового языка
       this.scene.restart();
     });
   }
 
-  // ==================== MODE SELECTION ====================
+  // ==================== DIFFICULTY SELECTION (AI) ====================
 
-  private showModeSelection(): void {
+  private showDifficultySelection(): void {
     if (this.modalContainer || this.isTransitioning) return;
     this.isTransitioning = true;
     AudioManager.getInstance().playSFX('sfx_swish');
 
-    const { width, height } = this.cameras.main;
-    const colors = getColors();
-
     this.createOverlay();
-    this.modalContainer = this.createModalContainer(290, 380);
-
-    this.modalContainer.add(this.add.text(0, -160, i18n.t('selectMode'), {
-      fontSize: '20px',
-      fontFamily: 'Arial Black',
-      color: '#ffffff',
-    }).setOrigin(0.5));
-
-    const modes = [
-      { title: i18n.t('vsAI'), desc: i18n.t('vsAIDesc'), icon: Icons.drawRobot, color: colors.uiAccent, onClick: () => this.showDifficultySelection() },
-      { title: i18n.t('pvp'), desc: i18n.t('pvpDesc'), icon: Icons.drawPlayers, color: colors.uiPrimary, onClick: () => this.closeModal(() => this.scene.start('GameScene', { vsAI: false })) },
-      { title: i18n.t('quickPlay'), desc: i18n.t('quickPlayDesc'), icon: Icons.drawLightning, color: 0xf59e0b, onClick: () => this.closeModal(() => this.scene.start('GameScene', { vsAI: true, difficulty: 'medium' })) },
-    ];
-
-    modes.forEach((mode, i) => this.createModeButton(0, -55 + i * 82, 250, 72, mode));
-
-    this.animateModalIn();
-  }
-
-  private showDifficultySelection(): void {
-    if (this.isTransitioning) return;
-    this.isTransitioning = true;
-    AudioManager.getInstance().playSFX('sfx_swish');
-
-    this.tweens.add({
-      targets: this.modalContainer,
-      scale: 0.9,
-      alpha: 0,
-      duration: 150,
-      onComplete: () => {
-        this.modalContainer?.destroy();
-        this.createDifficultyModal();
-      },
-    });
+    this.createDifficultyModal();
   }
 
   private createDifficultyModal(): void {
     const colors = getColors();
     this.modalContainer = this.createModalContainer(290, 340);
 
-    const backBtn = this.add.container(-115, -140);
-    backBtn.add(Icons.drawBack(this, 0, 0, 10, colors.uiAccent));
-    const backHit = this.add.circle(0, 0, 18, 0x000000, 0).setInteractive({ useHandCursor: true });
-    backHit.on('pointerdown', (p: Phaser.Input.Pointer) => { 
-      p.event.stopPropagation(); 
-      AudioManager.getInstance().playSFX('sfx_click');
-      this.backToModeSelection(); 
-    });
-    backBtn.add(backHit);
-    this.modalContainer.add(backBtn);
-
-    this.modalContainer.add(this.add.text(15, -140, i18n.t('selectDifficulty'), {
+    this.modalContainer.add(this.add.text(0, -140, i18n.t('selectDifficulty'), {
       fontSize: '18px',
       fontFamily: 'Arial Black',
       color: '#ffffff',
@@ -692,54 +693,6 @@ export class MainMenuScene extends Phaser.Scene {
     });
   }
 
-  private createModeButton(x: number, y: number, w: number, h: number, config: {
-    title: string; desc: string; color: number;
-    icon: (scene: Phaser.Scene, x: number, y: number, size: number, color: number) => Phaser.GameObjects.Graphics;
-    onClick: () => void;
-  }): void {
-    const container = this.add.container(x, y);
-    this.modalContainer!.add(container);
-
-    const bg = this.add.graphics();
-    const drawBg = (hover: boolean) => {
-      bg.clear();
-      if (!hover) {
-        bg.fillStyle(0x000000, 0.2);
-        bg.fillRoundedRect(-w / 2 + 2, -h / 2 + 3, w, h, 12);
-      }
-      bg.fillStyle(config.color, hover ? 0.18 : 0.08);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
-      bg.lineStyle(1.5, config.color, hover ? 0.8 : 0.4);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
-    };
-    drawBg(false);
-    container.add(bg);
-
-    container.add(config.icon(this, -w / 2 + 38, 0, 20, config.color));
-    container.add(this.add.text(-w / 2 + 68, -10, config.title, {
-      fontSize: '17px', fontFamily: 'Arial Black', color: hexToString(config.color),
-    }).setOrigin(0, 0.5));
-    container.add(this.add.text(-w / 2 + 68, 12, config.desc, {
-      fontSize: '11px', color: '#777788',
-    }).setOrigin(0, 0.5));
-    container.add(this.add.text(w / 2 - 22, 0, '›', {
-      fontSize: '26px', color: hexToString(config.color),
-    }).setOrigin(0.5));
-
-    const hitArea = this.add.rectangle(0, 0, w, h, 0x000000, 0).setInteractive({ useHandCursor: true });
-    container.add(hitArea);
-
-    hitArea.on('pointerover', () => { drawBg(true); container.setScale(1.015); });
-    hitArea.on('pointerout', () => { drawBg(false); container.setScale(1); });
-    hitArea.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      p.event.stopPropagation();
-      if (!this.isTransitioning) {
-        AudioManager.getInstance().playSFX('sfx_click');
-        config.onClick();
-      }
-    });
-  }
-
   private createDifficultyButton(x: number, y: number, w: number, h: number, diff: {
     id: AIDifficulty; name: string; desc: string; color: number;
     icon: (scene: Phaser.Scene, x: number, y: number, size: number, color: number) => Phaser.GameObjects.Graphics;
@@ -786,24 +739,6 @@ export class MainMenuScene extends Phaser.Scene {
         AudioManager.getInstance().playSFX('sfx_click');
         this.closeModal(() => this.scene.start('GameScene', { vsAI: true, difficulty: diff.id }));
       }
-    });
-  }
-
-  private backToModeSelection(): void {
-    if (this.isTransitioning) return;
-    this.isTransitioning = true;
-
-    this.tweens.add({
-      targets: this.modalContainer,
-      scale: 0.9,
-      alpha: 0,
-      duration: 150,
-      onComplete: () => {
-        this.modalContainer?.destroy();
-        this.modalContainer = undefined;
-        this.isTransitioning = false;
-        this.showModeSelection();
-      },
     });
   }
 

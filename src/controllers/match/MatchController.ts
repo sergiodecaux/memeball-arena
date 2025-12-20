@@ -12,6 +12,10 @@ export interface MatchResult {
   isWin: boolean;
   isPerfectGame: boolean;
   newAchievements: string[];
+  // PvP поля
+  rewards?: { coins: number; xp: number };
+  isPvP?: boolean;
+  message?: string;
 }
 
 export interface MatchState {
@@ -40,41 +44,25 @@ export class MatchController {
 
   // ==================== ФОРМАЦИИ ====================
 
-  /**
-   * Получает текущую активную формацию
-   */
   getCurrentFormation(): Formation {
     return this.state.currentFormation;
   }
 
-  /**
-   * Получает ожидающую формацию (будет применена после гола)
-   */
   getPendingFormation(): Formation | null {
     return this.state.pendingFormation;
   }
 
-  /**
-   * Устанавливает формацию для применения после следующего гола
-   */
   setPendingFormation(formation: Formation): void {
     this.state.pendingFormation = formation;
     playerData.selectFormation(formation.id);
     console.log(`📋 Pending formation set: ${formation.name}`);
   }
 
-  /**
-   * Обновляет текущую формацию (когда изменились только классы фишек, но не сама формация)
-   */
   updateCurrentFormation(formation: Formation): void {
     this.state.currentFormation = formation;
     console.log(`🔄 Current formation updated: ${formation.name}`);
   }
 
-  /**
-   * Применяет ожидающую формацию (вызывается при респавне после гола)
-   * Возвращает true если формация была применена
-   */
   applyPendingFormation(): boolean {
     if (this.state.pendingFormation) {
       this.state.currentFormation = this.state.pendingFormation;
@@ -85,17 +73,10 @@ export class MatchController {
     return false;
   }
 
-  /**
-   * Проверяет, есть ли ожидающая формация
-   */
   hasPendingFormation(): boolean {
     return this.state.pendingFormation !== null;
   }
 
-  /**
-   * Перезагружает текущую формацию из PlayerData
-   * (полезно после изменения классов в меню формаций)
-   */
   reloadCurrentFormation(): void {
     this.state.currentFormation = playerData.getSelectedFormation();
     console.log(`🔃 Formation reloaded: ${this.state.currentFormation.name}`);
@@ -103,32 +84,20 @@ export class MatchController {
 
   // ==================== СЧЁТ ====================
 
-  /**
-   * Добавляет гол
-   */
   addGoal(player: PlayerNumber): void {
     this.state.scores[player]++;
   }
 
-  /**
-   * Получает текущий счёт
-   */
   getScores(): Record<PlayerNumber, number> {
     return { ...this.state.scores };
   }
 
-  /**
-   * Сбрасывает счёт
-   */
   resetScores(): void {
     this.state.scores = { 1: 0, 2: 0 };
   }
 
   // ==================== РЕЗУЛЬТАТЫ МАТЧА ====================
 
-  /**
-   * Завершает матч и сохраняет результаты
-   */
   finishMatch(winner: PlayerNumber): MatchResult {
     this.state.isFinished = true;
     
@@ -138,7 +107,7 @@ export class MatchController {
     const isPerfectGame = isWin && opponentGoals === 0;
     
     // Рассчитываем награды
-    let xpEarned = 10; // Базовый XP за игру
+    let xpEarned = 10;
     let coinsEarned = 0;
     
     if (isWin) {
@@ -183,16 +152,10 @@ export class MatchController {
     };
   }
 
-  /**
-   * Обрабатывает сдачу игрока
-   */
   handleSurrender(): MatchResult {
     return this.finishMatch(2);
   }
 
-  /**
-   * Проверяет и разблокирует достижения
-   */
   private checkAchievements(isWin: boolean, playerGoals: number, opponentGoals: number): string[] {
     const newAchievements: string[] = [];
     const stats = playerData.get().stats;
@@ -204,12 +167,10 @@ export class MatchController {
       }
     };
     
-    // Первая победа
     if (isWin && stats.wins === 1) {
       tryUnlock('first_victory');
     }
     
-    // Серия побед
     if (stats.currentWinStreak >= 3) {
       tryUnlock('hot_streak');
     }
@@ -217,7 +178,6 @@ export class MatchController {
       tryUnlock('unstoppable');
     }
     
-    // Голы
     if (stats.goalsScored >= 10) {
       tryUnlock('sharpshooter');
     }
@@ -225,12 +185,10 @@ export class MatchController {
       tryUnlock('goal_machine');
     }
     
-    // Сухарь
     if (isWin && opponentGoals === 0) {
       tryUnlock('clean_sheet');
     }
     
-    // Количество игр
     if (stats.gamesPlayed >= 10) {
       tryUnlock('regular_player');
     }
@@ -238,7 +196,6 @@ export class MatchController {
       tryUnlock('dedicated');
     }
     
-    // Уровень
     if (level >= 10) {
       tryUnlock('rising_star');
     }
@@ -251,16 +208,10 @@ export class MatchController {
 
   // ==================== СОСТОЯНИЕ ====================
 
-  /**
-   * Проверяет, завершён ли матч
-   */
   isMatchFinished(): boolean {
     return this.state.isFinished;
   }
 
-  /**
-   * Сбрасывает состояние для нового матча
-   */
   reset(): void {
     this.state = {
       scores: { 1: 0, 2: 0 },
@@ -271,9 +222,6 @@ export class MatchController {
     };
   }
 
-  /**
-   * Получает время начала матча
-   */
   getMatchStartTime(): number {
     return this.state.matchStartTime;
   }
