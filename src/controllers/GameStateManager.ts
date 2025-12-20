@@ -16,15 +16,29 @@ export class GameStateManager {
   
   private stoppedFrames = 0;
   private readonly STOP_THRESHOLD = 0.15;
-  private readonly FRAMES_TO_CONFIRM = 10;
+  private readonly FRAMES_TO_CONFIRM = 15;
+  
+  private movingStartTime = 0;
+  private readonly MIN_MOVING_TIME = 800;
   
   private onTurnChangeCallback?: (player: PlayerNumber) => void;
   private onStateChangeCallback?: (state: GameState) => void;
   private onAllStoppedCallback?: () => void;
+  
+  private isPvPMode = false;
+  private isHost = false;
 
   constructor(ball: Ball, caps: Cap[]) {
     this.ball = ball;
     this.caps = caps;
+  }
+
+  setPvPMode(enabled: boolean): void {
+    this.isPvPMode = enabled;
+  }
+
+  setIsHost(host: boolean): void {
+    this.isHost = host;
   }
 
   getState(): GameState {
@@ -53,11 +67,23 @@ export class GameStateManager {
 
   onShot(): void {
     this.stoppedFrames = 0;
+    this.movingStartTime = Date.now();
     this.setState('moving');
   }
 
   update(): void {
     if (this.state !== 'moving') return;
+    
+    // В PvP только хост проверяет остановку
+    if (this.isPvPMode && !this.isHost) {
+      return;
+    }
+    
+    // Минимальное время движения
+    const elapsed = Date.now() - this.movingStartTime;
+    if (elapsed < this.MIN_MOVING_TIME) {
+      return;
+    }
     
     if (this.areAllObjectsStopped()) {
       if (++this.stoppedFrames >= this.FRAMES_TO_CONFIRM) {
@@ -75,6 +101,15 @@ export class GameStateManager {
 
   private onAllStopped(): void {
     this.stoppedFrames = 0;
+    
+    if (this.isPvPMode) {
+      // В PvP только уведомляем (хост отправит на сервер)
+      this.onAllStoppedCallback?.();
+      this.setState('waiting');
+      return;
+    }
+    
+    // AI режим
     this.onAllStoppedCallback?.();
     this.nextTurn();
   }
@@ -109,19 +144,16 @@ export class GameStateManager {
     this.setState('finished');
   }
 
-  /** Принудительно останавливает и переводит в waiting */
   forceStop(): void {
     this.stoppedFrames = 0;
     this.setState('waiting');
   }
 
-  /** Устанавливает состояние гола */
   setGoalState(): void {
     this.stoppedFrames = 0;
     this.setState('goal');
   }
 
-  // Event subscriptions
   onTurnChange(callback: (player: PlayerNumber) => void): void {
     this.onTurnChangeCallback = callback;
   }
