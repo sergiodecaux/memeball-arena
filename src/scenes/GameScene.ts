@@ -19,18 +19,23 @@ import { ResultScreen } from '../ui/game/ResultScreen';
 import { InGameSettings } from '../ui/game/InGameSettings';
 import { playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
+import { MultiplayerManager, GameStartData, ShootData, PvPPlayer } from '../managers/MultiplayerManager';
+
+interface GameSceneData {
+  vsAI?: boolean;
+  difficulty?: AIDifficulty;
+  isPvP?: boolean;
+  pvpData?: GameStartData;
+}
 
 export class GameScene extends Phaser.Scene {
-  // Field
   private fieldBounds!: FieldBounds;
   private fieldScale = 1;
 
-  // Game objects
   private ball!: Ball;
   private caps: Cap[] = [];
   private startPositions = { ball: { x: 0, y: 0 }, caps: [] as { x: number; y: number }[] };
 
-  // Controllers
   private shootingController!: ShootingController;
   private gameStateManager!: GameStateManager;
   private goalDetector!: GoalDetector;
@@ -38,32 +43,52 @@ export class GameScene extends Phaser.Scene {
   private fieldRenderer!: FieldRenderer;
   private matchController!: MatchController;
 
-  // UI
   private gameHUD!: GameHUD;
   private pauseMenu?: PauseMenu;
   private formationMenu?: FormationMenu;
   private resultScreen?: ResultScreen;
   private inGameSettings?: InGameSettings;
 
-  // AI
   private aiController?: AIController;
   private isAIEnabled = true;
   private aiDifficulty: AIDifficulty = 'medium';
   private isProcessingTurn = false;
 
-  // Physics
+  // PVP
+  private isPvPMode = false;
+  private pvpData?: GameStartData;
+  private mp!: MultiplayerManager;
+  private currentTurnId: string = '';
+  private pvpOpponentName: string = 'Opponent';
+  private isHost = false;
+  private syncInterval?: Phaser.Time.TimerEvent;
+
   private ballSpeedBeforeCollision = 0;
-  
-  // Audio Debounce
   private lastCollisionTime: number = 0;
 
   constructor() {
     super({ key: 'GameScene' });
   }
 
-  init(data?: { vsAI?: boolean; difficulty?: AIDifficulty }): void {
-    this.isAIEnabled = data?.vsAI ?? true;
-    this.aiDifficulty = data?.difficulty ?? 'medium';
+  init(data?: GameSceneData): void {
+    this.isPvPMode = data?.isPvP ?? false;
+    this.pvpData = data?.pvpData;
+    
+    if (this.isPvPMode && this.pvpData) {
+      this.isAIEnabled = false;
+      this.mp = MultiplayerManager.getInstance();
+      this.currentTurnId = this.pvpData.currentTurn;
+      this.isHost = this.mp.isHost();
+      
+      const opponent = this.pvpData.players.find(p => p.id !== this.mp.getMyId());
+      this.pvpOpponentName = opponent?.name || 'Opponent';
+      
+      console.log('[PvP] Init - isHost:', this.isHost, 'myId:', this.mp.getMyId());
+    } else {
+      this.isAIEnabled = data?.vsAI ?? true;
+      this.aiDifficulty = data?.difficulty ?? 'medium';
+    }
+    
     this.isProcessingTurn = false;
     this.caps = [];
     this.startPositions = { ball: { x: 0, y: 0 }, caps: [] };
@@ -75,12 +100,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
-    // Инициализация звука
     const audio = AudioManager.getInstance();
     audio.init(this);
-    audio.stopMusic(); // Останавливаем музыку меню
-    audio.playAmbience('bgm_match'); // Включаем шум стадиона
-    audio.playSFX('sfx_whistle'); // Стартовый свисток
+    audio.stopMusic();
+    audio.playAmbience('bgm_match');
+    audio.playSFX('sfx_whistle');
 
     this.matchController = new MatchController();
     this.calculateFieldBounds();
@@ -95,7 +119,214 @@ export class GameScene extends Phaser.Scene {
     this.setupControllers();
     this.setupCollisions();
     this.createHUD();
+
+    if (this.isPvPMode) {
+      this.setupPvPListeners();
+      if (this.isHost) {
+        this.startSyncInterval();
+      }
+    }
   }
+
+  // ==================== PVP ====================
+
+  private startSyncInterval(): void {
+    this.syncInterval = this.time.addEvent({
+      delay: 50,
+      callback: () => this.sendPositionsToOpponent(),
+      loop: true
+    });
+  }
+
+  private sendPositionsToOpponent(): void {
+    if (!this.isPvPMode || !this.mp.getConnectionStatus() || !this.isHost) return;
+    
+    const ballPos = this.ball.body.position;
+    const ballVel = this.ball.body.velocity;
+    
+    const capsData = this.caps.map(cap => ({
+      x: cap.body.position.x,
+      y: cap.body.position.y,
+      vx: cap.body.velocity.x,
+      vy: cap.body.velocity.y
+    }));
+    
+    this.mp.sendSyncPositions(
+      { x: ballPos.x, y: ballPos.y, vx: ballVel.x, vy: ballVel.y },
+      capsData
+    );
+  }
+
+  private setupPvPListeners(): void {
+    this.mp.on('opponent_shoot', (data: ShootData) => {
+      console.log('[PvP] Opponent shoot received:', data);
+      this.handleOpponentShoot(data);
+    });
+
+    this.mp.on('turn_change', (data: { currentTurn: string; scores: Record<string, number> }) => {
+      console.log('[PvP] Turn change from server:', data.currentTurn);
+      this.currentTurnId = data.currentTurn;
+      this.applyTurnChange();
+    });
+
+    if (!this.isHost) {
+      this.mp.on('positions_update', (data: any) => {
+        this.applyPositionsFromHost(data);
+      });
+    }
+
+    this.mp.on('goal_scored', (data: { scorerId: string; scores: Record<string, number>; winner: string | null }) => {
+      if (data.winner) {
+        const isMyWin = data.winner === this.mp.getMyId();
+        this.handleWin(isMyWin ? 1 : 2);
+      }
+    });
+
+    this.mp.on('continue_game', (data: { currentTurn: string }) => {
+      console.log('[PvP] Continue game:', data.currentTurn);
+      this.currentTurnId = data.currentTurn;
+      this.applyTurnChange();
+    });
+
+    this.mp.on('opponent_surrendered', () => this.handleOpponentSurrendered());
+    this.mp.on('opponent_disconnected', () => this.handleOpponentDisconnected());
+  }
+
+  private applyTurnChange(): void {
+    const isMyTurn = this.currentTurnId === this.mp.getMyId();
+    console.log('[PvP] applyTurnChange - isMyTurn:', isMyTurn);
+    
+    this.isProcessingTurn = false;
+    this.gameStateManager.forceStop();
+    this.shootingController.setEnabled(isMyTurn);
+    this.highlightCurrentPlayerCaps();
+    this.updateHUD();
+  }
+
+  private applyPositionsFromHost(data: any): void {
+    if (!data.ball || !data.caps) return;
+    
+    this.matter.body.setPosition(this.ball.body, { 
+      x: this.mirrorX(data.ball.x), 
+      y: this.mirrorY(data.ball.y) 
+    });
+    if (data.ball.vx !== undefined) {
+      this.matter.body.setVelocity(this.ball.body, { 
+        x: -data.ball.vx, 
+        y: -data.ball.vy 
+      });
+    }
+    
+    data.caps.forEach((capData: any, i: number) => {
+      const mirroredIndex = i < 3 ? i + 3 : i - 3;
+      const cap = this.caps[mirroredIndex];
+      if (cap) {
+        this.matter.body.setPosition(cap.body, { 
+          x: this.mirrorX(capData.x), 
+          y: this.mirrorY(capData.y) 
+        });
+        if (capData.vx !== undefined) {
+          this.matter.body.setVelocity(cap.body, { 
+            x: -capData.vx, 
+            y: -capData.vy 
+          });
+        }
+      }
+    });
+  }
+
+  private mirrorX(x: number): number {
+    return this.fieldBounds.left + (this.fieldBounds.right - x);
+  }
+
+  private mirrorY(y: number): number {
+    return this.fieldBounds.top + (this.fieldBounds.bottom - y);
+  }
+
+  private sendShootToServer(cap: Cap): void {
+    const capIndex = this.caps.findIndex(c => c === cap);
+    const force = cap.body.velocity;
+    const position = cap.body.position;
+    
+    console.log('[PvP] Sending shoot:', capIndex, force);
+    
+    this.mp.sendShoot(
+      capIndex,
+      { x: force.x, y: force.y },
+      { x: position.x, y: position.y },
+      Math.atan2(force.y, force.x)
+    );
+  }
+
+  private handleOpponentShoot(data: ShootData): void {
+    const mirroredCapId = data.capId < 3 ? data.capId + 3 : data.capId - 3;
+    const cap = this.caps[mirroredCapId];
+    if (!cap) {
+      console.error('[PvP] Cap not found:', mirroredCapId);
+      return;
+    }
+
+    console.log('[PvP] Applying opponent shot to cap:', mirroredCapId);
+    
+    this.isProcessingTurn = true;
+    this.shootingController.setEnabled(false);
+    cap.highlight(true);
+    
+    // Применяем силу с небольшой задержкой
+    this.time.delayedCall(50, () => {
+      cap.applyForce(-data.force.x, -data.force.y);
+      this.gameStateManager.onShot();
+      this.time.delayedCall(100, () => cap.highlight(false));
+    });
+  }
+
+  private handleOpponentSurrendered(): void {
+    AudioManager.getInstance().stopAmbience();
+    AudioManager.getInstance().playSFX('sfx_whistle');
+    AudioManager.getInstance().playSFX('sfx_win', { delay: 0.5 });
+
+    this.gameStateManager.finish();
+    this.shootingController.setEnabled(false);
+    
+    this.showResultScreen({
+      winner: 1 as PlayerNumber,
+      isWin: true,
+      playerGoals: this.scoreManager.getScores()[1],
+      opponentGoals: this.scoreManager.getScores()[2],
+      xpEarned: 50,
+      coinsEarned: 150,
+      isPerfectGame: false,
+      newAchievements: [],
+      rewards: { coins: 150, xp: 50 },
+      isPvP: true,
+      message: 'Opponent surrendered!'
+    });
+  }
+
+  private handleOpponentDisconnected(): void {
+    AudioManager.getInstance().stopAmbience();
+    AudioManager.getInstance().playSFX('sfx_whistle');
+    AudioManager.getInstance().playSFX('sfx_win', { delay: 0.5 });
+
+    this.gameStateManager.finish();
+    this.shootingController.setEnabled(false);
+    
+    this.showResultScreen({
+      winner: 1 as PlayerNumber,
+      isWin: true,
+      playerGoals: this.scoreManager.getScores()[1],
+      opponentGoals: this.scoreManager.getScores()[2],
+      xpEarned: 50,
+      coinsEarned: 150,
+      isPerfectGame: false,
+      newAchievements: [],
+      rewards: { coins: 150, xp: 50 },
+      isPvP: true,
+      message: 'Opponent disconnected!'
+    });
+  }
+
+  // ==================== CONTROLLERS ====================
 
   private configureMatterEngine(): void {
     const engine = (this.matter.world as any).engine;
@@ -106,43 +337,69 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setupControllers(): void {
-    // Goal detector
     this.goalDetector = new GoalDetector(this, this.ball, this.fieldBounds, this.fieldScale);
     this.goalDetector.setCaps(this.caps, this.startPositions.caps);
     this.goalDetector.onGoal(player => this.handleGoal(player));
 
-    // Score manager
     this.scoreManager = new ScoreManager(this);
 
-    // Game state
     this.gameStateManager = new GameStateManager(this.ball, this.caps);
-    this.gameStateManager.onTurnChange(player => this.onTurnChange(player));
+    this.gameStateManager.setPvPMode(this.isPvPMode);
+    this.gameStateManager.setIsHost(this.isHost);
+    
+    if (this.isPvPMode) {
+      // Только хост отправляет objects_stopped
+      this.gameStateManager.onAllObjectsStopped(() => {
+        if (this.isHost) {
+          console.log('[PvP] Host: sending objects_stopped');
+          this.mp.sendObjectsStopped();
+        }
+      });
+    } else {
+      this.gameStateManager.onTurnChange(player => this.onLocalTurnChange(player));
+    }
+    
     this.gameStateManager.onStateChange(state => this.onStateChange(state));
 
-    // Shooting
     this.shootingController = new ShootingController(this);
+    
     this.caps
-      .filter(cap => !this.aiController || cap.owner === 1)
+      .filter(cap => cap.owner === 1)
       .forEach(cap => this.shootingController.registerCap(cap));
 
     this.shootingController.setCurrentPlayer(1);
-    this.shootingController.onShoot(() => {
+    this.gameStateManager.setCurrentPlayer(1);
+    
+    if (this.isPvPMode) {
+      const isMyTurn = this.currentTurnId === this.mp.getMyId();
+      console.log('[PvP] Initial setup - isMyTurn:', isMyTurn);
+      this.shootingController.setEnabled(isMyTurn);
+    } else {
+      this.shootingController.setEnabled(true);
+    }
+    
+    this.shootingController.onShoot((cap) => {
+      console.log('[PvP] Shot executed');
       this.isProcessingTurn = true;
       this.gameStateManager.onShot();
+      
+      if (this.isPvPMode && cap) {
+        this.sendShootToServer(cap);
+        this.shootingController.setEnabled(false);
+      }
     });
-    this.shootingController.setEnabled(true);
+    
     this.highlightCurrentPlayerCaps();
 
-    // AI
-    if (this.isAIEnabled) {
+    if (this.isAIEnabled && !this.isPvPMode) {
       this.aiController = new AIController(this, 2, this.fieldBounds, this.aiDifficulty);
       this.aiController.onMove((cap, fx, fy) => this.executeAIMove(cap, fx, fy));
     }
   }
 
-  // ==================== TURN MANAGEMENT ====================
-
-  private onTurnChange(player: PlayerNumber): void {
+  private onLocalTurnChange(player: PlayerNumber): void {
+    if (this.isPvPMode) return;
+    
     this.isProcessingTurn = false;
     this.shootingController.setCurrentPlayer(player);
     this.updateHUD();
@@ -157,10 +414,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onStateChange(state: string): void {
-    const isPlayerTurn = this.gameStateManager.getCurrentPlayer() === 1;
-    const canShoot = state === 'waiting' && (!this.aiController || isPlayerTurn);
+    if (this.isPvPMode) {
+      if (state === 'moving') {
+        this.shootingController.setEnabled(false);
+      }
+      // В waiting управление включается через applyTurnChange
+    } else {
+      const isPlayerTurn = this.gameStateManager.getCurrentPlayer() === 1;
+      const canShoot = state === 'waiting' && (!this.aiController || isPlayerTurn);
+      this.shootingController.setEnabled(canShoot);
+    }
     
-    this.shootingController.setEnabled(canShoot);
     if (state === 'waiting') this.isProcessingTurn = false;
     this.updateHUD();
   }
@@ -185,7 +449,7 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // ==================== COLLISIONS & AUDIO ====================
+  // ==================== COLLISIONS ====================
 
   private setupCollisions(): void {
     this.matter.world.on('beforeupdate', () => {
@@ -193,70 +457,48 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.matter.world.on('collisionstart', (event: Phaser.Physics.Matter.Events.CollisionStartEvent) => {
-      // Ограничение частоты звуков (не чаще 50мс)
       const now = this.time.now;
       if (now - this.lastCollisionTime < 50) return;
 
       for (const pair of event.pairs) {
-        const bodyA = pair.bodyA;
-        const bodyB = pair.bodyB;
+        const soundPlayed = this.handleCollisionSound(pair.bodyA, pair.bodyB);
+        if (soundPlayed) this.lastCollisionTime = now;
 
-        // Обработка звуков столкновений
-        const soundPlayed = this.handleCollisionSound(bodyA, bodyB);
-        if (soundPlayed) {
-          this.lastCollisionTime = now;
-        }
-
-        // Игровая логика столкновений
-        const ballBody = this.findBallBody(bodyA, bodyB);
+        const ballBody = this.findBallBody(pair.bodyA, pair.bodyB);
         if (ballBody) {
-          const otherLabel = bodyA.label === 'ball' ? bodyB.label : bodyA.label;
-          if (otherLabel === 'wall') {
-            this.handleBallWallCollision(ballBody);
-          } else if (otherLabel === 'post') {
-            this.handleBallPostCollision(ballBody);
-          }
+          const otherLabel = pair.bodyA.label === 'ball' ? pair.bodyB.label : pair.bodyA.label;
+          if (otherLabel === 'wall') this.handleBallWallCollision(ballBody);
+          else if (otherLabel === 'post') this.handleBallPostCollision(ballBody);
         }
       }
     });
   }
 
-  // Логика для расчета громкости и типа звука
   private handleCollisionSound(bodyA: MatterJS.BodyType, bodyB: MatterJS.BodyType): boolean {
     const isBallA = bodyA.label === 'ball';
     const isBallB = bodyB.label === 'ball';
-    const isWallA = bodyA.label === 'wall'; 
+    const isWallA = bodyA.label === 'wall';
     const isWallB = bodyB.label === 'wall';
-    // Фишки имеют лейблы типа 'p1_0', 'p2_1'
-    const isCapA = bodyA.label && bodyA.label.startsWith('p'); 
-    const isCapB = bodyB.label && bodyB.label.startsWith('p');
+    const isCapA = bodyA.label?.startsWith('cap');
+    const isCapB = bodyB.label?.startsWith('cap');
 
-    // Оценка силы удара (приблизительная, на основе скорости)
     const velA = Math.hypot(bodyA.velocity.x, bodyA.velocity.y);
     const velB = Math.hypot(bodyB.velocity.x, bodyB.velocity.y);
     const impactForce = velA + velB;
 
-    // Игнорируем очень слабые касания
     if (impactForce < 0.15) return false;
 
-    // Расчет громкости (от 0.3 до 1.0)
     const volume = Phaser.Math.Clamp(impactForce / 15, 0.3, 1.0);
     const audio = AudioManager.getInstance();
 
     if ((isBallA && isCapB) || (isBallB && isCapA)) {
-      // Удар по мячу фишкой
-      audio.playSFX('sfx_kick', { volume: volume });
-      // Haptic Feedback при сильном ударе
+      audio.playSFX('sfx_kick', { volume });
       if (volume > 0.5) window.Telegram?.WebApp.HapticFeedback.impactOccurred('light');
       return true;
-
     } else if (isCapA && isCapB) {
-      // Столкновение двух фишек
       audio.playSFX('sfx_clack', { volume: volume * 0.9 });
       return true;
-
     } else if ((isBallA && isWallB) || (isBallB && isWallA)) {
-      // Мяч об стену (исключаем штангу, так как она post)
       audio.playSFX('sfx_bounce', { volume: volume * 0.7 });
       return true;
     }
@@ -296,10 +538,7 @@ export class GameScene extends Phaser.Scene {
     const speed = this.ballSpeedBeforeCollision;
     if (speed < 1) return;
 
-    // Звук штанги
-    const audio = AudioManager.getInstance();
-    const volume = Phaser.Math.Clamp(speed / 15, 0.4, 1.0);
-    audio.playSFX('sfx_post', { volume });
+    AudioManager.getInstance().playSFX('sfx_post', { volume: Phaser.Math.Clamp(speed / 15, 0.4, 1.0) });
 
     if (speed < 2) return;
 
@@ -324,11 +563,7 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private applyCurveBounce(
-    ballBody: MatterJS.BodyType,
-    speed: number,
-    corners: Record<string, boolean>
-  ): void {
+  private applyCurveBounce(ballBody: MatterJS.BodyType, speed: number, corners: Record<string, boolean>): void {
     const { x: vx, y: vy } = ballBody.velocity;
     const currentSpeed = Math.sqrt(vx * vx + vy * vy);
     if (currentSpeed < 1) return;
@@ -366,46 +601,24 @@ export class GameScene extends Phaser.Scene {
     this.gameStateManager.update();
     this.goalDetector.update();
     this.checkBoundaries();
-
-    // Динамическая громкость толпы
     this.updateCrowdIntensity();
   }
 
   private updateCrowdIntensity(): void {
     if (!this.ball || !this.fieldBounds) return;
-
-    // Игрок 1 всегда снизу, атакует вверх (к y = top).
-    // Чем меньше Y мяча (ближе к 0), тем опаснее момент для противника.
     const distToEnemyGoal = (this.ball.y - this.fieldBounds.top) / this.fieldBounds.height;
-    
-    let intensity = 0.2; // Базовая громкость
-
-    if (distToEnemyGoal < 0.25) {
-      intensity = 0.7; // Опасно!
-    } else if (distToEnemyGoal < 0.5) {
-      intensity = 0.4; // На чужой половине
-    } else {
-      intensity = 0.2; // Спокойно
-    }
-
+    let intensity = distToEnemyGoal < 0.25 ? 0.7 : distToEnemyGoal < 0.5 ? 0.4 : 0.2;
     AudioManager.getInstance().setAmbienceVolume(intensity);
   }
 
   private checkBoundaries(): void {
     const bounds = this.fieldBounds;
     const goalHalfWidth = (GOAL.WIDTH * this.fieldScale) / 2;
-    const padding = 10;
-
-    this.constrainBody(this.ball, bounds, goalHalfWidth, padding);
-    this.caps.forEach(cap => this.constrainBody(cap, bounds, 0, padding));
+    this.constrainBody(this.ball, bounds, goalHalfWidth, 10);
+    this.caps.forEach(cap => this.constrainBody(cap, bounds, 0, 10));
   }
 
-  private constrainBody(
-    entity: Ball | Cap,
-    bounds: FieldBounds,
-    goalHalfWidth: number,
-    padding: number
-  ): void {
+  private constrainBody(entity: Ball | Cap, bounds: FieldBounds, goalHalfWidth: number, padding: number): void {
     const pos = entity.body.position;
     const vel = entity.body.velocity;
     const radius = entity.getRadius();
@@ -435,6 +648,8 @@ export class GameScene extends Phaser.Scene {
     this.gameHUD = new GameHUD(this, {
       isAIMode: this.isAIEnabled,
       aiDifficulty: this.aiDifficulty,
+      isPvP: this.isPvPMode,
+      opponentName: this.pvpOpponentName,
     });
     this.gameHUD.onPause(() => {
       AudioManager.getInstance().playSFX('sfx_click');
@@ -445,33 +660,29 @@ export class GameScene extends Phaser.Scene {
 
   private updateHUD(): void {
     const scores = this.scoreManager.getScores();
-    this.gameHUD.updateTurn(
-      this.gameStateManager.getCurrentPlayer(),
-      this.gameStateManager.getState(),
-      this.isAIEnabled
-    );
+    
+    if (this.isPvPMode) {
+      const isMyTurn = this.currentTurnId === this.mp.getMyId();
+      this.gameHUD.updateTurn(isMyTurn ? 1 : 2, this.gameStateManager.getState(), false);
+    } else {
+      this.gameHUD.updateTurn(this.gameStateManager.getCurrentPlayer(), this.gameStateManager.getState(), this.isAIEnabled);
+    }
+    
     this.gameHUD.updateScore(scores[1], scores[2]);
   }
 
-  // ==================== GOALS & WIN ====================
+  // ==================== GOALS ====================
 
   private handleGoal(scoringPlayer: PlayerNumber): void {
-    // Звуки гола
     const audio = AudioManager.getInstance();
-    
-    // Сетка сразу
     audio.playSFX('sfx_net', { volume: 1.5 });
 
-    // Толпа через 0.4с
     this.time.delayedCall(400, () => {
-      audio.playSFX('sfx_goal', { volume: 1.0 }); 
-      // Свисток через 0.8с (от начала)
-      this.time.delayedCall(400, () => {
-        audio.playSFX('sfx_whistle', { volume: 0.8 });
-      });
+      audio.playSFX('sfx_goal', { volume: 1.0 });
+      this.time.delayedCall(400, () => audio.playSFX('sfx_whistle', { volume: 0.8 }));
     });
 
-    window.Telegram?.WebApp.HapticFeedback.notificationOccurred('success'); // Вибрация
+    window.Telegram?.WebApp.HapticFeedback.notificationOccurred('success');
 
     this.isProcessingTurn = true;
     this.gameStateManager.setGoalState();
@@ -480,25 +691,42 @@ export class GameScene extends Phaser.Scene {
     this.matchController.addGoal(scoringPlayer);
     const isWinningGoal = this.scoreManager.addGoal(scoringPlayer);
 
+    if (this.isPvPMode) {
+      const scorerId = scoringPlayer === 1
+        ? this.mp.getMyId()!
+        : this.pvpData!.players.find(p => p.id !== this.mp.getMyId())!.id;
+      this.mp.sendGoal(scorerId);
+    }
+
     this.time.delayedCall(GAME.GOAL_DELAY, () => {
-      if (isWinningGoal) {
-        this.handleWin(scoringPlayer);
-      } else {
-        this.afterGoal(scoringPlayer);
-      }
+      if (isWinningGoal) this.handleWin(scoringPlayer);
+      else this.afterGoal(scoringPlayer);
     });
   }
 
   private afterGoal(scoringPlayer: PlayerNumber): void {
-    if (this.matchController.applyPendingFormation()) {
+    if (!this.isPvPMode && this.matchController.applyPendingFormation()) {
       this.applyFormationToField(this.matchController.getCurrentFormation());
       this.gameHUD.hidePendingFormationBadge();
       this.gameHUD.showFormationAppliedNotification();
     }
 
     this.resetPositions();
+    
+    if (this.isPvPMode) {
+      const scorerId = scoringPlayer === 1
+        ? this.mp.getMyId()!
+        : this.pvpData!.players.find(p => p.id !== this.mp.getMyId())!.id;
+      
+      this.goalDetector.reset();
+      this.isProcessingTurn = false;
+      this.shootingController.setEnabled(false);
+      AudioManager.getInstance().playSFX('sfx_whistle', { volume: 0.5 });
+      this.mp.sendReadyAfterGoal(scorerId);
+      return;
+    }
+    
     const nextPlayer: PlayerNumber = scoringPlayer === 1 ? 2 : 1;
-
     this.gameStateManager.forceStop();
     this.gameStateManager.setCurrentPlayer(nextPlayer);
     this.shootingController.setCurrentPlayer(nextPlayer);
@@ -506,8 +734,7 @@ export class GameScene extends Phaser.Scene {
     this.highlightCurrentPlayerCaps();
     this.updateHUD();
     this.isProcessingTurn = false;
-    
-    // Свисток на возобновление игры
+
     AudioManager.getInstance().playSFX('sfx_whistle', { volume: 0.5 });
 
     if (nextPlayer === 1 || !this.aiController) {
@@ -524,68 +751,75 @@ export class GameScene extends Phaser.Scene {
     this.isProcessingTurn = true;
     this.gameHUD.setPauseEnabled(false);
 
-    // Звуки конца матча
     const audio = AudioManager.getInstance();
     audio.stopAmbience();
     audio.playSFX('sfx_whistle');
-    
-    if (winner === 1) {
-      audio.playSFX('sfx_win', { delay: 0.5 });
-    } else {
-      audio.playSFX('sfx_lose', { delay: 0.5 });
-    }
+
+    const isMyWin = winner === 1;
+    audio.playSFX(isMyWin ? 'sfx_win' : 'sfx_lose', { delay: 0.5 });
 
     const result = this.matchController.finishMatch(winner);
+    if (this.isPvPMode) {
+      result.rewards = isMyWin ? { coins: 150, xp: 50 } : { coins: 30, xp: 10 };
+      result.isPvP = true;
+    }
+
     this.showResultScreen(result);
   }
+
+  // ==================== UI ====================
 
   private showResultScreen(result: any): void {
     this.resultScreen = new ResultScreen(this, result, this.isAIEnabled, {
       onRematch: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.resultScreen = undefined;
-        this.restartGame();
+        if (this.isPvPMode) {
+          this.cleanupPvP();
+          this.scene.start('MatchmakingScene');
+        } else {
+          this.restartGame();
+        }
       },
       onMainMenu: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.resultScreen = undefined;
+        this.cleanupPvP();
         this.scene.start('MainMenuScene');
       },
     });
   }
-
-  // ==================== MENUS ====================
 
   private showPauseMenu(): void {
     if (this.pauseMenu || this.gameStateManager.getState() === 'finished') return;
 
     this.gameStateManager.pause();
     this.pauseMenu = new PauseMenu(this, {
-      onResume: () => { 
+      onResume: () => {
         AudioManager.getInstance().playSFX('sfx_click');
-        this.pauseMenu = undefined; 
-        this.gameStateManager.resume(); 
+        this.pauseMenu = undefined;
+        this.gameStateManager.resume();
       },
-      onChangeFormation: () => { 
+      onChangeFormation: this.isPvPMode ? undefined : () => {
         AudioManager.getInstance().playSFX('sfx_click');
-        this.pauseMenu = undefined; 
-        this.showFormationMenu(); 
+        this.pauseMenu = undefined;
+        this.showFormationMenu();
       },
-      onSettings: () => { 
+      onSettings: () => {
         AudioManager.getInstance().playSFX('sfx_click');
-        this.pauseMenu = undefined; 
-        this.showInGameSettings(); 
+        this.pauseMenu = undefined;
+        this.showInGameSettings();
       },
-      onSurrender: () => { 
+      onSurrender: () => {
         AudioManager.getInstance().playSFX('sfx_click');
-        this.pauseMenu = undefined; 
-        this.handleSurrender(); 
+        this.pauseMenu = undefined;
+        this.handleSurrender();
       },
     });
   }
 
   private showFormationMenu(): void {
-    if (this.formationMenu) return;
+    if (this.formationMenu || this.isPvPMode) return;
 
     this.formationMenu = new FormationMenu(this, this.matchController.getCurrentFormation().id, {
       onSelect: (formation: Formation) => {
@@ -604,7 +838,6 @@ export class GameScene extends Phaser.Scene {
 
   private handleFormationSelect(formation: Formation): void {
     if (formation.id === this.matchController.getCurrentFormation().id) {
-      // Даже если id тот же, классы могли измениться — обновляем
       this.matchController.updateCurrentFormation(formation);
       return;
     }
@@ -625,44 +858,38 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleSurrender(): void {
+    if (this.isPvPMode) this.mp.sendSurrender();
+
     const result = this.matchController.handleSurrender();
     this.gameStateManager.finish();
     this.shootingController.setEnabled(false);
     this.isProcessingTurn = true;
     this.gameHUD.setPauseEnabled(false);
-    
-    // Звук поражения
+
     AudioManager.getInstance().stopAmbience();
     AudioManager.getInstance().playSFX('sfx_lose');
-    
+
     this.showResultScreen(result);
   }
 
-  // ==================== FORMATION ====================
+  // ==================== FIELD ====================
 
   private applyFormationToField(formation: Formation): void {
     const playerCaps = this.caps.filter(c => c.owner === 1);
     const enemyCaps = this.caps.filter(c => c.owner === 2);
 
     formation.slots.forEach((slot, i) => {
-      // Обновляем позиции игрока
       if (playerCaps[i]) {
         const pos = this.relativeToAbsolute(slot.x, slot.y);
         this.startPositions.caps[i] = pos;
-        
-        // Обновляем класс фишки!
         playerCaps[i].setCapClass(slot.capClass);
       }
-      
-      // Обновляем позиции AI (зеркально)
       if (enemyCaps[i]) {
         const pos = this.relativeToAbsolute(slot.x, 1 - slot.y);
         this.startPositions.caps[i + 3] = pos;
       }
     });
   }
-
-  // ==================== GAME FLOW ====================
 
   private restartGame(): void {
     this.matchController.reset();
@@ -679,9 +906,8 @@ export class GameScene extends Phaser.Scene {
     this.highlightCurrentPlayerCaps();
     this.updateHUD();
 
-    // Перезапуск звуков матча
     const audio = AudioManager.getInstance();
-    audio.stopAll(); // Остановить всё старое (музыку победы)
+    audio.stopAll();
     audio.playAmbience('bgm_match');
     audio.playSFX('sfx_whistle');
   }
@@ -692,12 +918,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   private highlightCurrentPlayerCaps(): void {
-    const current = this.gameStateManager.getCurrentPlayer();
-    const showHighlight = !this.aiController || current === 1;
-    this.caps.forEach(cap => cap.highlight(showHighlight && cap.owner === current));
+    if (this.isPvPMode) {
+      const isMyTurn = this.currentTurnId === this.mp.getMyId();
+      this.caps.forEach(cap => cap.highlight(isMyTurn && cap.owner === 1));
+    } else {
+      const current = this.gameStateManager.getCurrentPlayer();
+      const showHighlight = !this.aiController || current === 1;
+      this.caps.forEach(cap => cap.highlight(showHighlight && cap.owner === current));
+    }
   }
-
-  // ==================== FIELD SETUP ====================
 
   private calculateFieldBounds(): void {
     const { centerX, centerY, width, height } = this.cameras.main;
@@ -737,41 +966,19 @@ export class GameScene extends Phaser.Scene {
     const formation = this.matchController.getCurrentFormation();
     const data = playerData.get();
     const playerSkinId = data.equippedCapSkin;
-
-    // Дефолтные классы для AI
     const aiClasses: CapClass[] = ['sniper', 'balanced', 'tank'];
 
-    // Создаём фишки игрока 1 (снизу) — используем классы из формации
     formation.slots.forEach((slot, i) => {
       const absPos = this.relativeToAbsolute(slot.x, slot.y);
-      const cap = new Cap(
-        this,
-        absPos.x,
-        absPos.y,
-        1 as PlayerNumber,
-        `p1_${i}`,
-        slot.capClass,    // Класс из формации!
-        this.fieldScale,
-        playerSkinId      // Скин игрока
-      );
+      const cap = new Cap(this, absPos.x, absPos.y, 1 as PlayerNumber, `p1_${i}`, slot.capClass, this.fieldScale, playerSkinId);
       this.caps.push(cap);
       this.startPositions.caps.push(absPos);
     });
 
-    // Создаём фишки игрока 2 / AI (сверху, отзеркаленные)
     formation.slots.forEach((slot, i) => {
       const mirroredY = 1 - slot.y;
       const absPos = this.relativeToAbsolute(slot.x, mirroredY);
-      const cap = new Cap(
-        this,
-        absPos.x,
-        absPos.y,
-        2 as PlayerNumber,
-        `p2_${i}`,
-        aiClasses[i] || 'balanced',  // AI использует свои классы
-        this.fieldScale
-        // AI без кастомного скина
-      );
+      const cap = new Cap(this, absPos.x, absPos.y, 2 as PlayerNumber, `p2_${i}`, aiClasses[i] || 'balanced', this.fieldScale);
       this.caps.push(cap);
       this.startPositions.caps.push(absPos);
     });
@@ -786,34 +993,24 @@ export class GameScene extends Phaser.Scene {
     const sideWidth = (right - left - goalWidth) / 2;
 
     const wallOpts: Phaser.Types.Physics.Matter.MatterBodyConfig = {
-      isStatic: true,
-      restitution: 0.7,
-      friction: 0.05,
-      label: 'wall',
+      isStatic: true, restitution: 0.7, friction: 0.05, label: 'wall',
       collisionFilter: { category: COLLISION_CATEGORIES.WALL },
     };
 
     const postOpts: Phaser.Types.Physics.Matter.MatterBodyConfig = {
-      ...wallOpts,
-      restitution: 0.85,
-      friction: 0.02,
-      label: 'post',
+      ...wallOpts, restitution: 0.85, friction: 0.02, label: 'post',
     };
 
     const addRect = (x: number, y: number, w: number, h: number, opts: Phaser.Types.Physics.Matter.MatterBodyConfig) =>
       this.matter.add.rectangle(x, y, w, h, opts);
 
-    // Side walls
     addRect(left - thickness / 2, (top + bottom) / 2, thickness, bottom - top, wallOpts);
     addRect(right + thickness / 2, (top + bottom) / 2, thickness, bottom - top, wallOpts);
-
-    // Top/bottom walls with gaps
     addRect(left + sideWidth / 2, top - thickness / 2, sideWidth, thickness, wallOpts);
     addRect(right - sideWidth / 2, top - thickness / 2, sideWidth, thickness, wallOpts);
     addRect(left + sideWidth / 2, bottom + thickness / 2, sideWidth, thickness, wallOpts);
     addRect(right - sideWidth / 2, bottom + thickness / 2, sideWidth, thickness, wallOpts);
 
-    // Goals
     [{ y: top, dir: -1 }, { y: bottom, dir: 1 }].forEach(({ y, dir }) => {
       addRect(centerX, y + dir * (goalDepth + thickness / 2), goalWidth, thickness, wallOpts);
       addRect(centerX - goalWidth / 2 - postThickness / 2, y + dir * goalDepth / 2, postThickness, goalDepth, postOpts);
@@ -821,13 +1018,29 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // ==================== SHUTDOWN ====================
-  // ИСПРАВЛЕНИЕ БАГА: Останавливаем ВСЕ звуки при выходе из сцены
+  // ==================== CLEANUP ====================
+
+  private cleanupPvP(): void {
+    if (this.isPvPMode) {
+      this.mp.off('opponent_shoot');
+      this.mp.off('turn_change');
+      this.mp.off('goal_scored');
+      this.mp.off('continue_game');
+      this.mp.off('opponent_surrendered');
+      this.mp.off('opponent_disconnected');
+      this.mp.off('positions_update');
+      this.mp.clearRoom();
+      
+      if (this.syncInterval) {
+        this.syncInterval.destroy();
+        this.syncInterval = undefined;
+      }
+    }
+  }
 
   shutdown(): void {
-    // Останавливаем ВСЕ звуки (включая SFX победы/поражения)
     AudioManager.getInstance().stopAll();
-    
+    this.cleanupPvP();
     this.gameHUD?.destroy();
     this.pauseMenu?.destroy();
     this.formationMenu?.destroy();
