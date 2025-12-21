@@ -5,6 +5,12 @@ import { SHOOTING } from '../constants/gameConstants';
 import { Cap } from '../entities/Cap';
 import { PlayerNumber } from '../types';
 
+export interface ShootEventData {
+  cap: Cap;
+  velocity: { x: number; y: number };
+  localCapIndex: number;
+}
+
 export class ShootingController {
   private scene: Phaser.Scene;
   private isDragging = false;
@@ -12,26 +18,48 @@ export class ShootingController {
   private dragStartPoint: Phaser.Math.Vector2 | null = null;
   private aimGraphics: Phaser.GameObjects.Graphics;
   private currentPlayer: PlayerNumber = 1;
-  private onShootCallback: ((cap: Cap) => void) | null = null;
+  private onShootCallback: ((data: ShootEventData) => void) | null = null;
   
-  // Флаг включения контроллера
   private isEnabled = true;
+  private isPvPMode = false;
+  private isHost = true;
+  
+  // Map от Cap к ЛОКАЛЬНОМУ индексу (0,1,2 для своих фишек)
+  private registeredCaps: Map<Cap, number> = new Map();
+  
+  private pendingShot: { cap: Cap; localIndex: number } | null = null;
+  
+  // Флаг чтобы предотвратить повторные выстрелы
+  private hasFiredThisTurn = false;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.aimGraphics = scene.add.graphics().setDepth(100);
     this.setupInput();
+    
+    this.scene.matter.world.on('afterupdate', this.onPhysicsUpdate, this);
   }
 
+  setPvPMode(isPvP: boolean, isHost: boolean): void {
+    this.isPvPMode = isPvP;
+    this.isHost = isHost;
+    console.log('[ShootingController] PvP mode:', isPvP, 'isHost:', isHost);
+  }
+
+  /**
+   * Устанавливает текущего игрока (owner команды, чей сейчас ход)
+   * В PvP: 1 = Host team, 2 = Guest team
+   */
   setCurrentPlayer(player: PlayerNumber): void {
     this.currentPlayer = player;
+    console.log('[ShootingController] Current player set to:', player);
   }
 
   getCurrentPlayer(): PlayerNumber {
     return this.currentPlayer;
   }
 
-  onShoot(callback: (cap: Cap) => void): void {
+  onShoot(callback: (data: ShootEventData) => void): void {
     this.onShootCallback = callback;
   }
 
@@ -39,6 +67,9 @@ export class ShootingController {
     this.isEnabled = enabled;
     if (!enabled) {
       this.cancelDrag();
+    } else {
+      // При включении сбрасываем флаг выстрела
+      this.hasFiredThisTurn = false;
     }
     console.log('[ShootingController] setEnabled:', enabled);
   }
@@ -47,10 +78,22 @@ export class ShootingController {
     return this.isEnabled;
   }
 
-  registerCap(cap: Cap): void {
+  /**
+   * Регистрирует фишку для управления
+   * @param cap - фишка
+   * @param localIndex - локальный индекс (0, 1, 2 для своих фишек)
+   */
+  registerCap(cap: Cap, localIndex: number): void {
+    this.registeredCaps.set(cap, localIndex);
+    console.log('[ShootingController] Registered cap:', cap.id, 'owner:', cap.owner, 'localIndex:', localIndex);
+    
     cap.sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       this.onPointerDown(pointer, cap);
     });
+  }
+
+  getCapIndex(cap: Cap): number {
+    return this.registeredCaps.get(cap) ?? -1;
   }
 
   private setupInput(): void {
@@ -60,14 +103,31 @@ export class ShootingController {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer, cap: Cap): void {
-    // Проверяем включён ли контроллер
+    // Проверяем все условия
     if (!this.isEnabled) {
-      console.log('[ShootingController] Disabled, ignoring pointerdown');
+      console.log('[ShootingController] Disabled, ignoring click on:', cap.id);
       return;
     }
     
+    if (this.isDragging) {
+      console.log('[ShootingController] Already dragging, ignoring');
+      return;
+    }
+    
+    if (this.hasFiredThisTurn) {
+      console.log('[ShootingController] Already fired this turn, ignoring');
+      return;
+    }
+    
+    // Проверяем что это фишка текущей команды
     if (cap.owner !== this.currentPlayer) {
-      console.log('[ShootingController] Not my cap, owner:', cap.owner, 'currentPlayer:', this.currentPlayer);
+      console.log('[ShootingController] Not current player cap - cap.owner:', cap.owner, 'currentPlayer:', this.currentPlayer);
+      return;
+    }
+    
+    // Проверяем что это зарегистрированная (своя) фишка
+    if (!this.registeredCaps.has(cap)) {
+      console.log('[ShootingController] Cap not registered (not mine):', cap.id);
       return;
     }
 
@@ -76,15 +136,13 @@ export class ShootingController {
     this.dragStartPoint = new Phaser.Math.Vector2(pointer.x, pointer.y);
     cap.highlight(true);
     
-    console.log('[ShootingController] Started dragging cap:', cap.id);
+    console.log('[ShootingController] Started dragging:', cap.id, 'owner:', cap.owner);
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
     if (!this.isDragging || !this.selectedCap || !this.dragStartPoint) return;
     
-    // Проверяем isEnabled во время drag
     if (!this.isEnabled) {
-      console.log('[ShootingController] Disabled during drag, cancelling');
       this.cancelDrag();
       return;
     }
@@ -103,9 +161,7 @@ export class ShootingController {
   private onPointerUp(pointer: Phaser.Input.Pointer): void {
     if (!this.isDragging || !this.selectedCap || !this.dragStartPoint) return;
     
-    // Проверяем isEnabled перед ударом
-    if (!this.isEnabled) {
-      console.log('[ShootingController] Disabled, cancelling shot');
+    if (!this.isEnabled || this.hasFiredThisTurn) {
       this.cancelDrag();
       return;
     }
@@ -123,13 +179,44 @@ export class ShootingController {
     }
 
     const cap = this.selectedCap;
+    const localIndex = this.getCapIndex(cap);
+    
+    // Помечаем что уже выстрелили
+    this.hasFiredThisTurn = true;
+    
     const force = cap.calculateShotForce(distance, dragVector.normalize());
+    
+    console.log('[ShootingController] Applying force to:', cap.id, 'force:', force, 'distance:', distance);
+    
     cap.applyForce(force.x, force.y);
     
-    console.log('[ShootingController] Shot executed, cap:', cap.id);
+    this.pendingShot = {
+      cap,
+      localIndex
+    };
 
-    this.onShootCallback?.(cap);
     this.finishDrag();
+  }
+
+  private onPhysicsUpdate = (): void => {
+    if (!this.pendingShot) return;
+    
+    const { cap, localIndex } = this.pendingShot;
+    
+    const velocity = {
+      x: cap.body.velocity.x,
+      y: cap.body.velocity.y
+    };
+    
+    console.log('[ShootingController] Shot complete - cap:', cap.id, 'localIndex:', localIndex, 'velocity:', velocity);
+    
+    this.onShootCallback?.({
+      cap,
+      velocity,
+      localCapIndex: localIndex
+    });
+    
+    this.pendingShot = null;
   }
 
   private drawAimLine(dragVector: Phaser.Math.Vector2, distance: number): void {
@@ -148,11 +235,9 @@ export class ShootingController {
     this.drawTrajectoryDots(capX, capY, aimDirection);
 
     const powerRatio = distance / SHOOTING.MAX_DRAG_DISTANCE;
-    
-    const r = Math.floor(100 + (255 - 100) * powerRatio);
-    const g = Math.floor(255 + (50 - 255) * powerRatio);
-    const b = Math.floor(100 + (50 - 100) * powerRatio);
-    
+    const r = Math.floor(100 + 155 * powerRatio);
+    const g = Math.floor(255 - 205 * powerRatio);
+    const b = Math.floor(100 - 50 * powerRatio);
     const color = Phaser.Display.Color.GetColor(r, g, b);
 
     this.aimGraphics.lineStyle(4, color, 0.8);
@@ -190,6 +275,8 @@ export class ShootingController {
     this.scene.input.off('pointermove', this.onPointerMove, this);
     this.scene.input.off('pointerup', this.onPointerUp, this);
     this.scene.input.off('pointerupoutside', this.onPointerUp, this);
+    this.scene.matter.world.off('afterupdate', this.onPhysicsUpdate, this);
     this.aimGraphics.destroy();
+    this.registeredCaps.clear();
   }
 }

@@ -1,5 +1,3 @@
-// src/controllers/ScoreManager.ts
-
 import Phaser from 'phaser';
 import { GAME } from '../constants/gameConstants';
 import { PlayerNumber } from '../types';
@@ -50,6 +48,14 @@ export class ScoreManager {
 
     return this.scores[player] >= GAME.WINNING_SCORE;
   }
+
+  // --- НОВЫЙ МЕТОД: Установка счета извне (для PvP) ---
+  setScores(p1: number, p2: number): void {
+    this.scores[1] = p1;
+    this.scores[2] = p2;
+    this.scoreText.setText(`${this.scores[1]} : ${this.scores[2]}`);
+  }
+  // ----------------------------------------------------
 
   /**
    * Проверяет, достиг ли игрок победного счёта

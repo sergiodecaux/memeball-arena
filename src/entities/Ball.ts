@@ -7,7 +7,7 @@ import { playerData } from '../data/PlayerData';
 import { getBallSkin, BallSkinData } from '../data/SkinsCatalog';
 
 export class Ball {
-  public body!: MatterJS.BodyType;  // ИСПРАВЛЕНО: добавлен !
+  public body!: MatterJS.BodyType;
   public sprite: Phaser.GameObjects.Container;
 
   private scene: Phaser.Scene;
@@ -41,10 +41,20 @@ export class Ball {
     textureKey: 'ball_default'
   };
 
-  constructor(scene: Phaser.Scene, x: number, y: number, radius?: number) {
+  constructor(
+    scene: Phaser.Scene, 
+    x: number, 
+    y: number, 
+    radius?: number,
+    skinId?: string
+  ) {
     this.scene = scene;
     this.radius = radius || Ball.PHYSICS.RADIUS;
-    this.skinData = getBallSkin(playerData.get().equippedBallSkin) || Ball.DEFAULT_SKIN;
+    
+    const effectiveSkinId = skinId || playerData.get().equippedBallSkin || 'ball_default';
+    this.skinData = getBallSkin(effectiveSkinId) || Ball.DEFAULT_SKIN;
+    
+    console.log('[Ball] Using skin:', this.skinData.id, this.skinData.name);
 
     this.sprite = scene.add.container(x, y).setDepth(50);
     
@@ -54,7 +64,6 @@ export class Ball {
     this.createPhysicsBody(x, y);
   }
 
-  // ДОБАВЛЕНО: геттеры для x и y
   get x(): number {
     return this.body.position.x;
   }
@@ -67,17 +76,14 @@ export class Ball {
     const { skinData: skin, radius: r, scene } = this;
     const colors = getColors();
 
-    // Тень
     this.sprite.add(
       scene.add.ellipse(3, 3, r * 2, r * 1.5, colors.shadowColor, colors.shadowAlpha * 0.5)
     );
 
-    // Свечение
     if (skin.hasGlow) {
       this.createGlow();
     }
 
-    // Тело мяча
     this.createBallSprite();
   }
 
@@ -114,7 +120,6 @@ export class Ball {
     const key = 'ball_glow_tex';
     if (this.scene.textures.exists(key)) return key;
     
-    // ИСПРАВЛЕНО: убран add: false
     const g = this.scene.add.graphics();
     g.fillStyle(0xffffff).fillCircle(32, 32, 32);
     g.generateTexture(key, 64, 64);
@@ -142,7 +147,6 @@ export class Ball {
     const key = `ball_fallback_${skin.id}`;
     
     if (!scene.textures.exists(key)) {
-      // ИСПРАВЛЕНО: убран add: false
       const g = scene.add.graphics();
       g.setVisible(false);
       const size = 64;
@@ -207,7 +211,6 @@ export class Ball {
     const key = 'ball_trail_tex';
     if (this.scene.textures.exists(key)) return key;
     
-    // ИСПРАВЛЕНО: убран add: false
     const g = this.scene.add.graphics();
     g.setVisible(false);
     g.fillStyle(0xffffff).fillCircle(8, 8, 8);
@@ -223,7 +226,6 @@ export class Ball {
     const texKey = this.scene.textures.exists(effect.texture) ? effect.texture : 'p_spark';
     if (!this.scene.textures.exists(texKey)) return;
 
-    // ИСПРАВЛЕНО: blendMode приведение типа
     this.particleEmitter = this.scene.add.particles(0, 0, texKey, {
       speed: effect.speed,
       scale: effect.scale,
@@ -287,6 +289,28 @@ export class Ball {
         this.particleEmitter.start();
       } else {
         this.particleEmitter.stop();
+      }
+    }
+  }
+
+  /**
+   * Синхронизирует спрайт с позицией физического тела без применения физики
+   * Используется для интерполяции у гостя в PvP
+   */
+  syncSpriteWithBody(): void {
+    const { x, y } = this.body.position;
+    this.sprite.setPosition(x, y);
+    
+    const speed = this.getSpeed();
+    if (speed > 0.1) {
+      this.ballSprite.rotation += speed * 0.03;
+    }
+    
+    if (this.trailEmitter) {
+      if (speed > 2) {
+        this.trailEmitter.start();
+      } else {
+        this.trailEmitter.stop();
       }
     }
   }

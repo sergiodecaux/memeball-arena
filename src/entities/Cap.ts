@@ -7,12 +7,16 @@ import { playerData } from '../data/PlayerData';
 import { getCapSkin, CapSkinData, CAP_SKINS } from '../data/SkinsCatalog';
 import { drawClassIcon, getClassColor } from '../ui/ClassIcons';
 
+export interface CapOptions {
+  applyBonuses?: boolean;
+}
+
 export class Cap {
   public body: MatterJS.BodyType;
   public sprite: Phaser.GameObjects.Container;
   public readonly owner: PlayerNumber;
   public readonly id: string;
-  public capClass: CapClass;  // Убрали readonly — теперь можно менять
+  public capClass: CapClass;
   public stats: CapClassStats;
 
   private scene: Phaser.Scene;
@@ -28,10 +32,10 @@ export class Cap {
   private classIconContainer?: Phaser.GameObjects.Container;
 
   private static readonly MAX_SPEED: Record<CapClass, number> = {
-    balanced: 20,
+    balanced: 25,
     tank: 15,
-    sniper: 22,
-    trickster: 20,
+    sniper: 28,
+    trickster: 25,
   };
 
   constructor(
@@ -42,7 +46,8 @@ export class Cap {
     id: string,
     capClass: CapClass = 'balanced',
     scale = 1,
-    skinId?: string
+    skinId?: string,
+    options?: CapOptions
   ) {
     this.scene = scene;
     this.owner = owner;
@@ -53,7 +58,6 @@ export class Cap {
     this.baseRadius = this.stats.radius;
     this.scaledRadius = this.baseRadius * scale;
 
-    // Определение скина
     if (skinId) {
       this.skinId = skinId;
     } else {
@@ -62,8 +66,13 @@ export class Cap {
         : 'cap_default_magenta';
     }
 
-    if (owner === 1) {
+    const shouldApplyBonuses = options?.applyBonuses ?? true;
+    
+    if (shouldApplyBonuses && owner === 1) {
       this.applyBonuses(playerData.getCapTotalBonus(this.skinId));
+      console.log(`[Cap] ${id} bonuses applied:`, this.stats);
+    } else if (!shouldApplyBonuses) {
+      console.log(`[Cap] ${id} bonuses DISABLED (PvP mode)`);
     }
 
     this.skinData = getCapSkin(this.skinId) || CAP_SKINS[0];
@@ -87,25 +96,19 @@ export class Cap {
   private createVisuals(): void {
     const { skinData: skin, scaledRadius: r, scene } = this;
 
-    // Частицы (под фишкой)
     if (skin.visual.particleEffect) {
       this.createParticles(skin.visual.particleEffect);
     }
 
-    // Тень
     this.sprite.add(scene.add.ellipse(3, 3, r * 1.8, r * 1.5, 0x000000, 0.25));
 
-    // Основное тело
     if (skin.visual.type === 'sprite' && skin.visual.textureKey && scene.textures.exists(skin.visual.textureKey)) {
       this.createSpriteVisual(skin);
     } else {
       this.createGraphicsVisual(skin);
     }
 
-    // Иконка класса
     this.createClassIcon();
-
-    // Кольцо выделения
     this.createHighlightRing();
   }
 
@@ -135,13 +138,9 @@ export class Cap {
     const r = this.scaledRadius;
     const iconColor = this.skinData.visual.type === 'sprite' ? 0xffffff : getClassColor(this.capClass);
 
-    // Контейнер для иконки (чтобы легко обновлять)
     this.classIconContainer = this.scene.add.container(r * 0.55, -r * 0.55);
-    
-    // Подложка
     this.classIconContainer.add(this.scene.add.circle(0, 0, r * 0.28, 0x000000, 0.4));
 
-    // Иконка
     const icon = drawClassIcon(this.scene, 0, 0, this.capClass, r * 0.25, iconColor);
     icon.setAlpha(0.95);
     this.classIconContainer.add(icon);
@@ -155,13 +154,9 @@ export class Cap {
     const r = this.scaledRadius;
     const iconColor = this.skinData.visual.type === 'sprite' ? 0xffffff : getClassColor(this.capClass);
     
-    // Очищаем старую иконку
     this.classIconContainer.removeAll(true);
-    
-    // Подложка
     this.classIconContainer.add(this.scene.add.circle(0, 0, r * 0.28, 0x000000, 0.4));
 
-    // Новая иконка
     const icon = drawClassIcon(this.scene, 0, 0, this.capClass, r * 0.25, iconColor);
     icon.setAlpha(0.95);
     this.classIconContainer.add(icon);
@@ -230,7 +225,27 @@ export class Cap {
       this.visualSprite.rotation = this.body.angle;
     }
 
-    // Управление частицами по скорости
+    if (this.particleEmitter && this.skinData.visual.particleEffect?.followVelocity) {
+      if (this.getSpeed() > 1.0) {
+        this.particleEmitter.start();
+      } else {
+        this.particleEmitter.stop();
+      }
+    }
+  }
+
+  /**
+   * Синхронизирует спрайт с позицией физического тела без применения физики
+   * Используется для интерполяции у гостя в PvP
+   */
+  syncSpriteWithBody(): void {
+    const { x, y } = this.body.position;
+    this.sprite.setPosition(x, y);
+    
+    if (this.visualSprite) {
+      this.visualSprite.rotation = this.body.angle;
+    }
+    
     if (this.particleEmitter && this.skinData.visual.particleEffect?.followVelocity) {
       if (this.getSpeed() > 1.0) {
         this.particleEmitter.start();
@@ -270,7 +285,7 @@ export class Cap {
   }
 
   applyForce(forceX: number, forceY: number): void {
-    const maxForce = this.stats.maxForce * 1.5;
+    const maxForce = this.stats.maxForce * 2;
     const forceMag = Math.sqrt(forceX * forceX + forceY * forceY);
     
     if (forceMag > maxForce) {
@@ -295,41 +310,27 @@ export class Cap {
     return this.scaledRadius;
   }
 
-  /**
-   * Изменить класс фишки (для смены формации в игре)
-   */
   setCapClass(newClass: CapClass): void {
     if (this.capClass === newClass) return;
     
     this.capClass = newClass;
     const newStats = CAP_CLASSES[newClass];
     
-    // Обновляем статы
     this.stats = { ...newStats };
     
-    // Применяем бонусы если это фишка игрока
     if (this.owner === 1) {
       this.applyBonuses(playerData.getCapTotalBonus(this.skinId));
     }
     
-    // Обновляем физические параметры
     const body = this.body as MatterJS.BodyType;
-    
-    // Обновляем массу
     this.scene.matter.body.setMass(body, this.stats.mass);
-    
-    // Обновляем label
     body.label = `cap_${newClass}_p${this.owner}`;
     
-    // Обновляем визуал иконки класса
     this.updateClassIcon();
     
     console.log(`Cap ${this.id} class changed to ${newClass}`);
   }
 
-  /**
-   * Получить текущий класс фишки
-   */
   getCapClass(): CapClass {
     return this.capClass;
   }

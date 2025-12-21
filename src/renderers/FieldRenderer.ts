@@ -31,13 +31,27 @@ export class FieldRenderer {
     goalColor: 0x0ea5e9,
   };
 
-  constructor(scene: Phaser.Scene, bounds: FieldBounds, fieldScale: number = 1) {
+  /**
+   * @param scene - Phaser сцена
+   * @param bounds - Границы поля
+   * @param fieldScale - Масштаб поля
+   * @param skinId - ID скина поля (опционально, если не указан - берётся из playerData)
+   */
+  constructor(
+    scene: Phaser.Scene, 
+    bounds: FieldBounds, 
+    fieldScale: number = 1,
+    skinId?: string
+  ) {
     this.scene = scene;
     this.bounds = bounds;
     this.scale = fieldScale;
 
-    const skinId = playerData.get().equippedFieldSkin || 'field_default';
-    this.skin = getFieldSkin(skinId) || getFieldSkin('field_default') || FieldRenderer.DEFAULT_SKIN;
+    // Определяем скин
+    const effectiveSkinId = skinId || playerData.get().equippedFieldSkin || 'field_default';
+    this.skin = getFieldSkin(effectiveSkinId) || getFieldSkin('field_default') || FieldRenderer.DEFAULT_SKIN;
+    
+    console.log('[FieldRenderer] Using skin:', this.skin.id, this.skin.name);
 
     this.graphics = scene.add.graphics();
   }

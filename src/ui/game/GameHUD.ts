@@ -11,37 +11,35 @@ export interface GameHUDConfig {
   aiDifficulty?: string;
   isPvP?: boolean;
   opponentName?: string;
+  matchDuration?: number;
 }
 
-/**
- * HUD игры - отображает ход, состояние, счёт и кнопку паузы
- */
 export class GameHUD {
   private scene: Phaser.Scene;
   private config: GameHUDConfig;
   
-  // UI элементы
   private turnText!: Phaser.GameObjects.Text;
   private stateText!: Phaser.GameObjects.Text;
-  private modeText!: Phaser.GameObjects.Text;
+  private modeText?: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
   private pauseButton!: Phaser.GameObjects.Container;
   private pendingFormationBadge: Phaser.GameObjects.Container | null = null;
   
-  // PvP элементы
   private pvpHeader: Phaser.GameObjects.Container | null = null;
   private connectionIndicator: Phaser.GameObjects.Graphics | null = null;
-  private turnTimer: Phaser.GameObjects.Text | null = null;
-  private timerEvent: Phaser.Time.TimerEvent | null = null;
-  private remainingTime: number = 60;
   
-  // Callbacks
+  private turnTimer: Phaser.GameObjects.Text | null = null;
+  private turnTimerEvent: Phaser.Time.TimerEvent | null = null;
+  private turnRemainingTime = 60;
+  
+  private matchTimerContainer: Phaser.GameObjects.Container | null = null;
+  private matchTimerText: Phaser.GameObjects.Text | null = null;
+  
   private onPauseCallback: (() => void) | null = null;
 
   constructor(scene: Phaser.Scene, config: GameHUDConfig) {
     this.scene = scene;
     this.config = config;
-    
     this.create();
   }
 
@@ -49,36 +47,32 @@ export class GameHUD {
     const { width, height } = this.scene.cameras.main;
     const colors = getColors();
     
-    // PvP режим - специальный хедер
     if (this.config.isPvP) {
       this.createPvPHeader();
+      this.createMatchTimer();
     }
     
-    // Turn text
     const turnY = this.config.isPvP ? 70 : 20;
-    this.turnText = this.scene.add.text(width / 2, turnY, '', { 
-      fontSize: '22px', 
-      color: '#ffffff', 
-      fontFamily: 'Arial', 
-      stroke: '#000000', 
-      strokeThickness: 4 
-    });
-    this.turnText.setOrigin(0.5, 0).setDepth(100);
     
-    // State text
-    this.stateText = this.scene.add.text(width / 2, turnY + 30, '', { 
-      fontSize: '16px', 
-      color: hexToString(colors.uiTextSecondary), 
-      fontFamily: 'Arial', 
-      stroke: '#000000', 
-      strokeThickness: 2 
-    });
-    this.stateText.setOrigin(0.5, 0).setDepth(100);
+    this.turnText = this.scene.add.text(width / 2, turnY, '', {
+      fontSize: '22px',
+      color: '#ffffff',
+      fontFamily: 'Arial',
+      stroke: '#000000',
+      strokeThickness: 4
+    }).setOrigin(0.5, 0).setDepth(100);
     
-    // Mode text (только для AI режима)
+    this.stateText = this.scene.add.text(width / 2, turnY + 30, '', {
+      fontSize: '16px',
+      color: hexToString(colors.uiTextSecondary),
+      fontFamily: 'Arial',
+      stroke: '#000000',
+      strokeThickness: 2
+    }).setOrigin(0.5, 0).setDepth(100);
+    
     if (!this.config.isPvP) {
-      const modeLabel = this.config.isAIMode 
-        ? `🤖 vs AI (${this.config.aiDifficulty || 'medium'})` 
+      const modeLabel = this.config.isAIMode
+        ? `🤖 vs AI (${this.config.aiDifficulty || 'medium'})`
         : '👥 Local PvP';
       this.modeText = this.scene.add.text(20, 20, modeLabel, {
         fontSize: '14px',
@@ -86,96 +80,74 @@ export class GameHUD {
         fontFamily: 'Arial',
         stroke: '#000000',
         strokeThickness: 3,
-      });
-      this.modeText.setDepth(100);
+      }).setDepth(100);
     }
     
-    // Score text
     this.scoreText = this.scene.add.text(width / 2, height - 30, '0 : 0', {
       fontSize: '32px',
       color: '#ffffff',
       fontFamily: 'Arial Black',
       stroke: '#000000',
       strokeThickness: 6,
-    });
-    this.scoreText.setOrigin(0.5, 0.5).setDepth(100);
+    }).setOrigin(0.5, 0.5).setDepth(100);
     
-    // Pause button
     this.createPauseButton();
     
-    // Таймер хода для PvP
     if (this.config.isPvP) {
       this.createTurnTimer();
     }
   }
 
-  /**
-   * Создаёт PvP хедер с именами игроков
-   */
   private createPvPHeader(): void {
     const { width } = this.scene.cameras.main;
     const colors = getColors();
     
-    this.pvpHeader = this.scene.add.container(width / 2, 0);
-    this.pvpHeader.setDepth(100);
+    this.pvpHeader = this.scene.add.container(width / 2, 0).setDepth(100);
     
-    // Фон хедера
     const headerBg = this.scene.add.graphics();
     headerBg.fillStyle(0x000000, 0.7);
     headerBg.fillRect(-width / 2, 0, width, 60);
-    
-    // Градиентная линия снизу
     headerBg.lineStyle(2, colors.uiAccent, 0.5);
     headerBg.lineBetween(-width / 2, 60, width / 2, 60);
     this.pvpHeader.add(headerBg);
     
-    // PvP бейдж
     const pvpBadge = this.scene.add.container(0, 30);
-    
     const badgeBg = this.scene.add.graphics();
     badgeBg.fillStyle(0xff4757, 0.3);
     badgeBg.fillRoundedRect(-40, -12, 80, 24, 12);
     badgeBg.lineStyle(1, 0xff4757, 0.8);
     badgeBg.strokeRoundedRect(-40, -12, 80, 24, 12);
     pvpBadge.add(badgeBg);
-    
-    const badgeText = this.scene.add.text(0, 0, '⚔️ PVP', {
+    pvpBadge.add(this.scene.add.text(0, 0, '⚔️ PVP', {
       fontSize: '14px',
       fontFamily: 'Arial Black',
       color: '#ff4757',
-    }).setOrigin(0.5);
-    pvpBadge.add(badgeText);
-    
+    }).setOrigin(0.5));
     this.pvpHeader.add(pvpBadge);
     
-    // Имя игрока (слева)
-    const playerName = this.scene.add.text(-width / 2 + 20, 30, '👤 YOU', {
+    this.pvpHeader.add(this.scene.add.text(-width / 2 + 20, 30, '👤 YOU', {
       fontSize: '14px',
       fontFamily: 'Arial',
       color: '#4ade80',
       stroke: '#000000',
       strokeThickness: 2,
-    }).setOrigin(0, 0.5);
-    this.pvpHeader.add(playerName);
+    }).setOrigin(0, 0.5));
     
-    // Индикатор соединения
     this.connectionIndicator = this.scene.add.graphics();
-    this.updateConnectionIndicator(true);
+    this.connectionIndicator.fillStyle(0x4ade80, 1);
+    this.connectionIndicator.fillCircle(0, 0, 5);
     this.connectionIndicator.setPosition(-width / 2 + 80, 30);
     this.pvpHeader.add(this.connectionIndicator);
     
-    // Имя противника (справа)
-    const opponentName = this.scene.add.text(width / 2 - 20, 30, 
+    this.pvpHeader.add(this.scene.add.text(width / 2 - 20, 30,
       `⚔️ ${this.config.opponentName || 'Opponent'}`, {
       fontSize: '14px',
       fontFamily: 'Arial',
       color: '#ff6b6b',
       stroke: '#000000',
       strokeThickness: 2,
-    }).setOrigin(1, 0.5);
-    this.pvpHeader.add(opponentName);
+    }).setOrigin(1, 0.5));
     
-    // Анимация появления
     this.pvpHeader.setY(-60);
     this.scene.tweens.add({
       targets: this.pvpHeader,
@@ -185,33 +157,54 @@ export class GameHUD {
     });
   }
 
-  /**
-   * Обновляет индикатор соединения
-   */
-  private updateConnectionIndicator(connected: boolean): void {
-    if (!this.connectionIndicator) return;
+  private createMatchTimer(): void {
+    const { width } = this.scene.cameras.main;
     
-    this.connectionIndicator.clear();
+    this.matchTimerContainer = this.scene.add.container(width / 2, 15).setDepth(101);
     
-    const color = connected ? 0x4ade80 : 0xff4444;
-    this.connectionIndicator.fillStyle(color, 1);
-    this.connectionIndicator.fillCircle(0, 0, 5);
+    const bg = this.scene.add.graphics();
+    bg.fillStyle(0x000000, 0.6);
+    bg.fillRoundedRect(-50, -12, 100, 24, 12);
+    bg.lineStyle(1, 0x00ffff, 0.5);
+    bg.strokeRoundedRect(-50, -12, 100, 24, 12);
+    this.matchTimerContainer.add(bg);
     
-    // Пульсация если подключён
-    if (connected) {
-      this.scene.tweens.add({
-        targets: this.connectionIndicator,
-        alpha: { from: 1, to: 0.5 },
-        duration: 1000,
-        yoyo: true,
-        repeat: -1,
-      });
+    this.matchTimerContainer.add(this.scene.add.text(-35, 0, '⏱️', { fontSize: '14px' }).setOrigin(0.5));
+    
+    this.matchTimerText = this.scene.add.text(5, 0, '5:00', {
+      fontSize: '16px',
+      fontFamily: 'Arial Black',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 2,
+    }).setOrigin(0.5);
+    this.matchTimerContainer.add(this.matchTimerText);
+  }
+
+  updateMatchTimer(remainingTime: number, totalTime: number): void {
+    if (!this.matchTimerText) return;
+    
+    const minutes = Math.floor(remainingTime / 60);
+    const seconds = remainingTime % 60;
+    this.matchTimerText.setText(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+    
+    if (remainingTime <= 30) {
+      this.matchTimerText.setColor('#ff4444');
+      if (remainingTime <= 10 && remainingTime > 0) {
+        this.scene.tweens.add({
+          targets: this.matchTimerText,
+          scale: { from: 1, to: 1.3 },
+          duration: 300,
+          yoyo: true,
+        });
+      }
+    } else if (remainingTime <= 60) {
+      this.matchTimerText.setColor('#ffaa00');
+    } else {
+      this.matchTimerText.setColor('#ffffff');
     }
   }
 
-  /**
-   * Создаёт таймер хода
-   */
   private createTurnTimer(): void {
     const { width } = this.scene.cameras.main;
     
@@ -223,63 +216,39 @@ export class GameHUD {
       strokeThickness: 4,
     }).setOrigin(0.5).setDepth(100);
     
-    // Иконка таймера
-    const timerIcon = this.scene.add.text(width - 100, 75, '⏱️', {
-      fontSize: '20px',
-    }).setOrigin(0.5).setDepth(100);
+    this.scene.add.text(width - 100, 75, '⏱️', { fontSize: '20px' }).setOrigin(0.5).setDepth(100);
   }
 
-  /**
-   * Запускает таймер хода
-   */
-  startTurnTimer(seconds: number = 60): void {
-    this.remainingTime = seconds;
-    this.updateTimerDisplay();
+  startTurnTimer(seconds = 60): void {
+    this.turnRemainingTime = seconds;
+    this.updateTurnTimerDisplay();
     
-    // Останавливаем предыдущий таймер
-    if (this.timerEvent) {
-      this.timerEvent.destroy();
-    }
+    this.turnTimerEvent?.destroy();
     
-    this.timerEvent = this.scene.time.addEvent({
+    this.turnTimerEvent = this.scene.time.addEvent({
       delay: 1000,
       callback: () => {
-        this.remainingTime--;
-        this.updateTimerDisplay();
-        
-        if (this.remainingTime <= 0) {
-          this.timerEvent?.destroy();
-          // Можно добавить callback для автоматического пропуска хода
-        }
+        this.turnRemainingTime--;
+        this.updateTurnTimerDisplay();
+        if (this.turnRemainingTime <= 0) this.turnTimerEvent?.destroy();
       },
       loop: true,
     });
   }
 
-  /**
-   * Останавливает таймер хода
-   */
   stopTurnTimer(): void {
-    if (this.timerEvent) {
-      this.timerEvent.destroy();
-      this.timerEvent = null;
-    }
+    this.turnTimerEvent?.destroy();
+    this.turnTimerEvent = null;
   }
 
-  /**
-   * Обновляет отображение таймера
-   */
-  private updateTimerDisplay(): void {
+  private updateTurnTimerDisplay(): void {
     if (!this.turnTimer) return;
     
-    this.turnTimer.setText(this.remainingTime.toString());
+    this.turnTimer.setText(this.turnRemainingTime.toString());
     
-    // Меняем цвет при малом времени
-    if (this.remainingTime <= 10) {
+    if (this.turnRemainingTime <= 10) {
       this.turnTimer.setColor('#ff4444');
-      
-      // Пульсация
-      if (this.remainingTime <= 5) {
+      if (this.turnRemainingTime <= 5) {
         this.scene.tweens.add({
           targets: this.turnTimer,
           scale: { from: 1, to: 1.2 },
@@ -287,7 +256,7 @@ export class GameHUD {
           yoyo: true,
         });
       }
-    } else if (this.remainingTime <= 20) {
+    } else if (this.turnRemainingTime <= 20) {
       this.turnTimer.setColor('#ffaa00');
     } else {
       this.turnTimer.setColor('#ffffff');
@@ -297,13 +266,10 @@ export class GameHUD {
   private createPauseButton(): void {
     const { width } = this.scene.cameras.main;
     const colors = getColors();
-    
     const buttonY = this.config.isPvP ? 90 : 35;
     
-    this.pauseButton = this.scene.add.container(width - 35, buttonY);
-    this.pauseButton.setDepth(100);
+    this.pauseButton = this.scene.add.container(width - 35, buttonY).setDepth(100);
     
-    // Background
     const bg = this.scene.add.graphics();
     bg.fillStyle(0x000000, 0.5);
     bg.fillCircle(0, 0, 25);
@@ -311,69 +277,37 @@ export class GameHUD {
     bg.strokeCircle(0, 0, 25);
     this.pauseButton.add(bg);
     
-    // Pause icon
     const icon = this.scene.add.graphics();
     icon.fillStyle(colors.uiAccent, 1);
     icon.fillRect(-8, -10, 5, 20);
     icon.fillRect(3, -10, 5, 20);
     this.pauseButton.add(icon);
     
-    // Interactivity
     this.pauseButton.setInteractive(new Phaser.Geom.Circle(0, 0, 25), Phaser.Geom.Circle.Contains);
-    
-    this.pauseButton.on('pointerover', () => {
-      this.pauseButton.setScale(1.1);
-    });
-    
-    this.pauseButton.on('pointerout', () => {
-      this.pauseButton.setScale(1);
-    });
-    
-    this.pauseButton.on('pointerdown', () => {
-      if (this.onPauseCallback) {
-        this.onPauseCallback();
-      }
-    });
+    this.pauseButton.on('pointerover', () => this.pauseButton.setScale(1.1));
+    this.pauseButton.on('pointerout', () => this.pauseButton.setScale(1));
+    this.pauseButton.on('pointerdown', () => this.onPauseCallback?.());
   }
 
-  /**
-   * Обновляет отображение хода и состояния
-   */
   updateTurn(player: PlayerNumber, state: GameState, isAIMode: boolean): void {
     const colors = getColors();
     const teamColor = player === 1 ? colors.team1Primary : colors.team2Primary;
     
-    // Turn text
     let playerName: string;
     if (this.config.isPvP) {
-      // PvP режим
-      if (player === 1) {
-        playerName = '🎯 ' + i18n.t('yourTurn');
-      } else {
-        playerName = `⏳ ${this.config.opponentName || 'Opponent'}'s Turn`;
-      }
+      playerName = player === 1 ? '🎯 ' + i18n.t('yourTurn') : `⏳ ${this.config.opponentName}'s Turn`;
     } else {
-      // AI режим
-      if (player === 1) {
-        playerName = i18n.t('yourTurn');
-      } else {
-        playerName = isAIMode ? i18n.t('enemyTurn') + ' 🤖' : i18n.t('player2') + "'s Turn";
-      }
+      playerName = player === 1 ? i18n.t('yourTurn') : (isAIMode ? i18n.t('enemyTurn') + ' 🤖' : i18n.t('player2') + "'s Turn");
     }
     this.turnText.setText(playerName).setColor(hexToString(teamColor));
     
-    // State text
     let stateMessage = '';
     switch (state) {
       case 'waiting':
         if (this.config.isPvP) {
-          stateMessage = player === 1 
-            ? '👆 ' + i18n.t('dragToShoot')
-            : '⏳ Waiting for opponent...';
+          stateMessage = player === 1 ? '👆 ' + i18n.t('dragToShoot') : '⏳ Waiting...';
         } else {
-          stateMessage = player === 1 
-            ? '👆 ' + i18n.t('dragToShoot')
-            : (isAIMode ? '🤔 ' + i18n.t('aiThinking') : '👆 ' + i18n.t('dragToShoot'));
+          stateMessage = player === 1 ? '👆 ' + i18n.t('dragToShoot') : (isAIMode ? '🤔 ' + i18n.t('aiThinking') : '👆 ' + i18n.t('dragToShoot'));
         }
         break;
       case 'moving':
@@ -388,7 +322,6 @@ export class GameHUD {
     }
     this.stateText.setText(stateMessage);
     
-    // Управление таймером в PvP
     if (this.config.isPvP) {
       if (state === 'waiting' && player === 1) {
         this.startTurnTimer(60);
@@ -398,13 +331,8 @@ export class GameHUD {
     }
   }
 
-  /**
-   * Обновляет счёт
-   */
   updateScore(player1Score: number, player2Score: number): void {
     this.scoreText.setText(`${player1Score} : ${player2Score}`);
-    
-    // Анимация при изменении счёта
     this.scene.tweens.add({
       targets: this.scoreText,
       scale: { from: 1.3, to: 1 },
@@ -413,19 +341,14 @@ export class GameHUD {
     });
   }
 
-  /**
-   * Показывает бейдж ожидающей формации
-   */
   showPendingFormationBadge(formationName: string): void {
     this.hidePendingFormationBadge();
     
     const { width } = this.scene.cameras.main;
     const colors = getColors();
-    
     const badgeY = this.config.isPvP ? 130 : 80;
     
-    this.pendingFormationBadge = this.scene.add.container(width / 2, badgeY);
-    this.pendingFormationBadge.setDepth(100);
+    this.pendingFormationBadge = this.scene.add.container(width / 2, badgeY).setDepth(100);
     
     const bg = this.scene.add.graphics();
     bg.fillStyle(colors.uiAccent, 0.15);
@@ -434,13 +357,11 @@ export class GameHUD {
     bg.strokeRoundedRect(-100, -12, 200, 24, 12);
     this.pendingFormationBadge.add(bg);
     
-    const text = this.scene.add.text(0, 0, `⏳ ${i18n.t('newFormation')}: ${formationName}`, {
+    this.pendingFormationBadge.add(this.scene.add.text(0, 0, `⏳ ${i18n.t('newFormation')}: ${formationName}`, {
       fontSize: '11px',
       color: hexToString(colors.uiAccent),
-    }).setOrigin(0.5);
-    this.pendingFormationBadge.add(text);
+    }).setOrigin(0.5));
     
-    // Пульсация
     this.scene.tweens.add({
       targets: this.pendingFormationBadge,
       alpha: { from: 1, to: 0.6 },
@@ -450,27 +371,17 @@ export class GameHUD {
     });
   }
 
-  /**
-   * Скрывает бейдж ожидающей формации
-   */
   hidePendingFormationBadge(): void {
-    if (this.pendingFormationBadge) {
-      this.pendingFormationBadge.destroy();
-      this.pendingFormationBadge = null;
-    }
+    this.pendingFormationBadge?.destroy();
+    this.pendingFormationBadge = null;
   }
 
-  /**
-   * Показывает уведомление о применении формации
-   */
   showFormationAppliedNotification(): void {
     const colors = getColors();
     const { width } = this.scene.cameras.main;
-    
     const notifY = this.config.isPvP ? 150 : 100;
     
-    const notification = this.scene.add.container(width / 2, notifY);
-    notification.setDepth(300);
+    const notification = this.scene.add.container(width / 2, notifY).setDepth(300);
     
     const bg = this.scene.add.graphics();
     bg.fillStyle(colors.uiAccent, 0.2);
@@ -506,20 +417,11 @@ export class GameHUD {
     });
   }
 
-  /**
-   * Показывает PvP уведомление
-   */
   showPvPNotification(message: string, type: 'info' | 'warning' | 'success' = 'info'): void {
     const { width } = this.scene.cameras.main;
+    const colors: Record<string, number> = { info: 0x3b82f6, warning: 0xf59e0b, success: 0x22c55e };
     
-    const colors: Record<string, number> = {
-      info: 0x3b82f6,
-      warning: 0xf59e0b,
-      success: 0x22c55e,
-    };
-    
-    const notification = this.scene.add.container(width / 2, 150);
-    notification.setDepth(300);
+    const notification = this.scene.add.container(width / 2, 150).setDepth(300);
     
     const bg = this.scene.add.graphics();
     bg.fillStyle(colors[type], 0.2);
@@ -555,31 +457,21 @@ export class GameHUD {
     });
   }
 
-  /**
-   * Устанавливает callback для нажатия на паузу
-   */
   onPause(callback: () => void): void {
     this.onPauseCallback = callback;
   }
 
-  /**
-   * Включает/выключает кнопку паузы
-   */
   setPauseEnabled(enabled: boolean): void {
-    if (enabled) {
-      this.pauseButton.setAlpha(1);
-      this.pauseButton.setInteractive();
-    } else {
-      this.pauseButton.setAlpha(0.5);
-      this.pauseButton.disableInteractive();
-    }
+    this.pauseButton.setAlpha(enabled ? 1 : 0.5);
+    if (enabled) this.pauseButton.setInteractive();
+    else this.pauseButton.disableInteractive();
   }
 
-  /**
-   * Обновляет статус соединения
-   */
   setConnectionStatus(connected: boolean): void {
-    this.updateConnectionIndicator(connected);
+    if (!this.connectionIndicator) return;
+    this.connectionIndicator.clear();
+    this.connectionIndicator.fillStyle(connected ? 0x4ade80 : 0xff4444, 1);
+    this.connectionIndicator.fillCircle(0, 0, 5);
   }
 
   destroy(): void {
@@ -590,6 +482,7 @@ export class GameHUD {
     this.pauseButton.destroy();
     this.pvpHeader?.destroy();
     this.turnTimer?.destroy();
+    this.matchTimerContainer?.destroy();
     this.stopTurnTimer();
     this.hidePendingFormationBadge();
   }

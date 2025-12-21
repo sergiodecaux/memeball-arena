@@ -49,6 +49,10 @@ export class GameStateManager {
     return this.currentPlayer;
   }
 
+  /**
+   * Устанавливает текущего игрока (owner команды)
+   * В PvP: 1 = Host team, 2 = Guest team
+   */
   setCurrentPlayer(player: PlayerNumber): void {
     this.currentPlayer = player;
   }
@@ -69,6 +73,11 @@ export class GameStateManager {
     this.stoppedFrames = 0;
     this.movingStartTime = Date.now();
     this.setState('moving');
+  }
+
+  setPlayingState(): void {
+    this.stoppedFrames = 0;
+    this.setState('waiting');
   }
 
   update(): void {
@@ -105,7 +114,7 @@ export class GameStateManager {
     if (this.isPvPMode) {
       // В PvP только уведомляем (хост отправит на сервер)
       this.onAllStoppedCallback?.();
-      this.setState('waiting');
+      // Не меняем стейт сами, ждем ответа от сервера!
       return;
     }
     

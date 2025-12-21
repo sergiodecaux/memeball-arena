@@ -1,66 +1,93 @@
 // src/managers/MultiplayerManager.ts
 
 import { io, Socket } from 'socket.io-client';
-import { PlayerNumber } from '../types';
 import { playerData } from '../data/PlayerData';
 
-// Server config
 const SERVER_URL = 'https://memeball.duckdns.org';
 
-// Types
+// ==================== TYPES ====================
+
 export interface PvPPlayer {
   id: string;
   name: string;
   level: number;
-  team: 'bottom' | 'top';
+  capSkin: string;
+  ballSkin: string;
+  fieldSkin: string;
+  formation: any;
+  playerIndex: number;
 }
 
 export interface GameStartData {
   roomId: string;
   players: PvPPlayer[];
+  hostId: string;
+  fieldOwnerId: string;
+  fieldSkin: string;
+  ballSkin: string;
   currentTurn: string;
   scores: Record<string, number>;
+  serverTime?: number;
   config: {
-    GOALS_TO_WIN: number;
+    MATCH_DURATION: number;
     TURN_TIME: number;
+    TICK_RATE?: number;
   };
-  hostId: string;
 }
 
 export interface ShootData {
+  odotterId: string;
+  playerIndex: number;
   capId: number;
   force: { x: number; y: number };
   position: { x: number; y: number };
-  angle: number;
+  tick?: number;
+  serverTime?: number;
 }
 
-export interface GoalData {
-  scorerId: string;
-  scores: Record<string, number>;
+export interface PositionsData {
+  ball: { x: number; y: number; vx: number; vy: number };
+  caps: { x: number; y: number; vx: number; vy: number }[];
+  timestamp: number;
+  tick?: number;
+  serverTime?: number;
+  isMoving?: boolean;
+}
+
+export interface MatchTimerData {
+  remainingTime: number;
+  totalTime: number;
+  tick?: number;
+  serverTime?: number;
+}
+
+export interface MatchFinishedData {
   winner: string | null;
+  isDraw: boolean;
+  scores: Record<string, number>;
+  reason: string;
+  rewards: Record<string, { coins: number; xp: number }>;
 }
 
-export interface MatchResult {
-  winner: string;
-  scores: Record<string, number>;
-  rewards: {
-    winner: { coins: number; xp: number };
-    loser: { coins: number; xp: number };
-  };
+export interface FinalPositions {
+  ball: { x: number; y: number };
+  caps: { x: number; y: number }[];
 }
 
 type EventCallback = (...args: any[]) => void;
 
+// ==================== MULTIPLAYER MANAGER ====================
+
 export class MultiplayerManager {
   private static instance: MultiplayerManager;
+  
   private socket: Socket | null = null;
   private roomId: string | null = null;
   private myId: string | null = null;
-  private opponent: PvPPlayer | null = null;
-  private isConnected = false;
   private hostId: string | null = null;
+  private gameData: GameStartData | null = null;
+  private isConnected = false;
   
-  // Event callbacks
   private callbacks: Map<string, EventCallback[]> = new Map();
 
   private constructor() {}
@@ -74,14 +101,14 @@ export class MultiplayerManager {
 
   // ==================== CONNECTION ====================
 
-  connect(): Promise<boolean> {
+  async connect(): Promise<boolean> {
     return new Promise((resolve) => {
       if (this.socket?.connected) {
         resolve(true);
         return;
       }
 
-      console.log('[MP] Connecting to server:', SERVER_URL);
+      console.log('[MP] Connecting to:', SERVER_URL);
 
       this.socket = io(SERVER_URL, {
         transports: ['websocket', 'polling'],
@@ -91,7 +118,15 @@ export class MultiplayerManager {
         reconnectionDelay: 1000
       });
 
+      const timeout = setTimeout(() => {
+        if (!this.isConnected) {
+          console.error('[MP] Connection timeout');
+          resolve(false);
+        }
+      }, 10000);
+
       this.socket.on('connect', () => {
+        clearTimeout(timeout);
         console.log('[MP] Connected! ID:', this.socket?.id);
         this.myId = this.socket?.id || null;
         this.isConnected = true;
@@ -100,6 +135,7 @@ export class MultiplayerManager {
       });
 
       this.socket.on('connect_error', (error) => {
+        clearTimeout(timeout);
         console.error('[MP] Connection error:', error.message);
         this.isConnected = false;
         resolve(false);
@@ -114,14 +150,9 @@ export class MultiplayerManager {
   }
 
   disconnect(): void {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-    }
-    this.roomId = null;
-    this.myId = null;
-    this.opponent = null;
-    this.hostId = null;
+    this.socket?.disconnect();
+    this.socket = null;
+    this.clearRoom();
     this.isConnected = false;
   }
 
@@ -135,65 +166,60 @@ export class MultiplayerManager {
     if (!this.socket) return;
 
     const data = playerData.get();
+    const formation = playerData.getSelectedFormation();
     
-    this.socket.emit('find_game', {
+    const payload = {
       name: data.username || 'Player',
-      skin: data.equippedCapSkin,
-      level: data.level
-    });
+      level: data.level || 1,
+      capSkin: data.equippedCapSkin || 'cap_default_cyan',
+      ballSkin: data.equippedBallSkin || 'ball_default',
+      fieldSkin: data.equippedFieldSkin || 'field_default',
+      formation: formation
+    };
 
-    console.log('[MP] Searching for game...');
+    console.log('[MP] Finding game with:', payload);
+    this.socket.emit('find_game', payload);
   }
 
   cancelSearch(): void {
-    if (!this.socket) return;
-    this.socket.emit('cancel_search');
-    console.log('[MP] Search cancelled');
+    this.socket?.emit('cancel_search');
   }
 
   // ==================== GAME ACTIONS ====================
 
-  sendShoot(capId: number, force: { x: number; y: number }, position: { x: number; y: number }, angle: number): void {
+  sendShoot(capId: number, force: { x: number; y: number }, position: { x: number; y: number }): void {
     if (!this.socket || !this.roomId) return;
 
-    console.log('[MP] Sending shoot:', capId, force);
+    console.log('[MP] Sending shoot - capId:', capId, 'force:', force);
 
     this.socket.emit('shoot', {
       roomId: this.roomId,
       capId,
       force,
-      position,
-      angle
+      position
     });
   }
 
   sendObjectsStopped(): void {
-    if (!this.socket || !this.roomId) return;
-    console.log('[MP] Objects stopped, requesting turn change');
+    if (!this.socket || !this.roomId || !this.isHost()) return;
     this.socket.emit('objects_stopped', { roomId: this.roomId });
   }
 
-  sendTurnEnd(): void {
-    if (!this.socket || !this.roomId) return;
-    console.log('[MP] Turn end');
-    this.socket.emit('turn_end', { roomId: this.roomId });
-  }
-
-  sendGoal(scorerId: string): void {
-    if (!this.socket || !this.roomId) return;
-    console.log('[MP] Goal by:', scorerId);
-    this.socket.emit('goal', {
-      roomId: this.roomId,
-      scorerId
+  sendGoal(scorerId: string, finalPositions?: FinalPositions): void {
+    if (!this.socket || !this.roomId || !this.isHost()) return;
+    
+    console.log('[MP] Sending goal with positions:', finalPositions ? 'yes' : 'no');
+    
+    this.socket.emit('goal', { 
+      roomId: this.roomId, 
+      scorerId,
+      finalPositions
     });
   }
 
   sendReadyAfterGoal(scorerId: string): void {
-    if (!this.socket || !this.roomId) return;
-    this.socket.emit('ready_after_goal', {
-      roomId: this.roomId,
-      scorerId
-    });
+    if (!this.socket || !this.roomId || !this.isHost()) return;
+    this.socket.emit('ready_after_goal', { roomId: this.roomId, scorerId });
   }
 
   sendSurrender(): void {
@@ -201,50 +227,83 @@ export class MultiplayerManager {
     this.socket.emit('surrender', { roomId: this.roomId });
   }
 
-  sendSyncPositions(ball: { x: number; y: number; vx?: number; vy?: number }, caps: { x: number; y: number; vx?: number; vy?: number }[]): void {
+  sendSyncPositions(
+    ball: { x: number; y: number; vx: number; vy: number },
+    caps: { x: number; y: number; vx: number; vy: number }[],
+    isMoving: boolean = false
+  ): void {
+    if (!this.socket || !this.roomId || !this.isHost()) return;
+    this.socket.emit('sync_positions', { 
+      roomId: this.roomId, 
+      ball, 
+      caps,
+      isMoving
+    });
+  }
+
+  // ==================== TIME SYNC ====================
+
+  sendPingSync(clientTime: number): void {
+    this.socket?.emit('ping_sync', clientTime);
+  }
+
+  // ==================== RECONCILIATION ====================
+
+  requestReconciliation(fromTick: number): void {
     if (!this.socket || !this.roomId) return;
-    // Только хост отправляет позиции
-    if (this.myId !== this.hostId) return;
-    
-    this.socket.emit('sync_positions', {
+    this.socket.emit('request_reconciliation', {
       roomId: this.roomId,
-      ball,
-      caps
+      fromTick
     });
   }
 
   // ==================== GETTERS ====================
 
-  getMyId(): string | null {
-    return this.myId;
+  getMyId(): string | null { 
+    return this.myId; 
+  }
+  
+  getRoomId(): string | null { 
+    return this.roomId; 
+  }
+  
+  getGameData(): GameStartData | null { 
+    return this.gameData; 
+  }
+  
+  getHostId(): string | null { 
+    return this.hostId; 
+  }
+  
+  isHost(): boolean {
+    return this.myId !== null && this.myId === this.hostId;
   }
 
-  getRoomId(): string | null {
-    return this.roomId;
+  getMyPlayerIndex(): number {
+    if (!this.gameData || !this.myId) return 0;
+    const me = this.gameData.players.find(p => p.id === this.myId);
+    return me?.playerIndex ?? 0;
+  }
+
+  getMyCapStartIndex(): number {
+    return this.getMyPlayerIndex() * 3;
+  }
+
+  getMe(): PvPPlayer | null {
+    if (!this.gameData || !this.myId) return null;
+    return this.gameData.players.find(p => p.id === this.myId) || null;
   }
 
   getOpponent(): PvPPlayer | null {
-    return this.opponent;
+    if (!this.gameData || !this.myId) return null;
+    return this.gameData.players.find(p => p.id !== this.myId) || null;
   }
 
-  getHostId(): string | null {
-    return this.hostId;
+  amIFieldOwner(): boolean {
+    return this.gameData?.fieldOwnerId === this.myId;
   }
 
-  isHost(): boolean {
-    return this.myId === this.hostId;
-  }
-
-  isMyTurn(currentTurnId: string): boolean {
-    return currentTurnId === this.myId;
-  }
-
-  getMyPlayerNumber(players: PvPPlayer[]): PlayerNumber {
-    const myIndex = players.findIndex(p => p.id === this.myId);
-    return myIndex === 0 ? 1 : 2;
-  }
-
-  // ==================== EVENT SYSTEM ====================
+  // ==================== EVENTS ====================
 
   on(event: string, callback: EventCallback): void {
     if (!this.callbacks.has(event)) {
@@ -266,99 +325,101 @@ export class MultiplayerManager {
   }
 
   private emit(event: string, ...args: any[]): void {
-    const arr = this.callbacks.get(event);
-    if (arr) {
-      arr.forEach(cb => cb(...args));
-    }
+    this.callbacks.get(event)?.forEach(cb => {
+      try { 
+        cb(...args); 
+      } catch (e) { 
+        console.error('[MP] Callback error:', e); 
+      }
+    });
   }
-
-  // ==================== SOCKET LISTENERS ====================
 
   private setupListeners(): void {
     if (!this.socket) return;
 
-    // Waiting in queue
     this.socket.on('waiting', (data) => {
-      console.log('[MP] Waiting...', data);
+      console.log('[MP] Waiting in queue...');
       this.emit('waiting', data);
     });
 
-    // Search cancelled
     this.socket.on('search_cancelled', () => {
-      console.log('[MP] Search cancelled');
       this.emit('search_cancelled');
     });
 
-    // Game found!
     this.socket.on('game_start', (data: GameStartData) => {
-      console.log('[MP] Game starting!', data);
+      console.log('[MP] Game starting!');
+      console.log('[MP] Players:', data.players.map(p => `${p.name} (idx ${p.playerIndex})`));
+      
       this.roomId = data.roomId;
       this.hostId = data.hostId;
+      this.gameData = data;
       
-      // Find opponent
-      this.opponent = data.players.find(p => p.id !== this.myId) || null;
+      const myIdx = this.getMyPlayerIndex();
+      console.log('[MP] I am player index:', myIdx, myIdx === 0 ? '(HOST)' : '(GUEST)');
+      console.log('[MP] My caps:', myIdx * 3, myIdx * 3 + 1, myIdx * 3 + 2);
       
       this.emit('game_start', data);
     });
 
-    // Opponent shot
-    this.socket.on('opponent_shoot', (data: ShootData) => {
-      console.log('[MP] Opponent shoot:', data);
-      this.emit('opponent_shoot', data);
+    this.socket.on('shoot_executed', (data: ShootData) => {
+      console.log('[MP] Shoot executed - player:', data.playerIndex, 'cap:', data.capId);
+      this.emit('shoot_executed', data);
     });
 
-    // Turn changed
     this.socket.on('turn_change', (data) => {
-      console.log('[MP] Turn change:', data);
+      console.log('[MP] Turn change to:', data.currentTurn === this.myId ? 'ME' : 'OPPONENT');
       this.emit('turn_change', data);
     });
 
-    // Positions sync
-    this.socket.on('positions_update', (data) => {
+    this.socket.on('positions_update', (data: PositionsData) => {
       this.emit('positions_update', data);
     });
 
-    // Goal scored
-    this.socket.on('goal_scored', (data: GoalData) => {
-      console.log('[MP] Goal!', data);
+    this.socket.on('snapshot', (data) => {
+      this.emit('snapshot', data);
+    });
+
+    this.socket.on('match_timer', (data: MatchTimerData) => {
+      this.emit('match_timer', data);
+    });
+
+    this.socket.on('goal_scored', (data) => {
+      console.log('[MP] Goal!');
       this.emit('goal_scored', data);
     });
 
-    // Continue after goal
     this.socket.on('continue_game', (data) => {
-      console.log('[MP] Continue game:', data);
+      console.log('[MP] Continue game');
       this.emit('continue_game', data);
     });
 
-    // Match finished
-    this.socket.on('match_finished', (data: MatchResult) => {
-      console.log('[MP] Match finished!', data);
+    this.socket.on('match_finished', (data: MatchFinishedData) => {
+      console.log('[MP] Match finished!');
       this.emit('match_finished', data);
     });
 
-    // Opponent surrendered
     this.socket.on('opponent_surrendered', (data) => {
-      console.log('[MP] Opponent surrendered!', data);
+      console.log('[MP] Opponent surrendered!');
       this.emit('opponent_surrendered', data);
     });
 
-    // Opponent disconnected
     this.socket.on('opponent_disconnected', (data) => {
-      console.log('[MP] Opponent disconnected!', data);
+      console.log('[MP] Opponent disconnected!');
       this.emit('opponent_disconnected', data);
     });
 
-    // Pong
-    this.socket.on('pong_server', (data) => {
-      this.emit('pong', data);
+    this.socket.on('pong_sync', (data) => {
+      this.emit('pong_sync', data);
+    });
+
+    this.socket.on('reconciliation_data', (data) => {
+      this.emit('reconciliation_data', data);
     });
   }
 
-  // ==================== CLEANUP ====================
-
   clearRoom(): void {
     this.roomId = null;
-    this.opponent = null;
     this.hostId = null;
+    this.gameData = null;
   }
 }
