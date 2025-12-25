@@ -1,12 +1,20 @@
 // src/scenes/ProfileScene.ts
 
 import Phaser from 'phaser';
-import { getColors, hexToString, getRarityColor } from '../config/themes';
+import { getColors, hexToString, getRarityColor, getFonts } from '../config/themes';
 import { playerData, getRankByLevel, getXPForLevel } from '../data/PlayerData';
-import { getCapSkin, getBallSkin, getFieldSkin, getRarityName, CapSkinData, BallSkinData, FieldSkinData } from '../data/SkinsCatalog';
+import {
+  getBallSkin,
+  getFieldSkin,
+  getRarityName,
+  BallSkinData,
+  FieldSkinData,
+} from '../data/SkinsCatalog';
+import { getUnit } from '../data/UnitsCatalog';
 import { i18n } from '../localization/i18n';
 import { Icons } from '../ui/Icons';
-import { drawClassIcon } from '../ui/ClassIcons';
+import { AudioManager } from '../managers/AudioManager';
+import { FACTIONS } from '../constants/gameConstants';
 
 type ProfileTab = 'stats' | 'collection' | 'achievements';
 
@@ -17,6 +25,8 @@ export class ProfileScene extends Phaser.Scene {
   private contentContainer!: Phaser.GameObjects.Container;
   private isDragging: boolean = false;
   private dragStartY: number = 0;
+  private scrollVelocity: number = 0;
+  private holoRing?: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'ProfileScene' });
@@ -24,8 +34,9 @@ export class ProfileScene extends Phaser.Scene {
 
   create(): void {
     this.scrollY = 0;
+    this.scrollVelocity = 0;
     this.isDragging = false;
-    
+
     this.createBackground();
     this.createHeader();
     this.createPlayerCard();
@@ -35,247 +46,272 @@ export class ProfileScene extends Phaser.Scene {
     this.setupScrolling();
   }
 
+  update(): void {
+    if (!this.isDragging && Math.abs(this.scrollVelocity) > 0.5) {
+      this.scrollY = Phaser.Math.Clamp(this.scrollY + this.scrollVelocity, 0, this.maxScrollY);
+      this.scrollVelocity *= 0.92;
+      this.renderContent();
+    }
+  }
+
   private createBackground(): void {
     const { width, height } = this.cameras.main;
     const colors = getColors();
 
-    // Тот же фон как в SettingsScene
     const bg = this.add.graphics();
-    bg.fillStyle(0x0a0a12, 1);
+    bg.fillStyle(colors.background, 1);
     bg.fillRect(0, 0, width, height);
 
-    // Верхний градиент
-    for (let i = 0; i < 200; i++) {
-      const alpha = 0.1 * Math.pow(1 - i / 200, 2);
-      bg.fillStyle(colors.uiPrimary, alpha);
-      bg.fillRect(0, i, width, 1);
-    }
+    this.drawRadialGradient(bg, width / 2, 0, height * 0.6, colors.backgroundGradientTop, 0.5);
+    this.drawRadialGradient(bg, width / 2, height, height * 0.3, colors.uiAccentPink, 0.08);
 
-    // Сетка
-    const grid = this.add.graphics();
-    grid.lineStyle(1, colors.uiPrimary, 0.02);
-    for (let x = 0; x <= width; x += 50) {
-      grid.moveTo(x, 0);
-      grid.lineTo(x, height);
+    bg.lineStyle(1, colors.uiPrimary, 0.03);
+    for (let x = 0; x <= width; x += 50) bg.lineBetween(x, 0, x, height);
+    for (let y = 0; y <= height; y += 50) bg.lineBetween(0, y, width, y);
+
+    this.createParticles(12);
+  }
+
+  private drawRadialGradient(g: Phaser.GameObjects.Graphics, cx: number, cy: number, maxR: number, color: number, maxAlpha: number): void {
+    const steps = 40;
+    for (let i = steps; i > 0; i--) {
+      const ratio = i / steps;
+      g.fillStyle(color, maxAlpha * Math.pow(1 - ratio, 2));
+      g.fillCircle(cx, cy, maxR * ratio);
     }
-    for (let y = 0; y <= height; y += 50) {
-      grid.moveTo(0, y);
-      grid.lineTo(width, y);
+  }
+
+  private createParticles(count: number): void {
+    const { width, height } = this.cameras.main;
+    const colors = getColors();
+    const particleColors = [colors.uiAccent, colors.uiAccentPink, colors.uiPrimary];
+
+    for (let i = 0; i < count; i++) {
+      const p = this.add.circle(
+        Phaser.Math.Between(20, width - 20),
+        Phaser.Math.Between(100, height - 100),
+        Phaser.Math.FloatBetween(1, 2.5),
+        Phaser.Math.RND.pick(particleColors),
+        Phaser.Math.FloatBetween(0.2, 0.4)
+      );
+
+      this.tweens.add({
+        targets: p,
+        y: p.y - Phaser.Math.Between(30, 60),
+        alpha: { from: p.alpha, to: 0.1 },
+        duration: Phaser.Math.Between(4000, 7000),
+        yoyo: true,
+        repeat: -1,
+        delay: i * 150,
+        ease: 'Sine.easeInOut',
+      });
     }
-    grid.strokePath();
   }
 
   private createHeader(): void {
     const { width } = this.cameras.main;
     const colors = getColors();
+    const fonts = getFonts();
 
-    // Фон хедера
     const headerBg = this.add.graphics();
-    headerBg.fillStyle(0x000000, 0.5);
+    headerBg.fillStyle(0x000000, 0.8);
     headerBg.fillRect(0, 0, width, 70);
-    headerBg.lineStyle(1, colors.uiPrimary, 0.3);
+    headerBg.lineStyle(2, colors.uiAccentPink, 0.3);
     headerBg.lineBetween(0, 70, width, 70);
     headerBg.setDepth(100);
 
-    // Кнопка назад
-    const backBtn = this.add.container(45, 35).setDepth(101);
-    
+    const backBtn = this.add.container(50, 35).setDepth(101);
     const backBg = this.add.graphics();
-    backBg.fillStyle(colors.uiPrimary, 0.1);
-    backBg.fillCircle(0, 0, 22);
-    backBg.lineStyle(2, colors.uiAccent, 0.5);
-    backBg.strokeCircle(0, 0, 22);
+    const drawBackBg = (hover: boolean) => {
+      backBg.clear();
+      backBg.fillStyle(hover ? colors.uiAccent : 0x000000, hover ? 0.2 : 0.5);
+      backBg.fillRoundedRect(-35, -16, 70, 32, 16);
+      backBg.lineStyle(1, colors.glassBorder, hover ? 0.5 : 0.2);
+      backBg.strokeRoundedRect(-35, -16, 70, 32, 16);
+    };
+    drawBackBg(false);
     backBtn.add(backBg);
-    
-    const backIcon = Icons.drawBack(this, 0, 0, 10, colors.uiAccent);
-    backBtn.add(backIcon);
-    
-    backBtn.setInteractive(new Phaser.Geom.Circle(0, 0, 22), Phaser.Geom.Circle.Contains);
-    backBtn.on('pointerover', () => {
-      backBg.clear();
-      backBg.fillStyle(colors.uiAccent, 0.2);
-      backBg.fillCircle(0, 0, 22);
-      backBg.lineStyle(2, colors.uiAccent, 0.8);
-      backBg.strokeCircle(0, 0, 22);
-    });
-    backBtn.on('pointerout', () => {
-      backBg.clear();
-      backBg.fillStyle(colors.uiPrimary, 0.1);
-      backBg.fillCircle(0, 0, 22);
-      backBg.lineStyle(2, colors.uiAccent, 0.5);
-      backBg.strokeCircle(0, 0, 22);
-    });
-    backBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
+    backBtn.add(this.add.text(0, 0, '← MENU', { fontSize: '11px', fontFamily: fonts.tech, color: '#ffffff' }).setOrigin(0.5));
 
-    // Заголовок БЕЗ иконки рядом - только текст по центру
+    backBtn.setInteractive(new Phaser.Geom.Rectangle(-35, -16, 70, 32), Phaser.Geom.Rectangle.Contains);
+    backBtn.on('pointerover', () => { drawBackBg(true); backBtn.setScale(1.05); });
+    backBtn.on('pointerout', () => { drawBackBg(false); backBtn.setScale(1); });
+    backBtn.on('pointerdown', () => {
+      AudioManager.getInstance().playSFX('sfx_click');
+      this.scene.start('MainMenuScene');
+    });
+
+    const titleGlow = this.add.graphics();
+    titleGlow.fillStyle(colors.uiAccentPink, 0.1);
+    titleGlow.fillEllipse(width / 2, 35, 140, 40);
+    titleGlow.setDepth(100);
+
     this.add.text(width / 2, 35, i18n.t('profile').toUpperCase(), {
-      fontSize: '24px',
-      fontFamily: 'Arial Black, Arial',
+      fontSize: '20px',
+      fontFamily: fonts.tech,
       color: '#ffffff',
-    }).setOrigin(0.5, 0.5).setDepth(101);
+      letterSpacing: 3,
+    }).setOrigin(0.5).setDepth(101);
   }
 
   private createPlayerCard(): void {
     const { width } = this.cameras.main;
     const colors = getColors();
+    const fonts = getFonts();
     const data = playerData.get();
     const rank = getRankByLevel(data.level);
+    const nickname = playerData.getNickname ? playerData.getNickname() : data.username;
+    const avatarId = playerData.getAvatarId ? playerData.getAvatarId() : undefined;
 
-    const cardY = 130;
+    const cardY = 135;
     const cardWidth = width - 40;
-    const cardHeight = 100;
+    const cardHeight = 140; // Увеличили высоту для фракции
 
     const container = this.add.container(width / 2, cardY);
 
-    // Тень карточки
-    const shadow = this.add.graphics();
-    shadow.fillStyle(0x000000, 0.3);
-    shadow.fillRoundedRect(-cardWidth / 2 + 4, -cardHeight / 2 + 5, cardWidth, cardHeight, 14);
-    container.add(shadow);
+    const glow = this.add.graphics();
+    glow.lineStyle(8, rank.color, 0.1);
+    glow.strokeRoundedRect(-cardWidth / 2 - 4, -cardHeight / 2 - 4, cardWidth + 8, cardHeight + 8, 18);
+    container.add(glow);
 
-    // Основной фон
     const bg = this.add.graphics();
-    bg.fillStyle(0x12121f, 0.9);
-    bg.fillRoundedRect(-cardWidth / 2, -cardHeight / 2, cardWidth, cardHeight, 14);
-    
-    // Рамка с цветом ранга
-    bg.lineStyle(1, rank.color, 0.5);
-    bg.strokeRoundedRect(-cardWidth / 2, -cardHeight / 2, cardWidth, cardHeight, 14);
-    
-    // Акцентная линия сверху
+    bg.fillStyle(0x14101e, 0.95);
+    bg.fillRoundedRect(-cardWidth / 2, -cardHeight / 2, cardWidth, cardHeight, 16);
+
+    for (let i = 0; i < 50; i++) {
+      bg.fillStyle(rank.color, 0.1 * (1 - i / 50));
+      bg.fillRect(-cardWidth / 2, -cardHeight / 2 + i, cardWidth, 1);
+    }
+
     bg.fillStyle(rank.color, 0.8);
-    bg.fillRoundedRect(-30, -cardHeight / 2, 60, 3, 2);
-    
+    bg.fillRoundedRect(-40, -cardHeight / 2 + 1, 80, 3, 2);
+    bg.lineStyle(2, rank.color, 0.5);
+    bg.strokeRoundedRect(-cardWidth / 2, -cardHeight / 2, cardWidth, cardHeight, 16);
     container.add(bg);
 
-    // Аватар
-    const avatarX = -cardWidth / 2 + 55;
-    
-    // Анимированное кольцо
-    const avatarRing = this.add.graphics();
-    avatarRing.lineStyle(2, rank.color, 0.3);
-    avatarRing.strokeCircle(avatarX, 0, 38);
-    container.add(avatarRing);
-    
-    this.tweens.add({
-      targets: avatarRing,
-      alpha: { from: 0.3, to: 0.7 },
-      scaleX: { from: 1, to: 1.06 },
-      scaleY: { from: 1, to: 1.06 },
-      duration: 1800,
-      yoyo: true,
-      repeat: -1,
-    });
-    
-    // Фон аватара
-    const avatarBg = this.add.graphics();
-    avatarBg.fillStyle(0x1a1a2e, 1);
-    avatarBg.fillCircle(avatarX, 0, 32);
-    avatarBg.lineStyle(3, rank.color, 1);
-    avatarBg.strokeCircle(avatarX, 0, 32);
-    container.add(avatarBg);
-    
-    // Иконка профиля
-    const profileIcon = Icons.drawProfile(this, avatarX, 0, 24, 0xffffff);
-    container.add(profileIcon);
-    
-    // Бейдж уровня
-    const levelBadge = this.add.graphics();
-    levelBadge.fillStyle(rank.color, 1);
-    levelBadge.fillCircle(avatarX + 24, 24, 14);
-    levelBadge.lineStyle(2, 0xffffff, 1);
-    levelBadge.strokeCircle(avatarX + 24, 24, 14);
-    container.add(levelBadge);
-    
-    container.add(this.add.text(avatarX + 24, 24, `${data.level}`, {
-      fontSize: '11px',
-      fontFamily: 'Arial',
-      color: '#ffffff',
-      fontStyle: 'bold',
-    }).setOrigin(0.5, 0.5));
+    const avatarX = -cardWidth / 2 + 60;
+    this.createAvatarWithHoloRing(container, avatarX, -10, rank, data.level, avatarId);
 
-    // Информация
-    const infoX = avatarX + 60;
-    
-    container.add(this.add.text(infoX, -22, data.username, {
-      fontSize: '18px',
-      fontFamily: 'Arial Black, Arial',
-      color: '#ffffff',
-    }).setOrigin(0, 0.5));
+    const infoX = avatarX + 65;
+    container.add(this.add.text(infoX, -35, nickname, { fontSize: '18px', fontFamily: fonts.tech, color: '#ffffff' }).setOrigin(0, 0.5));
 
-    // Бейдж ранга
     const rankBg = this.add.graphics();
     rankBg.fillStyle(rank.color, 0.15);
-    rankBg.fillRoundedRect(infoX, -6, 90, 22, 11);
-    rankBg.lineStyle(1, rank.color, 0.4);
-    rankBg.strokeRoundedRect(infoX, -6, 90, 22, 11);
+    rankBg.fillRoundedRect(infoX, -18, 95, 24, 12);
+    rankBg.lineStyle(1, rank.color, 0.5);
+    rankBg.strokeRoundedRect(infoX, -18, 95, 24, 12);
     container.add(rankBg);
-    
-    const crownIcon = Icons.drawCrown(this, infoX + 14, 5, 7, rank.color);
-    container.add(crownIcon);
-    
-    container.add(this.add.text(infoX + 58, 5, rank.name, {
-      fontSize: '10px',
-      color: hexToString(rank.color),
-      fontStyle: 'bold',
-    }).setOrigin(0.5, 0.5));
 
-    // XP бар
-    const xpBarWidth = cardWidth - 140;
+    container.add(this.add.text(infoX + 16, -6, '👑', { fontSize: '10px' }).setOrigin(0.5));
+    container.add(this.add.text(infoX + 60, -6, rank.name, { fontSize: '10px', fontFamily: fonts.tech, color: hexToString(rank.color) }).setOrigin(0.5));
+
+    // === ФРАКЦИЯ ===
+    const faction = playerData.getFaction();
+    if (faction) {
+      const factionColor = this.getFactionColor(faction);
+      const factionName = this.getFactionName(faction);
+
+      const factionBg = this.add.graphics();
+      factionBg.fillStyle(factionColor, 0.15);
+      factionBg.fillRoundedRect(infoX, 8, 120, 24, 12);
+      factionBg.lineStyle(1, factionColor, 0.5);
+      factionBg.strokeRoundedRect(infoX, 8, 120, 24, 12);
+      container.add(factionBg);
+
+      container.add(this.add.text(infoX + 16, 20, '🛸', { fontSize: '10px' }).setOrigin(0.5));
+      container.add(this.add.text(infoX + 75, 20, factionName, { fontSize: '10px', fontFamily: fonts.tech, color: hexToString(factionColor) }).setOrigin(0.5));
+    }
+
+    const xpBarWidth = cardWidth - 150;
     const xpBarX = infoX;
-    const xpBarY = 26;
+    const xpBarY = 42;
     const xpNeeded = getXPForLevel(data.level);
     const xpProgress = Math.min(data.xp / xpNeeded, 1);
 
     const xpBar = this.add.graphics();
     xpBar.fillStyle(0x1a1a2e, 1);
-    xpBar.fillRoundedRect(xpBarX, xpBarY, xpBarWidth, 14, 7);
-    
+    xpBar.fillRoundedRect(xpBarX, xpBarY, xpBarWidth, 16, 8);
+
     if (xpProgress > 0) {
       xpBar.fillStyle(rank.color, 1);
-      xpBar.fillRoundedRect(xpBarX, xpBarY, Math.max(xpBarWidth * xpProgress, 14), 14, 7);
-      
-      // Блик
-      xpBar.fillStyle(0xffffff, 0.2);
-      xpBar.fillRoundedRect(xpBarX + 2, xpBarY + 2, Math.max(xpBarWidth * xpProgress - 4, 10), 5, 3);
+      xpBar.fillRoundedRect(xpBarX, xpBarY, Math.max(xpBarWidth * xpProgress, 16), 16, 8);
+      xpBar.fillStyle(0xffffff, 0.15);
+      xpBar.fillRoundedRect(xpBarX + 2, xpBarY + 2, Math.max(xpBarWidth * xpProgress - 4, 12), 6, 4);
     }
-    
+
     xpBar.lineStyle(1, rank.color, 0.3);
-    xpBar.strokeRoundedRect(xpBarX, xpBarY, xpBarWidth, 14, 7);
+    xpBar.strokeRoundedRect(xpBarX, xpBarY, xpBarWidth, 16, 8);
     container.add(xpBar);
 
-    container.add(this.add.text(xpBarX + xpBarWidth / 2, xpBarY + 7, `${data.xp} / ${xpNeeded} XP`, {
-      fontSize: '9px',
-      color: '#ffffff',
-      fontStyle: 'bold',
-    }).setOrigin(0.5, 0.5));
+    container.add(this.add.text(xpBarX + xpBarWidth / 2, xpBarY + 8, `${data.xp} / ${xpNeeded} XP`, { fontSize: '9px', fontFamily: fonts.tech, color: '#ffffff' }).setOrigin(0.5));
 
-    // Валюта справа
-    const currencyX = cardWidth / 2 - 20;
-    
-    const coinIcon = Icons.drawCoin(this, currencyX - 40, -12, 14);
-    container.add(coinIcon);
-    container.add(this.add.text(currencyX, -12, `${data.coins}`, {
-      fontSize: '13px',
-      color: '#ffd700',
-      fontStyle: 'bold',
-    }).setOrigin(1, 0.5));
-    
-    const starIcon = Icons.drawStar(this, currencyX - 40, 12, 8, 0xff69b4, true);
-    container.add(starIcon);
-    container.add(this.add.text(currencyX, 12, `${data.stars}`, {
-      fontSize: '13px',
-      color: '#ff69b4',
-      fontStyle: 'bold',
-    }).setOrigin(1, 0.5));
+    const currencyX = cardWidth / 2 - 25;
+    container.add(this.add.text(currencyX - 45, 2, '💰', { fontSize: '14px' }).setOrigin(0.5));
+    container.add(this.add.text(currencyX, 2, `${data.coins}`, { fontSize: '13px', fontFamily: fonts.tech, color: hexToString(colors.uiGold) }).setOrigin(1, 0.5));
+    container.add(this.add.text(currencyX - 45, 22, '💎', { fontSize: '14px' }).setOrigin(0.5));
+    container.add(this.add.text(currencyX, 22, `${data.crystals}`, { fontSize: '13px', fontFamily: fonts.tech, color: '#60a5fa' }).setOrigin(1, 0.5));
+  }
+
+  private createAvatarWithHoloRing(container: Phaser.GameObjects.Container, x: number, y: number, rank: { color: number; name: string }, level: number, avatarTextureKey?: string): void {
+    this.holoRing = this.add.graphics();
+    this.drawHoloRing(this.holoRing, x, y, 42, rank.color);
+    container.add(this.holoRing);
+
+    this.tweens.add({ targets: this.holoRing, angle: 360, duration: 15000, repeat: -1, ease: 'Linear' });
+
+    const avatarRadius = 32;
+    const avatarBg = this.add.graphics();
+    avatarBg.fillStyle(0x1a1a2e, 1);
+    avatarBg.fillCircle(x, y, avatarRadius);
+    avatarBg.lineStyle(3, rank.color, 0.8);
+    avatarBg.strokeCircle(x, y, avatarRadius);
+    container.add(avatarBg);
+
+    if (avatarTextureKey && this.textures.exists(avatarTextureKey)) {
+      const avatarImage = this.add.image(x, y, avatarTextureKey);
+      avatarImage.setDisplaySize(avatarRadius * 1.8, avatarRadius * 1.8);
+      container.add(avatarImage);
+    } else {
+      const profileIcon = Icons.drawProfile(this, x, y, 22, 0xffffff);
+      container.add(profileIcon);
+    }
+
+    const levelBadge = this.add.graphics();
+    levelBadge.fillStyle(rank.color, 1);
+    levelBadge.fillCircle(x + 22, y + 22, 14);
+    levelBadge.lineStyle(2, 0xffffff, 1);
+    levelBadge.strokeCircle(x + 22, y + 22, 14);
+    container.add(levelBadge);
+
+    container.add(this.add.text(x + 22, y + 22, `${level}`, { fontSize: '11px', fontFamily: getFonts().tech, color: '#ffffff' }).setOrigin(0.5));
+  }
+
+  private drawHoloRing(g: Phaser.GameObjects.Graphics, x: number, y: number, radius: number, color: number): void {
+    const segments = 24;
+    g.lineStyle(2, color, 0.5);
+
+    for (let i = 0; i < segments; i++) {
+      if (i % 2 === 0) {
+        const startAngle = (i / segments) * Math.PI * 2;
+        const endAngle = ((i + 0.7) / segments) * Math.PI * 2;
+        g.beginPath();
+        g.arc(x, y, radius, startAngle, endAngle, false);
+        g.strokePath();
+      }
+    }
+
+    g.lineStyle(1, color, 0.2);
+    g.strokeCircle(x, y, radius - 8);
   }
 
   private createTabs(): void {
     const { width } = this.cameras.main;
     const colors = getColors();
-    const tabY = 210;
-    const tabWidth = (width - 40) / 3;
-    const tabHeight = 44;
+    const fonts = getFonts();
+    const tabY = 250;
+    const tabW = (width - 50) / 3;
+    const tabH = 40;
+    const skewAngle = -12;
 
     const tabs: { id: ProfileTab; label: string; icon: string }[] = [
       { id: 'stats', label: i18n.t('stats'), icon: '📊' },
@@ -284,56 +320,36 @@ export class ProfileScene extends Phaser.Scene {
     ];
 
     tabs.forEach((tab, index) => {
-      const x = 20 + index * tabWidth + tabWidth / 2;
+      const x = 25 + index * (tabW + 5);
       const isActive = tab.id === this.currentTab;
+      const container = this.add.container(x + tabW / 2, tabY).setDepth(50);
 
-      const container = this.add.container(x, tabY).setDepth(50);
       const bg = this.add.graphics();
-
-      const drawTab = (hover: boolean) => {
-        bg.clear();
-        
-        if (isActive) {
-          bg.fillStyle(colors.uiPrimary, 0.2);
-          bg.fillRoundedRect(-tabWidth / 2 + 2, -tabHeight / 2, tabWidth - 4, tabHeight, 12);
-          bg.lineStyle(2, colors.uiAccent, 0.8);
-          bg.strokeRoundedRect(-tabWidth / 2 + 2, -tabHeight / 2, tabWidth - 4, tabHeight, 12);
-          
-          // Индикатор снизу
-          bg.fillStyle(colors.uiAccent, 1);
-          bg.fillRoundedRect(-18, tabHeight / 2 - 3, 36, 3, 2);
-        } else {
-          bg.fillStyle(0x12121f, hover ? 0.9 : 0.6);
-          bg.fillRoundedRect(-tabWidth / 2 + 2, -tabHeight / 2, tabWidth - 4, tabHeight, 12);
-          bg.lineStyle(1, colors.uiPrimary, hover ? 0.4 : 0.2);
-          bg.strokeRoundedRect(-tabWidth / 2 + 2, -tabHeight / 2, tabWidth - 4, tabHeight, 12);
-        }
-      };
-
-      drawTab(false);
+      if (isActive) {
+        bg.fillStyle(colors.uiAccent, 1);
+        this.drawSkewedRect(bg, -tabW / 2, -tabH / 2, tabW, tabH, skewAngle, true);
+        bg.lineStyle(2, colors.uiAccent, 0.8);
+        this.drawSkewedRect(bg, -tabW / 2, -tabH / 2, tabW, tabH, skewAngle, false);
+      } else {
+        bg.lineStyle(1.5, colors.uiAccent, 0.6);
+        this.drawSkewedRect(bg, -tabW / 2, -tabH / 2, tabW, tabH, skewAngle, false);
+      }
       container.add(bg);
 
-      // Иконка + текст вместе, центрированы
-      const label = this.add.text(0, 0, `${tab.icon} ${tab.label}`, {
-        fontSize: '12px',
-        fontFamily: 'Arial',
-        color: isActive ? '#ffffff' : '#666677',
+      container.add(this.add.text(0, 0, `${tab.icon} ${tab.label.toUpperCase()}`, {
+        fontSize: '11px',
+        fontFamily: fonts.tech,
+        color: isActive ? '#000000' : hexToString(colors.uiAccent),
         fontStyle: 'bold',
-      }).setOrigin(0.5, 0.5);
-      container.add(label);
+      }).setOrigin(0.5));
 
       if (!isActive) {
-        container.setInteractive(new Phaser.Geom.Rectangle(-tabWidth / 2 + 2, -tabHeight / 2, tabWidth - 4, tabHeight), Phaser.Geom.Rectangle.Contains);
-        
-        container.on('pointerover', () => {
-          drawTab(true);
-          label.setColor('#aaaaaa');
-        });
-        container.on('pointerout', () => {
-          drawTab(false);
-          label.setColor('#666677');
-        });
-        container.on('pointerdown', () => {
+        const hit = this.add.rectangle(0, 0, tabW, tabH, 0x000000, 0).setInteractive({ useHandCursor: true });
+        container.add(hit);
+        hit.on('pointerover', () => this.tweens.add({ targets: container, scale: 1.05, duration: 80 }));
+        hit.on('pointerout', () => this.tweens.add({ targets: container, scale: 1, duration: 80 }));
+        hit.on('pointerdown', () => {
+          AudioManager.getInstance().playSFX('sfx_click');
           this.currentTab = tab.id;
           this.scrollY = 0;
           this.scene.restart();
@@ -342,13 +358,33 @@ export class ProfileScene extends Phaser.Scene {
     });
   }
 
+  private drawSkewedRect(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, skewDeg: number, fill: boolean): void {
+    const skewRad = Phaser.Math.DegToRad(skewDeg);
+    const skewOffset = Math.tan(skewRad) * h;
+    const pts = [
+      { x: x - skewOffset / 2, y },
+      { x: x + w - skewOffset / 2, y },
+      { x: x + w + skewOffset / 2, y: y + h },
+      { x: x + skewOffset / 2, y: y + h },
+    ];
+    g.beginPath();
+    g.moveTo(pts[0].x, pts[0].y);
+    pts.forEach((p) => g.lineTo(p.x, p.y));
+    g.closePath();
+    if (fill) g.fillPath();
+    else g.strokePath();
+  }
+
   private createContentArea(): void {
     const { width, height } = this.cameras.main;
     const maskShape = this.add.graphics();
     maskShape.fillStyle(0xffffff);
-    maskShape.fillRect(0, 240, width, height - 240);
-    this.contentContainer = this.add.container(0, 240);
-    this.contentContainer.setMask(maskShape.createGeometryMask());
+    maskShape.fillRect(0, 280, width, height - 280);
+    const mask = maskShape.createGeometryMask();
+    maskShape.setVisible(false);
+
+    this.contentContainer = this.add.container(0, 280);
+    this.contentContainer.setMask(mask);
   }
 
   private renderContent(): void {
@@ -370,6 +406,7 @@ export class ProfileScene extends Phaser.Scene {
   private renderStats(): void {
     const { width } = this.cameras.main;
     const colors = getColors();
+    const fonts = getFonts();
     const stats = playerData.get().stats;
     const startY = 15 - this.scrollY;
 
@@ -378,18 +415,18 @@ export class ProfileScene extends Phaser.Scene {
 
     const statGroups = [
       {
-        title: i18n.t('totalGames'),
-        color: colors.uiPrimary,
+        title: '🎮 ' + i18n.t('totalGames'),
+        color: colors.uiAccent,
         items: [
-          { label: i18n.t('totalGames'), value: stats.gamesPlayed, color: colors.uiPrimary },
+          { label: i18n.t('totalGames'), value: stats.gamesPlayed, color: colors.uiAccent },
           { label: i18n.t('wins'), value: stats.wins, color: 0x4ade80 },
           { label: i18n.t('losses'), value: stats.losses, color: 0xef4444 },
-          { label: i18n.t('draws'), value: stats.draws, color: 0xfbbf24 },
-          { label: i18n.t('winRate'), value: `${winRate}%`, color: colors.uiAccent },
+          { label: i18n.t('draws'), value: stats.draws, color: colors.uiGold },
+          { label: i18n.t('winRate'), value: `${winRate}%`, color: colors.uiAccentPink },
         ],
       },
       {
-        title: i18n.t('goalsScored'),
+        title: '⚽ ' + i18n.t('goalsScored'),
         color: 0x4ade80,
         items: [
           { label: i18n.t('goalsScored'), value: stats.goalsScored, color: 0x4ade80 },
@@ -398,12 +435,12 @@ export class ProfileScene extends Phaser.Scene {
         ],
       },
       {
-        title: i18n.t('bestStreak'),
-        color: 0xfbbf24,
+        title: '🔥 ' + i18n.t('bestStreak'),
+        color: colors.uiGold,
         items: [
           { label: i18n.t('currentStreak'), value: stats.currentWinStreak, color: colors.uiAccent },
-          { label: i18n.t('bestStreak'), value: stats.longestWinStreak, color: 0xfbbf24 },
-          { label: i18n.t('perfectGames'), value: stats.perfectGames, color: 0xa855f7 },
+          { label: i18n.t('bestStreak'), value: stats.longestWinStreak, color: colors.uiGold },
+          { label: i18n.t('perfectGames'), value: stats.perfectGames, color: colors.uiAccentPink },
           { label: i18n.t('playTime'), value: this.formatPlayTime(stats.totalPlayTime), color: colors.uiPrimary },
         ],
       },
@@ -412,67 +449,45 @@ export class ProfileScene extends Phaser.Scene {
     let currentY = startY;
 
     statGroups.forEach((group, groupIndex) => {
-      // Заголовок группы
-      if (groupIndex > 0) {
-        currentY += 15;
-      }
-      
-      this.contentContainer.add(this.add.text(20, currentY, group.title.toUpperCase(), {
-        fontSize: '13px',
-        fontFamily: 'Arial',
-        color: hexToString(group.color),
-        fontStyle: 'bold',
-      }));
-      
-      // Линия под заголовком
+      if (groupIndex > 0) currentY += 15;
+
+      this.contentContainer.add(this.add.text(25, currentY, group.title.toUpperCase(), { fontSize: '12px', fontFamily: fonts.tech, color: hexToString(group.color), letterSpacing: 1 }));
+
       const line = this.add.graphics();
       line.lineStyle(1, group.color, 0.2);
-      line.lineBetween(20, currentY + 20, width - 20, currentY + 20);
+      line.lineBetween(25, currentY + 20, width - 25, currentY + 20);
       this.contentContainer.add(line);
-      
+
       currentY += 35;
 
-      // Элементы
       group.items.forEach((item, i) => {
         const isLast = i === group.items.length - 1;
-        const itemHeight = 50;
-        
+        const itemHeight = 52;
+
         const itemBg = this.add.graphics();
-        itemBg.fillStyle(0x12121f, 0.9);
-        
+        itemBg.fillStyle(0x14101e, 0.9);
+
         if (i === 0 && isLast) {
           itemBg.fillRoundedRect(20, currentY, width - 40, itemHeight, 12);
         } else if (i === 0) {
-          itemBg.fillRoundedRect(20, currentY, width - 40, itemHeight, { tl: 12, tr: 12, bl: 0, br: 0 });
+          itemBg.fillRoundedRect(20, currentY, width - 40, itemHeight, { tl: 12, tr: 12, bl: 0, br: 0 } as any);
         } else if (isLast) {
-          itemBg.fillRoundedRect(20, currentY, width - 40, itemHeight, { tl: 0, tr: 0, bl: 12, br: 12 });
+          itemBg.fillRoundedRect(20, currentY, width - 40, itemHeight, { tl: 0, tr: 0, bl: 12, br: 12 } as any);
         } else {
           itemBg.fillRect(20, currentY, width - 40, itemHeight);
         }
-        
-        // Левая цветная полоска
+
         itemBg.fillStyle(item.color, 0.6);
         itemBg.fillRect(20, currentY + 2, 3, itemHeight - 4);
-        
-        // Разделительная линия
+
         if (!isLast) {
-          itemBg.lineStyle(1, colors.uiPrimary, 0.15);
+          itemBg.lineStyle(1, colors.glassBorder, 0.1);
           itemBg.lineBetween(35, currentY + itemHeight, width - 25, currentY + itemHeight);
         }
-        
+
         this.contentContainer.add(itemBg);
-
-        // Текст
-        this.contentContainer.add(this.add.text(40, currentY + itemHeight / 2, item.label, {
-          fontSize: '14px',
-          color: '#aaaaaa',
-        }).setOrigin(0, 0.5));
-
-        this.contentContainer.add(this.add.text(width - 30, currentY + itemHeight / 2, String(item.value), {
-          fontSize: '16px',
-          color: hexToString(item.color),
-          fontStyle: 'bold',
-        }).setOrigin(1, 0.5));
+        this.contentContainer.add(this.add.text(40, currentY + itemHeight / 2, item.label, { fontSize: '13px', fontFamily: fonts.tech, color: '#aaaaaa' }).setOrigin(0, 0.5));
+        this.contentContainer.add(this.add.text(width - 35, currentY + itemHeight / 2, String(item.value), { fontSize: '16px', fontFamily: fonts.tech, color: hexToString(item.color) }).setOrigin(1, 0.5));
 
         currentY += itemHeight;
       });
@@ -480,118 +495,110 @@ export class ProfileScene extends Phaser.Scene {
       currentY += 10;
     });
 
-    this.maxScrollY = Math.max(0, currentY + this.scrollY - (this.cameras.main.height - 240) + 20);
+    this.maxScrollY = Math.max(0, currentY + this.scrollY - (this.cameras.main.height - 280) + 20);
   }
 
   private renderCollection(): void {
     const { width } = this.cameras.main;
     const colors = getColors();
+    const fonts = getFonts();
     const data = playerData.get();
     let currentY = 15 - this.scrollY;
 
-    const sections = [
-      { title: i18n.t('caps'), items: data.ownedCapSkins, type: 'cap' as const, equipped: data.equippedCapSkin },
-      { title: i18n.t('balls'), items: data.ownedBallSkins, type: 'ball' as const, equipped: data.equippedBallSkin },
-      { title: i18n.t('fields'), items: data.ownedFieldSkins, type: 'field' as const, equipped: data.equippedFieldSkin },
-    ];
+    const faction = playerData.getFaction();
+
+    const sections: any[] = [];
+
+    // Если есть фракция — показываем юнитов
+    if (faction) {
+      const ownedUnits = playerData.getOwnedUnits(faction);
+      sections.push({ title: `🛸 UNITS (${this.getFactionName(faction)})`, items: ownedUnits, type: 'unit' as const, equipped: undefined });
+    }
+
+    // Мячи и поля
+    sections.push({ title: '⚽ ' + i18n.t('balls'), items: data.ownedBallSkins, type: 'ball' as const, equipped: data.equippedBallSkin });
+    sections.push({ title: '🏟️ ' + i18n.t('fields'), items: data.ownedFieldSkins, type: 'field' as const, equipped: data.equippedFieldSkin });
 
     sections.forEach((section) => {
-      // Заголовок секции - фиолетовый как в настройках
-      this.contentContainer.add(this.add.text(20, currentY, `${section.title.toUpperCase()} (${section.items.length})`, {
-        fontSize: '13px',
-        fontFamily: 'Arial',
-        color: hexToString(colors.uiPrimary), // Фиолетовый вместо бирюзового
-        fontStyle: 'bold',
-      }));
-      
+      this.contentContainer.add(this.add.text(25, currentY, `${section.title.toUpperCase()} (${section.items.length})`, { fontSize: '12px', fontFamily: fonts.tech, color: hexToString(colors.uiAccent), letterSpacing: 1 }));
+
       const line = this.add.graphics();
-      line.lineStyle(1, colors.uiPrimary, 0.2);
-      line.lineBetween(20, currentY + 22, width - 20, currentY + 22);
+      line.lineStyle(1, colors.uiAccent, 0.2);
+      line.lineBetween(25, currentY + 20, width - 25, currentY + 20);
       this.contentContainer.add(line);
-      
+
       currentY += 35;
 
-      // Элементы
-      section.items.forEach((owned) => {
-        const skin = section.type === 'cap' 
-          ? getCapSkin(owned.id) 
-          : section.type === 'ball' 
-            ? getBallSkin(owned.id) 
-            : getFieldSkin(owned.id);
-        
-        if (!skin) return;
+      section.items.forEach((owned: any) => {
+        let skin: any;
+        let rarityColor: number;
+        let isEquipped = false;
+        let cardHeight = 85;
 
-        const rarityColor = getRarityColor(skin.rarity);
-        const isEquipped = section.equipped === owned.id;
-
-        const cardHeight = 80;
-        const cardBg = this.add.graphics();
-        
-        // Тень
-        cardBg.fillStyle(0x000000, 0.2);
-        cardBg.fillRoundedRect(22, currentY + 3, width - 44, cardHeight, 12);
-        
-        // Фон
-        cardBg.fillStyle(0x12121f, 0.9);
-        cardBg.fillRoundedRect(20, currentY, width - 40, cardHeight, 12);
-        
-        // Рамка
-        if (isEquipped) {
-          cardBg.lineStyle(2, colors.uiPrimary, 0.7); // Фиолетовая рамка
+        if (section.type === 'unit') {
+          skin = getUnit(owned.id);
+          if (!skin) return;
+          rarityColor = this.getFactionColor(skin.factionId);
+        } else if (section.type === 'ball') {
+          skin = getBallSkin(owned.id);
+          if (!skin) return;
+          rarityColor = getRarityColor(skin.rarity);
+          isEquipped = section.equipped === owned.id;
         } else {
-          cardBg.lineStyle(1, colors.uiPrimary, 0.3);
+          skin = getFieldSkin(owned.id);
+          if (!skin) return;
+          rarityColor = getRarityColor(skin.rarity);
+          isEquipped = section.equipped === owned.id;
         }
+
+        const cardBg = this.add.graphics();
+        if (isEquipped) {
+          cardBg.lineStyle(4, colors.uiAccent, 0.15);
+          cardBg.strokeRoundedRect(18, currentY - 2, width - 36, cardHeight + 4, 14);
+        }
+        cardBg.fillStyle(0x14101e, 0.95);
+        cardBg.fillRoundedRect(20, currentY, width - 40, cardHeight, 12);
+        cardBg.fillStyle(0x000000, 0.3);
+        cardBg.fillRoundedRect(24, currentY + 4, 75, cardHeight - 8, { tl: 10, tr: 0, bl: 10, br: 0 } as any);
+        cardBg.lineStyle(1.5, isEquipped ? colors.uiAccent : colors.glassBorder, isEquipped ? 0.6 : 0.15);
         cardBg.strokeRoundedRect(20, currentY, width - 40, cardHeight, 12);
-        
         this.contentContainer.add(cardBg);
 
-        // Превью как в магазине
-        const previewX = 65;
+        const previewX = 62;
         const previewY = currentY + cardHeight / 2;
-        
-        if (section.type === 'cap') {
-          this.createCapPreview(previewX, previewY, skin as CapSkinData);
+
+        if (section.type === 'unit') {
+          this.createUnitPreview(previewX, previewY, skin);
         } else if (section.type === 'ball') {
-          this.createBallPreview(previewX, previewY, skin as BallSkinData);
+          this.createBallPreview(previewX, previewY, skin);
         } else {
-          this.createFieldPreview(previewX, previewY, skin as FieldSkinData);
+          this.createFieldPreview(previewX, previewY, skin);
         }
 
-        // Информация
-        this.contentContainer.add(this.add.text(110, currentY + 25, skin.name, {
-          fontSize: '15px',
-          color: '#ffffff',
-          fontStyle: 'bold',
-        }));
+        this.contentContainer.add(this.add.text(115, currentY + 25, skin.name, { fontSize: '14px', fontFamily: fonts.tech, color: '#ffffff' }));
 
-        // Бейдж редкости
         const rarityBadge = this.add.graphics();
         rarityBadge.fillStyle(rarityColor, 0.15);
-        rarityBadge.fillRoundedRect(110, currentY + 45, 70, 22, 6);
+        rarityBadge.fillRoundedRect(115, currentY + 45, 70, 22, 6);
         rarityBadge.lineStyle(1, rarityColor, 0.4);
-        rarityBadge.strokeRoundedRect(110, currentY + 45, 70, 22, 6);
+        rarityBadge.strokeRoundedRect(115, currentY + 45, 70, 22, 6);
         this.contentContainer.add(rarityBadge);
 
-        this.contentContainer.add(this.add.text(145, currentY + 56, getRarityName(skin.rarity), {
-          fontSize: '10px',
-          color: hexToString(rarityColor),
-          fontStyle: 'bold',
-        }).setOrigin(0.5, 0.5));
+        if (section.type === 'unit') {
+          this.contentContainer.add(this.add.text(150, currentY + 56, skin.capClass.toUpperCase(), { fontSize: '9px', fontFamily: fonts.tech, color: hexToString(rarityColor) }).setOrigin(0.5));
+        } else {
+          this.contentContainer.add(this.add.text(150, currentY + 56, getRarityName(skin.rarity).toUpperCase(), { fontSize: '9px', fontFamily: fonts.tech, color: hexToString(rarityColor) }).setOrigin(0.5));
+        }
 
-        // Значок экипировки
         if (isEquipped) {
-          const checkContainer = this.add.container(width - 50, currentY + cardHeight / 2);
-          
+          const checkContainer = this.add.container(width - 55, currentY + cardHeight / 2);
           const checkBg = this.add.graphics();
-          checkBg.fillStyle(colors.uiPrimary, 0.2); // Фиолетовый
+          checkBg.fillStyle(colors.uiAccent, 0.15);
           checkBg.fillCircle(0, 0, 18);
-          checkBg.lineStyle(2, colors.uiPrimary, 0.7);
+          checkBg.lineStyle(2, colors.uiAccent, 0.6);
           checkBg.strokeCircle(0, 0, 18);
           checkContainer.add(checkBg);
-          
-          const check = Icons.drawCheck(this, 0, 0, 10, colors.uiPrimary);
-          checkContainer.add(check);
-          
+          checkContainer.add(this.add.text(0, 0, '✓', { fontSize: '14px', color: hexToString(colors.uiAccent) }).setOrigin(0.5));
           this.contentContainer.add(checkContainer);
         }
 
@@ -601,355 +608,216 @@ export class ProfileScene extends Phaser.Scene {
       currentY += 10;
     });
 
-    this.maxScrollY = Math.max(0, currentY + this.scrollY - (this.cameras.main.height - 240) + 20);
+    this.maxScrollY = Math.max(0, currentY + this.scrollY - (this.cameras.main.height - 280) + 20);
   }
 
-  // Превью фишки как в магазине
-  private createCapPreview(x: number, y: number, skin: CapSkinData): void {
-    const size = 28;
-
-    // Свечение
-    if (skin.hasGlow) {
-      const glow = this.add.circle(x, y, size + 10, skin.glowColor, 0.2);
-      this.contentContainer.add(glow);
-    }
-
-    // Тень
-    this.contentContainer.add(this.add.ellipse(x + 2, y + 18, size * 1.6, size * 0.5, 0x000000, 0.3));
-
-    // Основной круг
-    const main = this.add.circle(x, y, size, skin.primaryColor);
-    main.setStrokeStyle(2, 0xffffff, 0.9);
-    this.contentContainer.add(main);
-
-    // Внутренний круг
-    this.contentContainer.add(this.add.circle(x, y, size * 0.65, skin.secondaryColor, 0.5));
-
-    // Центральный круг
-    this.contentContainer.add(this.add.circle(x, y, size * 0.35, skin.primaryColor, 0.6));
-
-    // Блик
-    const highlight = this.add.ellipse(x - size * 0.35, y - size * 0.35, size * 0.4, size * 0.2, 0xffffff, 0.4);
-    highlight.setAngle(-45);
-    this.contentContainer.add(highlight);
-
-    // Иконка класса
-    const iconContainer = drawClassIcon(this, x, y, 'balanced', size * 0.45, 0xffffff);
-    this.contentContainer.add(iconContainer);
+  private createUnitPreview(x: number, y: number, unit: any): void {
+    const factionColor = this.getFactionColor(unit.factionId);
+    const g = this.add.graphics();
+    g.fillStyle(factionColor, 0.3);
+    g.fillCircle(x, y, 26);
+    g.lineStyle(2, factionColor, 0.7);
+    g.strokeCircle(x, y, 26);
+    this.contentContainer.add(g);
   }
 
-  // Превью мяча как в магазине
   private createBallPreview(x: number, y: number, skin: BallSkinData): void {
-    const size = 24;
-
-    // Свечение
+    const size = 22;
     if (skin.hasGlow) {
-      const glow = this.add.circle(x, y, size + 8, skin.glowColor, 0.25);
-      this.contentContainer.add(glow);
+      this.contentContainer.add(this.add.circle(x, y, size + 6, skin.glowColor, 0.2));
     }
+    this.contentContainer.add(this.add.ellipse(x + 2, y + 2, size * 1.4, size * 1, 0x000000, 0.25));
 
-    // Тень
-    this.contentContainer.add(this.add.ellipse(x + 2, y + 15, size * 1.4, size * 0.4, 0x000000, 0.3));
-
-    // Основной мяч
-    const ball = this.add.circle(x, y, size, skin.primaryColor);
-    ball.setStrokeStyle(2, skin.secondaryColor, 0.8);
-    this.contentContainer.add(ball);
-
-    // Паттерн футбольного мяча
-    const pattern = this.add.graphics();
-    pattern.fillStyle(skin.secondaryColor, 0.8);
-
-    // Центральный пятиугольник
-    this.drawPentagon(pattern, x, y, size * 0.35);
-
-    // Пятиугольники по краям
-    const smallSize = size * 0.18;
-    const offset = size * 0.55;
-    for (let i = 0; i < 5; i++) {
-      const angle = (i * 72 - 90) * Math.PI / 180;
-      const px = x + Math.cos(angle) * offset;
-      const py = y + Math.sin(angle) * offset;
-      this.drawPentagon(pattern, px, py, smallSize);
+    const texKey = skin.textureKey;
+    if (texKey && this.textures.exists(texKey)) {
+      this.contentContainer.add(this.add.sprite(x, y, texKey).setScale((size * 2) / 64));
+    } else {
+      const ball = this.add.circle(x, y, size, skin.primaryColor);
+      ball.setStrokeStyle(2, skin.secondaryColor || skin.glowColor);
+      this.contentContainer.add(ball);
     }
-
-    this.contentContainer.add(pattern);
-
-    // Блик
-    const highlight = this.add.ellipse(x - size * 0.3, y - size * 0.3, size * 0.35, size * 0.18, 0xffffff, 0.5);
-    highlight.setAngle(-45);
-    this.contentContainer.add(highlight);
   }
 
-  private drawPentagon(graphics: Phaser.GameObjects.Graphics, cx: number, cy: number, size: number): void {
-    const points: { x: number; y: number }[] = [];
-    for (let i = 0; i < 5; i++) {
-      const angle = (i * 72 - 90) * Math.PI / 180;
-      points.push({
-        x: cx + Math.cos(angle) * size,
-        y: cy + Math.sin(angle) * size
-      });
-    }
-
-    graphics.beginPath();
-    graphics.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      graphics.lineTo(points[i].x, points[i].y);
-    }
-    graphics.closePath();
-    graphics.fillPath();
-  }
-
-  // Превью поля как в магазине
   private createFieldPreview(x: number, y: number, skin: FieldSkinData): void {
-    const fw = 70;
-    const fh = 45;
-
-    // Тень
-    this.contentContainer.add(this.add.ellipse(x + 2, y + 22, fw, fh * 0.35, 0x000000, 0.2));
-
+    const fw = 65, fh = 42;
     const field = this.add.graphics();
-
-    // Основное поле
     field.fillStyle(skin.fieldColor, 1);
-    field.fillRoundedRect(x - fw / 2, y - fh / 2, fw, fh, 5);
-
-    // Сетка
-    field.lineStyle(1, skin.lineColor, 0.15);
-    const gridSize = 10;
-    for (let gx = x - fw / 2 + gridSize; gx < x + fw / 2; gx += gridSize) {
-      field.moveTo(gx, y - fh / 2);
-      field.lineTo(gx, y + fh / 2);
-    }
-    for (let gy = y - fh / 2 + gridSize; gy < y + fh / 2; gy += gridSize) {
-      field.moveTo(x - fw / 2, gy);
-      field.lineTo(x + fw / 2, gy);
-    }
-    field.strokePath();
-
-    // Разметка
-    field.lineStyle(1, skin.lineColor, 0.9);
-
-    // Центральная линия
-    field.moveTo(x - fw / 2, y);
-    field.lineTo(x + fw / 2, y);
-    field.strokePath();
-
-    // Центральный круг
-    field.strokeCircle(x, y, 10);
-
-    // Центральная точка
-    field.fillStyle(skin.lineColor, 1);
-    field.fillCircle(x, y, 2);
-
-    // Штрафные
-    field.strokeRect(x - 12, y - fh / 2, 24, 8);
-    field.strokeRect(x - 12, y + fh / 2 - 8, 24, 8);
-
-    // Рамка
-    field.lineStyle(2, skin.borderColor, 0.8);
-    field.strokeRoundedRect(x - fw / 2, y - fh / 2, fw, fh, 5);
-
-    // Ворота
-    field.lineStyle(2, skin.goalColor, 1);
-    field.strokeRect(x - 10, y - fh / 2 - 4, 20, 4);
-    field.strokeRect(x - 10, y + fh / 2, 20, 4);
-
+    field.fillRoundedRect(x - fw / 2, y - fh / 2, fw, fh, 4);
+    field.lineStyle(1, skin.lineColor, 0.6);
+    field.lineBetween(x - fw / 2, y, x + fw / 2, y);
+    field.strokeCircle(x, y, 8);
+    field.lineStyle(1.5, skin.borderColor);
+    field.strokeRoundedRect(x - fw / 2, y - fh / 2, fw, fh, 4);
+    field.lineStyle(1.5, skin.goalColor);
+    field.strokeRect(x - 12, y - fh / 2 - 2, 24, 3);
+    field.strokeRect(x - 12, y + fh / 2 - 1, 24, 3);
     this.contentContainer.add(field);
   }
 
   private renderAchievements(): void {
     const { width } = this.cameras.main;
     const colors = getColors();
+    const fonts = getFonts();
     const data = playerData.get();
     let currentY = 15 - this.scrollY;
 
     const achievements = [
-      { id: 'first_win', name: i18n.t('firstVictory'), desc: i18n.t('firstVictoryDesc'), iconDraw: Icons.drawTrophy, color: 0xfbbf24, unlocked: data.stats.wins >= 1 },
-      { id: 'win_streak_3', name: i18n.t('hotStreak'), desc: i18n.t('hotStreakDesc'), iconDraw: Icons.drawFire, color: 0xf97316, unlocked: data.stats.longestWinStreak >= 3 },
-      { id: 'win_streak_5', name: i18n.t('unstoppable'), desc: i18n.t('unstoppableDesc'), iconDraw: Icons.drawLightning, color: 0xeab308, unlocked: data.stats.longestWinStreak >= 5 },
-      { id: 'goals_10', name: i18n.t('sharpshooter'), desc: i18n.t('sharpshooterDesc'), iconDraw: Icons.drawTarget, color: 0x3b82f6, unlocked: data.stats.goalsScored >= 10 },
-      { id: 'goals_50', name: i18n.t('goalMachine'), desc: i18n.t('goalMachineDesc'), iconDraw: this.drawBallIconForAchievement.bind(this), color: 0x22c55e, unlocked: data.stats.goalsScored >= 50 },
-      { id: 'perfect_game', name: i18n.t('cleanSheet'), desc: i18n.t('cleanSheetDesc'), iconDraw: Icons.drawShield, color: 0x6366f1, unlocked: data.stats.perfectGames >= 1 },
-      { id: 'games_10', name: i18n.t('regularPlayer'), desc: i18n.t('regularPlayerDesc'), iconDraw: Icons.drawGamepad, color: 0x8b5cf6, unlocked: data.stats.gamesPlayed >= 10 },
-      { id: 'games_50', name: i18n.t('dedicated'), desc: i18n.t('dedicatedDesc'), iconDraw: Icons.drawHeart, color: 0xec4899, unlocked: data.stats.gamesPlayed >= 50 },
-      { id: 'level_10', name: i18n.t('risingStar'), desc: i18n.t('risingStarDesc'), iconDraw: Icons.drawStar, color: 0x14b8a6, unlocked: data.level >= 10 },
-      { id: 'level_25', name: i18n.t('veteran'), desc: i18n.t('veteranDesc'), iconDraw: Icons.drawCrown, color: 0xf59e0b, unlocked: data.level >= 25 },
+      { id: 'first_win', name: i18n.t('firstVictory'), desc: i18n.t('firstVictoryDesc'), icon: '🏆', color: colors.uiGold, unlocked: data.stats.wins >= 1 },
+      { id: 'win_streak_3', name: i18n.t('hotStreak'), desc: i18n.t('hotStreakDesc'), icon: '🔥', color: 0xf97316, unlocked: data.stats.longestWinStreak >= 3 },
+      { id: 'win_streak_5', name: i18n.t('unstoppable'), desc: i18n.t('unstoppableDesc'), icon: '⚡', color: colors.uiGold, unlocked: data.stats.longestWinStreak >= 5 },
+      { id: 'goals_10', name: i18n.t('sharpshooter'), desc: i18n.t('sharpshooterDesc'), icon: '🎯', color: 0x3b82f6, unlocked: data.stats.goalsScored >= 10 },
+      { id: 'goals_50', name: i18n.t('goalMachine'), desc: i18n.t('goalMachineDesc'), icon: '⚽', color: 0x22c55e, unlocked: data.stats.goalsScored >= 50 },
+      { id: 'perfect_game', name: i18n.t('cleanSheet'), desc: i18n.t('cleanSheetDesc'), icon: '🛡️', color: colors.uiAccent, unlocked: data.stats.perfectGames >= 1 },
+      { id: 'games_10', name: i18n.t('regularPlayer'), desc: i18n.t('regularPlayerDesc'), icon: '🎮', color: colors.uiPrimary, unlocked: data.stats.gamesPlayed >= 10 },
+      { id: 'games_50', name: i18n.t('dedicated'), desc: i18n.t('dedicatedDesc'), icon: '❤️', color: colors.uiAccentPink, unlocked: data.stats.gamesPlayed >= 50 },
+      { id: 'level_10', name: i18n.t('risingStar'), desc: i18n.t('risingStarDesc'), icon: '⭐', color: colors.uiAccent, unlocked: data.level >= 10 },
+      { id: 'level_25', name: i18n.t('veteran'), desc: i18n.t('veteranDesc'), icon: '👑', color: colors.uiGold, unlocked: data.level >= 25 },
     ];
 
-    const unlockedCount = achievements.filter(a => a.unlocked).length;
+    const unlockedCount = achievements.filter((a) => a.unlocked).length;
 
-    // Заголовок секции - фиолетовый
-    this.contentContainer.add(this.add.text(20, currentY, i18n.t('achievements').toUpperCase(), {
-      fontSize: '13px',
-      fontFamily: 'Arial',
-      color: hexToString(colors.uiPrimary), // Фиолетовый
-      fontStyle: 'bold',
-    }));
-    
-    this.contentContainer.add(this.add.text(width - 25, currentY, `${unlockedCount}/${achievements.length}`, {
-      fontSize: '13px',
-      color: hexToString(colors.uiPrimary), // Фиолетовый
-      fontStyle: 'bold',
-    }).setOrigin(1, 0));
-    
+    this.contentContainer.add(this.add.text(25, currentY, ('🏆 ' + i18n.t('achievements')).toUpperCase(), { fontSize: '12px', fontFamily: fonts.tech, color: hexToString(colors.uiAccent), letterSpacing: 1 }));
+    this.contentContainer.add(this.add.text(width - 30, currentY, `${unlockedCount}/${achievements.length}`, { fontSize: '12px', fontFamily: fonts.tech, color: hexToString(colors.uiAccent) }).setOrigin(1, 0));
+
     const line = this.add.graphics();
-    line.lineStyle(1, colors.uiPrimary, 0.2);
-    line.lineBetween(20, currentY + 22, width - 20, currentY + 22);
+    line.lineStyle(1, colors.uiAccent, 0.2);
+    line.lineBetween(25, currentY + 20, width - 25, currentY + 20);
     this.contentContainer.add(line);
 
     currentY += 35;
 
-    // Прогресс бар
     const progressBg = this.add.graphics();
-    progressBg.fillStyle(0x12121f, 0.9);
-    progressBg.fillRoundedRect(20, currentY, width - 40, 45, 12);
-    progressBg.lineStyle(1, colors.uiPrimary, 0.3);
-    progressBg.strokeRoundedRect(20, currentY, width - 40, 45, 12);
+    progressBg.fillStyle(0x14101e, 0.95);
+    progressBg.fillRoundedRect(20, currentY, width - 40, 50, 12);
+    progressBg.lineStyle(1, colors.glassBorder, 0.15);
+    progressBg.strokeRoundedRect(20, currentY, width - 40, 50, 12);
     this.contentContainer.add(progressBg);
 
-    // Иконка трофея
-    const trophyIcon = Icons.drawTrophy(this, 50, currentY + 22, 14, colors.uiPrimary);
-    this.contentContainer.add(trophyIcon);
+    this.contentContainer.add(this.add.text(50, currentY + 25, '🏆', { fontSize: '18px' }).setOrigin(0.5));
 
-    // Прогресс бар справа
-    const barX = 80;
-    const barWidth = width - 140;
-    const barY = currentY + 22;
-    
+    const barX = 85;
+    const barWidth = width - 155;
+    const barY = currentY + 25;
+    const progress = unlockedCount / achievements.length;
+
     const bar = this.add.graphics();
     bar.fillStyle(0x1a1a2e, 1);
-    bar.fillRoundedRect(barX, barY - 7, barWidth, 14, 7);
-    
-    if (unlockedCount > 0) {
-      bar.fillStyle(colors.uiPrimary, 1); // Фиолетовый
-      bar.fillRoundedRect(barX, barY - 7, Math.max(barWidth * (unlockedCount / achievements.length), 14), 14, 7);
+    bar.fillRoundedRect(barX, barY - 8, barWidth, 16, 8);
+
+    if (progress > 0) {
+      bar.fillStyle(colors.uiAccent, 1);
+      bar.fillRoundedRect(barX, barY - 8, Math.max(barWidth * progress, 16), 16, 8);
+      bar.fillStyle(0xffffff, 0.15);
+      bar.fillRoundedRect(barX + 2, barY - 6, Math.max(barWidth * progress - 4, 12), 6, 4);
     }
-    
-    bar.lineStyle(1, colors.uiPrimary, 0.3);
-    bar.strokeRoundedRect(barX, barY - 7, barWidth, 14, 7);
+
+    bar.lineStyle(1, colors.uiAccent, 0.3);
+    bar.strokeRoundedRect(barX, barY - 8, barWidth, 16, 8);
     this.contentContainer.add(bar);
 
-    this.contentContainer.add(this.add.text(barX + barWidth / 2, barY, `${Math.round((unlockedCount / achievements.length) * 100)}%`, {
-      fontSize: '9px',
-      color: '#ffffff',
-      fontStyle: 'bold',
-    }).setOrigin(0.5, 0.5));
+    this.contentContainer.add(this.add.text(barX + barWidth / 2, barY, `${Math.round(progress * 100)}%`, { fontSize: '10px', fontFamily: fonts.tech, color: '#ffffff' }).setOrigin(0.5));
 
-    currentY += 60;
+    currentY += 65;
 
-    // Список достижений
     achievements.forEach((achievement) => {
       const cardHeight = 80;
       const cardBg = this.add.graphics();
-      
-      // Тень
-      cardBg.fillStyle(0x000000, achievement.unlocked ? 0.2 : 0.1);
-      cardBg.fillRoundedRect(22, currentY + 3, width - 44, cardHeight, 12);
-      
-      // Фон
-      cardBg.fillStyle(achievement.unlocked ? achievement.color : 0x12121f, achievement.unlocked ? 0.08 : 0.9);
+
+      cardBg.fillStyle(achievement.unlocked ? achievement.color : 0x14101e, achievement.unlocked ? 0.08 : 0.95);
       cardBg.fillRoundedRect(20, currentY, width - 40, cardHeight, 12);
-      
-      // Рамка
-      cardBg.lineStyle(1.5, achievement.unlocked ? achievement.color : colors.uiPrimary, achievement.unlocked ? 0.5 : 0.2);
+      cardBg.lineStyle(1.5, achievement.unlocked ? achievement.color : colors.glassBorder, achievement.unlocked ? 0.5 : 0.15);
       cardBg.strokeRoundedRect(20, currentY, width - 40, cardHeight, 12);
-      
       this.contentContainer.add(cardBg);
 
-      // Иконка
       const iconX = 58;
       const iconY = currentY + cardHeight / 2;
-      
+
       const iconBg = this.add.graphics();
       iconBg.fillStyle(achievement.unlocked ? achievement.color : 0x1a1a2e, achievement.unlocked ? 0.2 : 0.8);
-      iconBg.fillCircle(iconX, iconY, 26);
-      iconBg.lineStyle(2, achievement.unlocked ? achievement.color : 0x3a3a4a, achievement.unlocked ? 0.6 : 0.3);
-      iconBg.strokeCircle(iconX, iconY, 26);
+      iconBg.fillCircle(iconX, iconY, 24);
+      iconBg.lineStyle(2, achievement.unlocked ? achievement.color : 0x3a3a4a, achievement.unlocked ? 0.6 : 0.2);
+      iconBg.strokeCircle(iconX, iconY, 24);
       this.contentContainer.add(iconBg);
-      
-      const iconColor = achievement.unlocked ? achievement.color : 0x4a4a5a;
-      const icon = achievement.iconDraw(this, iconX, iconY, 14, iconColor);
-      icon.setAlpha(achievement.unlocked ? 1 : 0.4);
-      this.contentContainer.add(icon);
 
-      // Название и описание
-      this.contentContainer.add(this.add.text(100, currentY + 28, achievement.name, {
-        fontSize: '15px',
-        color: achievement.unlocked ? '#ffffff' : '#555566',
-        fontStyle: 'bold',
-      }));
+      const iconText = this.add.text(iconX, iconY, achievement.icon, { fontSize: '20px' }).setOrigin(0.5);
+      iconText.setAlpha(achievement.unlocked ? 1 : 0.3);
+      this.contentContainer.add(iconText);
 
-      this.contentContainer.add(this.add.text(100, currentY + 52, achievement.desc, {
-        fontSize: '12px',
-        color: achievement.unlocked ? '#999999' : '#444455',
-      }));
+      this.contentContainer.add(this.add.text(100, currentY + 26, achievement.name, { fontSize: '14px', fontFamily: fonts.tech, color: achievement.unlocked ? '#ffffff' : '#555566' }));
+      this.contentContainer.add(this.add.text(100, currentY + 48, achievement.desc, { fontSize: '11px', color: achievement.unlocked ? '#999999' : '#444455' }));
 
-      // Статус справа
       if (achievement.unlocked) {
         const checkBg = this.add.graphics();
-        checkBg.fillStyle(achievement.color, 0.2);
-        checkBg.fillCircle(width - 50, iconY, 20);
+        checkBg.fillStyle(achievement.color, 0.15);
+        checkBg.fillCircle(width - 55, iconY, 18);
         checkBg.lineStyle(2, achievement.color, 0.6);
-        checkBg.strokeCircle(width - 50, iconY, 20);
+        checkBg.strokeCircle(width - 55, iconY, 18);
         this.contentContainer.add(checkBg);
-        
-        const check = Icons.drawCheck(this, width - 50, iconY, 11, achievement.color);
-        this.contentContainer.add(check);
+        this.contentContainer.add(this.add.text(width - 55, iconY, '✓', { fontSize: '14px', color: hexToString(achievement.color) }).setOrigin(0.5));
       } else {
-        const lockIcon = Icons.drawLock(this, width - 50, iconY, 13, 0x4a4a5a);
-        lockIcon.setAlpha(0.5);
-        this.contentContainer.add(lockIcon);
+        this.contentContainer.add(this.add.text(width - 55, iconY, '🔒', { fontSize: '16px' }).setOrigin(0.5).setAlpha(0.3));
       }
 
       currentY += cardHeight + 10;
     });
 
-    this.maxScrollY = Math.max(0, currentY + this.scrollY - (this.cameras.main.height - 240) + 20);
-  }
-
-  private drawBallIconForAchievement(scene: Phaser.Scene, x: number, y: number, size: number, color: number): Phaser.GameObjects.Graphics {
-    const g = scene.add.graphics();
-    g.fillStyle(color, 1);
-    g.fillCircle(x, y, size);
-    g.lineStyle(1.5, 0xffffff, 0.4);
-    g.strokeCircle(x, y, size);
-    return g;
+    this.maxScrollY = Math.max(0, currentY + this.scrollY - (this.cameras.main.height - 280) + 20);
   }
 
   private formatPlayTime(seconds: number): string {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    }
+    if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
+  }
+
+  private getFactionColor(faction: string): number {
+    switch (faction) {
+      case 'magma': return 0xff4500;
+      case 'cyborg': return 0x00f2ff;
+      case 'void': return 0x9d00ff;
+      case 'insect': return 0x39ff14;
+      default: return 0x00f2ff;
+    }
+  }
+
+  private getFactionName(faction: string): string {
+    switch (faction) {
+      case 'magma': return 'Magma Brutes';
+      case 'cyborg': return 'Terran Cyborgs';
+      case 'void': return 'Void Walkers';
+      case 'insect': return 'Xeno Swarm';
+      default: return 'Unknown';
+    }
   }
 
   private setupScrolling(): void {
     this.input.on('wheel', (_: any, __: any, ___: number, deltaY: number) => {
       this.scrollY = Phaser.Math.Clamp(this.scrollY + deltaY * 0.5, 0, this.maxScrollY);
+      this.scrollVelocity = 0;
       this.renderContent();
     });
 
-    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { 
-      if (p.y > 240) { 
-        this.dragStartY = p.y; 
-        this.isDragging = true; 
-      } 
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (p.y > 280) {
+        this.dragStartY = p.y;
+        this.isDragging = true;
+        this.scrollVelocity = 0;
+      }
     });
-    
+
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (this.isDragging) {
         const delta = this.dragStartY - p.y;
+        this.scrollVelocity = delta;
         this.scrollY = Phaser.Math.Clamp(this.scrollY + delta, 0, this.maxScrollY);
         this.dragStartY = p.y;
         this.renderContent();
       }
     });
-    
-    this.input.on('pointerup', () => { 
-      this.isDragging = false; 
+
+    this.input.on('pointerup', () => {
+      this.isDragging = false;
     });
   }
 }

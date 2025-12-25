@@ -1,46 +1,64 @@
 // src/scenes/ShopScene.ts
 
 import Phaser from 'phaser';
-import { getColors, hexToString, getRarityColor } from '../config/themes';
+import { getColors, hexToString, getFonts } from '../config/themes';
 import { playerData } from '../data/PlayerData';
-import { 
-  CAP_SKINS, BALL_SKINS, FIELD_SKINS, 
-  CapSkinData, BallSkinData, FieldSkinData, 
-  formatPrice, getRarityName, SkinPrice 
+import {
+  BALL_SKINS,
+  FIELD_SKINS,
+  BallSkinData,
+  FieldSkinData,
+  formatPrice,
+  getRarityName,
+  SkinPrice,
+  getRarityColor as getSkinRarityColor,
 } from '../data/SkinsCatalog';
-import { SkinDetailModal } from '../ui/modals/SkinDetailModal';
+import {
+  getUnit,
+  getUnitsByFaction,
+  getStarterUnits,
+  UnitData,
+  getRarityColor as getUnitRarityColor,
+  getClassColor,
+  getClassIcon,
+  getClassName,
+  formatPrice as formatUnitPrice,
+  getUpgradeCost,
+  MAX_UPGRADE_LEVEL,
+  getRarityName as getUnitRarityName,
+} from '../data/UnitsCatalog';
+import { CapUpgrades, getCapTotalLevel } from '../data/PlayerData';
+import { FACTIONS, FactionId, FACTION_IDS, FactionConfig, getFactionPrice } from '../constants/gameConstants';
+import { AudioManager } from '../managers/AudioManager';
 
-type ShopTab = 'caps' | 'balls' | 'fields';
-type SkinData = CapSkinData | BallSkinData | FieldSkinData;
-type SkinType = 'cap' | 'ball' | 'field';
+type ShopTab = 'units' | 'balls' | 'fields' | 'factions';
+type SkinData = BallSkinData | FieldSkinData;
 
-interface SkinCard {
+interface Card {
   container: Phaser.GameObjects.Container;
-  index: number;
   y: number;
+  height: number;
 }
 
 export class ShopScene extends Phaser.Scene {
-  private currentTab: ShopTab = 'caps';
+  private currentTab: ShopTab = 'units';
   private scrollY = 0;
   private maxScrollY = 0;
   private contentContainer!: Phaser.GameObjects.Container;
   private coinsText!: Phaser.GameObjects.Text;
-  private starsText!: Phaser.GameObjects.Text;
-  
-  // === ОПТИМИЗАЦИЯ ===
-  private skinCards: SkinCard[] = [];
-  private cardHeight = 220;
-  private cardGap = 12;
+  private crystalsText!: Phaser.GameObjects.Text;
+
+  private cards: Card[] = [];
   private visibleAreaTop = 0;
   private visibleAreaBottom = 0;
   private isDragging = false;
   private lastPointerY = 0;
   private scrollVelocity = 0;
-  private activeTweens: Phaser.Tweens.Tween[] = [];
   
-  // === МОДАЛЬНОЕ ОКНО ===
-  private activeModal: SkinDetailModal | null = null;
+  // Состояние
+  private selectedUnitId: string | null = null; // Для панели прокачки
+  private expandedFactionId: string | null = null; // Для развернутой фракции
+  private isOverlayOpen = false; // Для View mode
   private dragDistance = 0;
 
   constructor() {
@@ -48,501 +66,890 @@ export class ShopScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.skinCards = [];
-    this.activeTweens = [];
+    this.cards = [];
     this.scrollY = 0;
     this.scrollVelocity = 0;
-    this.activeModal = null;
-    this.dragDistance = 0;
-    
+    this.isOverlayOpen = false;
+    this.selectedUnitId = null;
+    this.expandedFactionId = null;
+
     this.createBackground();
     this.createHeader();
     this.createTabs();
     this.createContentArea();
-    this.createAllCards();
+    this.renderContent();
     this.setupScrolling();
-    this.updateCardPositions();
-  }
-
-  shutdown(): void {
-    this.activeTweens.forEach(tween => tween.destroy());
-    this.activeTweens = [];
   }
 
   update(): void {
-    if (!this.isDragging && Math.abs(this.scrollVelocity) > 0.5) {
+    if (!this.isDragging && !this.isOverlayOpen && Math.abs(this.scrollVelocity) > 0.5) {
       this.scrollY = Phaser.Math.Clamp(this.scrollY + this.scrollVelocity, 0, this.maxScrollY);
       this.scrollVelocity *= 0.92;
       this.updateCardPositions();
     }
   }
 
-  // ==================== BACKGROUND ====================
+  // ==================== UI SETUP ====================
 
   private createBackground(): void {
     const { width, height } = this.cameras.main;
     const colors = getColors();
 
+    // Dark Tech Background
     const bg = this.add.graphics();
-    bg.fillStyle(0x05050a, 1);
+    bg.fillStyle(0x050508, 1);
     bg.fillRect(0, 0, width, height);
-    bg.fillGradientStyle(colors.uiPrimary, colors.uiPrimary, 0x05050a, 0x05050a, 0.15, 0.15, 0, 0);
-    bg.fillRect(0, 0, width, 150);
 
-    bg.lineStyle(1, colors.uiPrimary, 0.03);
-    for (let x = 0; x < width; x += 50) bg.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 50) bg.lineBetween(0, y, width, y);
-
-    this.createParticles(5);
-  }
-
-  private createParticles(count: number): void {
-    const { width, height } = this.cameras.main;
-    const colors = getColors();
-
-    for (let i = 0; i < count; i++) {
-      const particle = this.add.circle(
-        Phaser.Math.Between(0, width),
-        Phaser.Math.Between(0, height),
-        Phaser.Math.Between(1, 2),
-        Phaser.Math.RND.pick([colors.uiAccent, colors.uiPrimary]),
-        0.3
-      );
-
-      const tween = this.tweens.add({
-        targets: particle,
-        y: particle.y - Phaser.Math.Between(80, 150),
-        alpha: 0,
-        duration: Phaser.Math.Between(5000, 10000),
-        repeat: -1,
-        delay: Phaser.Math.Between(0, 3000),
-        onRepeat: () => {
-          particle.setPosition(Phaser.Math.Between(0, width), height + 20);
-          particle.setAlpha(0.3);
-        },
-      });
-      this.activeTweens.push(tween);
+    // Hexagon Grid Pattern
+    const hexSize = 60;
+    bg.lineStyle(1, 0x1a1a2e, 0.5);
+    for(let y=0; y<height + hexSize; y+=hexSize*0.86) {
+      for(let x=0; x<width + hexSize; x+=hexSize*1.5) {
+        const off = (Math.floor(y/(hexSize*0.86)) % 2) * (hexSize * 0.75);
+        this.drawHexagon(bg, x + off, y, hexSize/2);
+      }
     }
   }
 
-  // ==================== HEADER ====================
+  private drawHexagon(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number) {
+    const points = [];
+    for(let i=0; i<6; i++) {
+      const angle = Phaser.Math.DegToRad(60 * i);
+      points.push({ x: x + r * Math.cos(angle), y: y + r * Math.sin(angle) });
+    }
+    g.strokePoints(points, true);
+  }
 
   private createHeader(): void {
     const { width } = this.cameras.main;
-    const colors = getColors();
+    const fonts = getFonts();
     const data = playerData.get();
 
-    const headerBg = this.add.graphics();
-    headerBg.fillStyle(0x000000, 0.9);
-    headerBg.fillRect(0, 0, width, 70);
-    headerBg.lineStyle(2, colors.uiPrimary, 0.3);
-    headerBg.lineBetween(0, 70, width, 70);
-    headerBg.setDepth(100);
+    // Top Bar
+    const headerH = 80;
+    const bg = this.add.graphics();
+    bg.fillStyle(0x000000, 0.8);
+    bg.fillRect(0, 0, width, headerH);
+    bg.lineStyle(1, 0x333333);
+    bg.lineBetween(0, headerH, width, headerH);
+    bg.setDepth(100);
 
-    this.createBackButton();
+    // Back Button
+    const backBtn = this.add.container(40, 40).setDepth(101);
+    const bBg = this.add.graphics();
+    bBg.fillStyle(0x222222, 1);
+    bBg.fillRoundedRect(0, -15, 80, 30, 6);
+    bBg.lineStyle(1, 0x555555);
+    bBg.strokeRoundedRect(0, -15, 80, 30, 6);
+    const bTxt = this.add.text(40, 0, '◀ MENU', { fontSize: '12px', fontFamily: fonts.tech }).setOrigin(0.5);
+    backBtn.add([bBg, bTxt]);
+    
+    bBg.setInteractive(new Phaser.Geom.Rectangle(0, -15, 80, 30), Phaser.Geom.Rectangle.Contains)
+       .on('pointerdown', () => {
+         AudioManager.getInstance().playSFX('sfx_click');
+         this.scene.start('MainMenuScene');
+       });
 
-    this.add.text(width / 2, 35, '🛒 SHOP', {
-      fontSize: '24px', 
-      fontFamily: 'Arial Black', 
+    // Title
+    this.add.text(width / 2, 40, 'GALACTIC MARKET', {
+      fontSize: '22px',
+      fontFamily: fonts.tech,
       color: '#ffffff',
+      letterSpacing: 2,
+      shadow: { blur: 10, color: '#00ccff', fill: true }
     }).setOrigin(0.5).setDepth(101);
 
-    this.createCurrencyPanel(data);
+    // Wallet
+    this.createCurrencyPanel(width - 20, 40, data);
   }
 
-  private createBackButton(): void {
-    const colors = getColors();
-    const btn = this.add.container(50, 35).setDepth(101);
+  private createCurrencyPanel(x: number, y: number, data: ReturnType<typeof playerData.get>): void {
+    const fonts = getFonts();
     
-    const bg = this.add.graphics();
-    bg.fillStyle(0x000000, 0.5);
-    bg.fillRoundedRect(-35, -16, 70, 32, 8);
-    bg.lineStyle(1.5, colors.uiAccent, 0.5);
-    bg.strokeRoundedRect(-35, -16, 70, 32, 8);
-    
-    const text = this.add.text(0, 0, '← Back', {
-      fontSize: '14px',
-      color: hexToString(colors.uiAccent),
-      fontStyle: 'bold'
-    }).setOrigin(0.5);
-    
-    btn.add([bg, text]);
-    btn.setInteractive(new Phaser.Geom.Rectangle(-35, -16, 70, 32), Phaser.Geom.Rectangle.Contains)
-      .on('pointerdown', () => this.scene.start('MainMenuScene'));
-  }
-
-  private createCurrencyPanel(data: ReturnType<typeof playerData.get>): void {
-    const { width } = this.cameras.main;
-    const x = width - 70;
-
     const bg = this.add.graphics();
     bg.fillStyle(0x000000, 0.6);
-    bg.fillRoundedRect(x - 55, 10, 110, 50, 8);
-    bg.setDepth(101);
+    bg.fillRoundedRect(x - 130, y - 25, 120, 50, 8);
+    bg.lineStyle(1, 0x444444);
+    bg.strokeRoundedRect(x - 130, y - 25, 120, 50, 8);
+    bg.setDepth(100);
 
-    this.add.text(x - 40, 22, '💰', { fontSize: '14px' }).setDepth(101);
-    this.coinsText = this.add.text(x - 20, 22, `${data.coins}`, {
-      fontSize: '14px', color: '#ffd700', fontStyle: 'bold',
-    }).setOrigin(0, 0.5).setDepth(101);
+    // Coins
+    this.add.text(x - 110, y - 10, '💰', { fontSize: '14px' }).setDepth(101).setOrigin(0, 0.5);
+    this.coinsText = this.add.text(x - 15, y - 10, `${data.coins}`, { 
+      fontSize: '14px', fontFamily: fonts.tech, color: '#ffd700' 
+    }).setOrigin(1, 0.5).setDepth(101);
 
-    this.add.text(x - 40, 42, '⭐', { fontSize: '14px' }).setDepth(101);
-    this.starsText = this.add.text(x - 20, 42, `${data.stars}`, {
-      fontSize: '14px', color: '#ff69b4', fontStyle: 'bold',
-    }).setOrigin(0, 0.5).setDepth(101);
+    // Crystals
+    this.add.text(x - 110, y + 10, '💎', { fontSize: '14px' }).setDepth(101).setOrigin(0, 0.5);
+    this.crystalsText = this.add.text(x - 15, y + 10, `${data.crystals}`, { 
+      fontSize: '14px', fontFamily: fonts.tech, color: '#ff00ff' 
+    }).setOrigin(1, 0.5).setDepth(101);
   }
-
-  // ==================== TABS ====================
 
   private createTabs(): void {
     const { width } = this.cameras.main;
     const colors = getColors();
-    const tabY = 100;
-    const tabW = (width - 30) / 3;
-    const tabH = 40;
-
+    const fonts = getFonts();
+    
     const tabs: { id: ShopTab; label: string; icon: string }[] = [
-      { id: 'caps', label: 'CAPS', icon: '🎯' },
+      { id: 'units', label: 'UNITS', icon: '🤖' },
       { id: 'balls', label: 'BALLS', icon: '⚽' },
-      { id: 'fields', label: 'FIELDS', icon: '🏟️' },
+      { id: 'fields', label: 'ARENAS', icon: '🏟️' },
+      { id: 'factions', label: 'TEAMS', icon: '🚩' },
     ];
 
+    const tabW = (width - 20) / 4;
+    const tabH = 45;
+    const startY = 95;
+    const startX = 10;
+
     tabs.forEach((tab, i) => {
-      const x = 15 + i * tabW + tabW / 2;
-      const isActive = tab.id === this.currentTab;
+      const isActive = this.currentTab === tab.id;
+      const x = startX + i * tabW;
+      
+      const container = this.add.container(x, startY).setDepth(90);
 
       const bg = this.add.graphics();
-      
       if (isActive) {
-        bg.fillStyle(colors.uiPrimary, 0.3);
-        bg.fillRoundedRect(x - tabW / 2 + 3, tabY - tabH / 2, tabW - 6, tabH, 8);
-        bg.lineStyle(2, colors.uiAccent, 0.8);
-        bg.strokeRoundedRect(x - tabW / 2 + 3, tabY - tabH / 2, tabW - 6, tabH, 8);
+        bg.fillStyle(colors.uiAccent, 1); // Active highlight
+        bg.fillRoundedRect(2, 0, tabW - 4, tabH, { tl:8, tr:8, bl:0, br:0 });
       } else {
-        bg.fillStyle(0x000000, 0.4);
-        bg.fillRoundedRect(x - tabW / 2 + 3, tabY - tabH / 2, tabW - 6, tabH, 8);
-        bg.lineStyle(1, colors.uiTextSecondary, 0.3);
-        bg.strokeRoundedRect(x - tabW / 2 + 3, tabY - tabH / 2, tabW - 6, tabH, 8);
+        bg.fillStyle(0x1a1a1a, 1);
+        bg.lineStyle(1, 0x444444);
+        bg.strokeRoundedRect(2, 0, tabW - 4, tabH, { tl:8, tr:8, bl:0, br:0 });
       }
-      bg.setDepth(100);
+      container.add(bg);
 
-      const label = this.add.text(x, tabY, `${tab.icon} ${tab.label}`, {
-        fontSize: '13px',
-        fontFamily: 'Arial',
-        fontStyle: 'bold',
-        color: isActive ? '#ffffff' : hexToString(colors.uiTextSecondary),
-      }).setOrigin(0.5).setDepth(100);
+      // Icon + Text
+      const contentColor = isActive ? '#000000' : '#888888';
+      
+      const txt = this.add.text(tabW/2, tabH/2, tab.label, {
+        fontSize: '10px',
+        fontFamily: fonts.tech,
+        color: contentColor,
+        fontStyle: 'bold'
+      }).setOrigin(0.5, 0.5);
+      
+      // Active Indicator line
+      if (isActive) {
+        const line = this.add.rectangle(tabW/2, tabH - 2, tabW * 0.6, 2, 0xffffff);
+        container.add(line);
+      }
 
-      if (!isActive) {
-        const hitArea = this.add.rectangle(x, tabY, tabW - 6, tabH, 0x000000, 0)
-          .setInteractive({ useHandCursor: true })
-          .setDepth(100);
-        
-        hitArea.on('pointerdown', () => {
+      container.add(txt);
+
+      const hit = this.add.rectangle(tabW/2, tabH/2, tabW, tabH).setInteractive({ useHandCursor: true });
+      container.add(hit);
+
+      hit.on('pointerdown', () => {
+        if (this.currentTab !== tab.id) {
+          AudioManager.getInstance().playSFX('sfx_click');
           this.currentTab = tab.id;
           this.scrollY = 0;
-          this.scene.restart();
-        });
-      }
+          this.selectedUnitId = null;
+          this.expandedFactionId = null;
+          this.renderContent();
+        }
+      });
     });
   }
-
-  // ==================== CONTENT ====================
 
   private createContentArea(): void {
     const { width, height } = this.cameras.main;
-    
-    this.visibleAreaTop = 130;
+    this.visibleAreaTop = 155; // Below tabs
     this.visibleAreaBottom = height;
-    
+
     const maskShape = this.add.graphics();
     maskShape.fillStyle(0xffffff);
     maskShape.fillRect(0, this.visibleAreaTop, width, height - this.visibleAreaTop);
-    
+    const mask = maskShape.createGeometryMask();
+    maskShape.setVisible(false);
+
     this.contentContainer = this.add.container(0, 0);
-    this.contentContainer.setMask(maskShape.createGeometryMask());
+    this.contentContainer.setMask(mask);
   }
 
-  private createAllCards(): void {
-    const { width } = this.cameras.main;
-    const cardW = (width - 45) / 2;
+  // ==================== RENDER CONTENT ====================
 
-    const skinMap: Record<ShopTab, { skins: SkinData[]; type: SkinType }> = {
-      caps: { skins: CAP_SKINS, type: 'cap' },
-      balls: { skins: BALL_SKINS, type: 'ball' },
-      fields: { skins: FIELD_SKINS, type: 'field' },
-    };
+  private renderContent(): void {
+    this.contentContainer.removeAll(true);
+    this.cards = [];
+    this.isOverlayOpen = false;
 
-    const { skins, type } = skinMap[this.currentTab];
-
-    skins.forEach((skin, i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      const x = 15 + col * (cardW + this.cardGap);
-      const baseY = this.visibleAreaTop + 15 + row * (this.cardHeight + this.cardGap);
-
-      const container = this.createSkinCard(x, baseY, cardW, this.cardHeight, skin, type);
-      this.contentContainer.add(container);
-      
-      this.skinCards.push({ container, index: i, y: baseY });
-    });
-
-    const rows = Math.ceil(skins.length / 2);
-    const contentHeight = rows * (this.cardHeight + this.cardGap) + 30;
-    const viewportHeight = this.visibleAreaBottom - this.visibleAreaTop;
-    this.maxScrollY = Math.max(0, contentHeight - viewportHeight);
-  }
-
-  private updateCardPositions(): void {
-    this.contentContainer.y = -this.scrollY;
-    
-    const viewTop = this.scrollY - 50;
-    const viewBottom = this.scrollY + (this.visibleAreaBottom - this.visibleAreaTop) + 50;
-    
-    this.skinCards.forEach(card => {
-      const cardTop = card.y - this.visibleAreaTop;
-      const cardBottom = cardTop + this.cardHeight;
-      const visible = cardBottom > viewTop && cardTop < viewBottom;
-      card.container.setVisible(visible);
-    });
-  }
-
-  private createSkinCard(
-    x: number, y: number, w: number, h: number, 
-    skin: SkinData, type: SkinType
-  ): Phaser.GameObjects.Container {
-    const colors = getColors();
-    const owned = playerData.ownsSkin(skin.id, type);
-    const equipped = this.isEquipped(skin.id, type);
-    const rarityColor = getRarityColor(skin.rarity);
-
-    const container = this.add.container(x, y);
-
-    // Фон
-    const bg = this.add.graphics();
-    if (owned) {
-      bg.lineStyle(4, rarityColor, 0.2);
-      bg.strokeRoundedRect(-2, -2, w + 4, h + 4, 16);
+    if (this.selectedUnitId) {
+      this.renderUnitUpgradePanel();
+      return;
     }
-    bg.fillStyle(0x0a0a15, 0.95);
+
+    switch (this.currentTab) {
+      case 'units': this.renderUnitsTab(); break;
+      case 'balls': this.renderBallsTab(); break;
+      case 'fields': this.renderFieldsTab(); break;
+      case 'factions': this.renderFactionsTab(); break;
+    }
+
+    this.updateCardPositions();
+  }
+
+  // ---------------- FACTIONS (RICH BANNERS) ----------------
+
+  private renderFactionsTab(): void {
+    const { width } = this.cameras.main;
+    let currentY = this.visibleAreaTop + 15;
+    const gap = 15;
+
+    FACTION_IDS.forEach((factionId) => {
+      const isExpanded = this.expandedFactionId === factionId;
+      const cardH = isExpanded ? 280 : 110; // Expand for details
+      
+      const faction = FACTIONS[factionId];
+      const isOwned = playerData.ownsFaction(factionId);
+      const isActive = playerData.getFaction() === factionId;
+      const price = getFactionPrice(factionId);
+
+      const container = this.createFactionBanner(20, currentY, width - 40, cardH, faction, isOwned, isActive, price, isExpanded);
+      this.contentContainer.add(container);
+      this.cards.push({ container, y: currentY, height: cardH });
+
+      currentY += cardH + gap;
+    });
+
+    this.updateMaxScroll(currentY);
+  }
+
+  private createFactionBanner(x: number, y: number, w: number, h: number, faction: FactionConfig, isOwned: boolean, isActive: boolean, price: { coins?: number; crystals?: number }, isExpanded: boolean) {
+    const fonts = getFonts();
+    const container = this.add.container(x, y);
+    const color = faction.color;
+
+    // --- BACKGROUND ---
+    const bg = this.add.graphics();
+    bg.fillStyle(0x111111, 1);
     bg.fillRoundedRect(0, 0, w, h, 12);
-    bg.fillStyle(0x000000, 0.3);
-    bg.fillRoundedRect(4, 4, w - 8, 95, { tl: 10, tr: 10, bl: 0, br: 0 });
-    bg.lineStyle(1.5, owned ? rarityColor : colors.uiTextSecondary, owned ? 0.7 : 0.2);
+    
+    // Colored accent border
+    bg.lineStyle(2, isActive ? 0x00ff00 : (isOwned ? color : 0x444444), 1);
     bg.strokeRoundedRect(0, 0, w, h, 12);
+    
+    // Gradient fill simulation (Left accent)
+    bg.fillStyle(color, 0.15);
+    bg.fillRoundedRect(0, 0, 80, h, { tl: 12, bl: 12, tr: 0, br: 0 });
+    
     container.add(bg);
 
-    // Бейдж редкости
-    const badgeBg = this.add.graphics();
-    badgeBg.fillStyle(rarityColor, 0.2);
-    badgeBg.fillRoundedRect(8, 8, 55, 18, 4);
-    badgeBg.lineStyle(1, rarityColor, 0.5);
-    badgeBg.strokeRoundedRect(8, 8, 55, 18, 4);
-    container.add(badgeBg);
+    // --- MAIN ROW (Always visible) ---
+    
+    // Token / Icon
+    if (this.textures.exists(faction.assetKey)) {
+      const icon = this.add.image(40, 55, faction.assetKey).setDisplaySize(60, 60);
+      if (!isOwned) icon.setTint(0x555555);
+      container.add(icon);
+    } else {
+      container.add(this.add.circle(40, 55, 30, color));
+    }
 
-    container.add(this.add.text(35, 17, getRarityName(skin.rarity).toUpperCase(), {
-      fontSize: '8px',
-      color: hexToString(rarityColor),
-      fontStyle: 'bold'
-    }).setOrigin(0.5));
+    // Texts
+    container.add(this.add.text(90, 25, faction.name.toUpperCase(), { 
+      fontSize: '20px', fontFamily: fonts.tech, color: hexToString(color), fontStyle: 'bold' 
+    }));
 
-    // Превью
-    this.createSimplePreview(container, w / 2, 55, skin, type);
+    // Stats Summary
+    const statsTxt = `Mass: ${(faction.stats.mass * 100).toFixed(0)}%  |  Bounce: ${(faction.stats.bounce * 100).toFixed(0)}%`;
+    container.add(this.add.text(90, 50, statsTxt, { fontSize: '10px', color: '#aaaaaa' }));
 
-    // Название
-    container.add(this.add.text(w / 2, 115, skin.name, {
-      fontSize: '14px',
-      fontFamily: 'Arial',
-      color: '#ffffff',
-      fontStyle: 'bold',
-    }).setOrigin(0.5));
+    // --- BUTTONS (Right Side) ---
+    
+    // INFO Toggle
+    const infoBtn = this.add.text(w - 20, 20, isExpanded ? '▲' : '▼ INFO', { 
+      fontSize: '12px', color: '#ffffff', backgroundColor: '#333333', padding: { x: 5, y: 3 }
+    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+    
+    infoBtn.on('pointerdown', () => {
+      AudioManager.getInstance().playSFX('sfx_click');
+      this.expandedFactionId = isExpanded ? null : faction.id;
+      this.renderContent();
+    });
+    container.add(infoBtn);
 
-    container.add(this.add.text(w / 2, 133, getRarityName(skin.rarity), {
-      fontSize: '10px',
-      color: hexToString(rarityColor),
-    }).setOrigin(0.5));
+    // Action Button
+    let btnText = '';
+    let btnColor = 0x444444;
+    let btnTextColor = '#ffffff';
 
-    // Кнопка статуса/цены
-    this.createStatusButton(container, w / 2, h - 55, w - 24, 28, skin, type, owned, equipped, rarityColor);
+    if (isActive) {
+      btnText = '✓ ACTIVE';
+      btnColor = 0x004400; // Dark Green
+      btnTextColor = '#00ff00';
+    } else if (isOwned) {
+      btnText = 'SELECT';
+      btnColor = color;
+      btnTextColor = '#000000';
+    } else {
+      btnText = formatPrice(price);
+      btnColor = 0xffffff;
+      btnTextColor = '#000000';
+    }
 
-    // Кнопка "View Details"
-    this.createViewButton(container, w / 2, h - 22, w - 24, 30, skin, type);
+    const actionContainer = this.add.container(w - 70, 75);
+    const actionBg = this.add.rectangle(0, 0, 100, 32, btnColor, isActive ? 0 : 1).setStrokeStyle(isActive ? 1 : 0, 0x00ff00);
+    if (!isActive) actionBg.setInteractive({ useHandCursor: true });
+    
+    const actionTxt = this.add.text(0, 0, btnText, { 
+      fontSize: '12px', fontFamily: fonts.tech, color: btnTextColor, fontStyle: 'bold' 
+    }).setOrigin(0.5);
+
+    actionContainer.add([actionBg, actionTxt]);
+    container.add(actionContainer);
+
+    actionBg.on('pointerdown', () => {
+      if (this.dragDistance > 5) return;
+      if (isActive) return;
+
+      if (isOwned) {
+        AudioManager.getInstance().playSFX('sfx_click');
+        playerData.switchFaction(faction.id);
+        this.renderContent();
+      } else {
+        if (playerData.buyFaction(faction.id)) {
+          AudioManager.getInstance().playSFX('sfx_cash');
+          this.updateCurrencyDisplay();
+          this.renderContent();
+        }
+      }
+    });
+
+    // --- EXPANDED DETAILS (Starter Units Preview) ---
+    if (isExpanded) {
+      const sep = this.add.rectangle(w/2, 110, w - 20, 1, 0x333333);
+      container.add(sep);
+
+      container.add(this.add.text(w/2, 125, 'INCLUDES STARTER SQUAD:', { 
+        fontSize: '12px', color: '#888888', fontFamily: fonts.tech 
+      }).setOrigin(0.5));
+
+      const starters = getStarterUnits(faction.id);
+      const startX = (w - (starters.length * 90)) / 2 + 45;
+
+      starters.forEach((unit, i) => {
+        const uX = startX + i * 90;
+        const uY = 190;
+
+        // Unit Slot
+        const uBg = this.add.rectangle(uX, uY, 80, 100, 0x222222).setStrokeStyle(1, 0x444444);
+        container.add(uBg);
+
+        // Icon
+        if (this.textures.exists(unit.assetKey)) {
+          const uIcon = this.add.image(uX, uY - 15, unit.assetKey).setDisplaySize(50, 50);
+          container.add(uIcon);
+        }
+
+        // Role
+        const roleColor = getClassColor(unit.capClass);
+        const roleTxt = this.add.text(uX, uY + 25, unit.capClass.toUpperCase(), { 
+          fontSize: '9px', color: hexToString(roleColor) 
+        }).setOrigin(0.5);
+        container.add(roleTxt);
+      });
+    }
 
     return container;
   }
 
-  private createSimplePreview(
-    container: Phaser.GameObjects.Container,
-    x: number, y: number,
-    skin: SkinData, type: SkinType
-  ): void {
-    switch (type) {
-      case 'cap': {
-        const capSkin = skin as CapSkinData;
-        const radius = 28;
-        if (capSkin.hasGlow) {
-          container.add(this.add.circle(x, y, radius + 6, capSkin.glowColor || capSkin.primaryColor, 0.25));
-        }
-        container.add(this.add.ellipse(x + 2, y + 2, radius * 1.8, radius * 1.4, 0x000000, 0.25));
-        const textureKey = capSkin.visual.textureKey;
-        if (textureKey && this.textures.exists(textureKey)) {
-          container.add(this.add.sprite(x, y, textureKey).setScale((radius * 2) / 128));
-        } else {
-          const g = this.add.graphics();
-          g.fillStyle(capSkin.primaryColor);
-          g.fillCircle(x, y, radius);
-          g.lineStyle(2, capSkin.secondaryColor);
-          g.strokeCircle(x, y, radius);
-          container.add(g);
-        }
-        break;
-      }
-      case 'ball': {
-        const ballSkin = skin as BallSkinData;
-        const radius = 24;
-        if (ballSkin.hasGlow) {
-          container.add(this.add.circle(x, y, radius + 5, ballSkin.glowColor, 0.2));
-        }
-        container.add(this.add.ellipse(x + 2, y + 2, radius * 1.6, radius * 1.2, 0x000000, 0.2));
-        const textureKey = ballSkin.textureKey;
-        if (textureKey && this.textures.exists(textureKey)) {
-          container.add(this.add.sprite(x, y, textureKey).setScale((radius * 2) / 64));
-        } else {
-          const g = this.add.graphics();
-          g.fillStyle(ballSkin.primaryColor);
-          g.fillCircle(x, y, radius);
-          g.lineStyle(2, ballSkin.glowColor);
-          g.strokeCircle(x, y, radius);
-          container.add(g);
-        }
-        break;
-      }
-      case 'field': {
-        const fieldSkin = skin as FieldSkinData;
-        const fw = 80, fh = 50;
-        const g = this.add.graphics();
-        g.fillStyle(fieldSkin.fieldColor);
-        g.fillRoundedRect(x - fw/2, y - fh/2, fw, fh, 4);
-        g.lineStyle(1, fieldSkin.lineColor, 0.7);
-        g.strokeRoundedRect(x - fw/2 + 3, y - fh/2 + 3, fw - 6, fh - 6, 3);
-        g.lineBetween(x - fw/2 + 3, y, x + fw/2 - 3, y);
-        g.strokeCircle(x, y, 8);
-        g.lineStyle(1.5, fieldSkin.borderColor);
-        g.strokeRoundedRect(x - fw/2, y - fh/2, fw, fh, 4);
-        container.add(g);
-        break;
-      }
-    }
+  // ---------------- UNITS (TASTY CARDS) ----------------
+
+  private renderUnitsTab(): void {
+    const { width } = this.cameras.main;
+    let currentY = this.visibleAreaTop + 15;
+    const fonts = getFonts();
+
+    // Loop Factions
+    FACTION_IDS.forEach(factionId => {
+      const faction = FACTIONS[factionId];
+      const isFactionOwned = playerData.ownsFaction(factionId);
+      const factionColor = faction.color;
+
+      // Section Header (Neon Line)
+      const header = this.add.container(0, currentY);
+      const line = this.add.rectangle(width/2, 15, width - 40, 2, factionColor, 0.5);
+      const titleBg = this.add.rectangle(width/2, 15, 160, 24, 0x000000).setStrokeStyle(1, factionColor);
+      const title = this.add.text(width/2, 15, faction.name.toUpperCase(), {
+        fontSize: '12px', fontFamily: fonts.tech, color: hexToString(factionColor), letterSpacing: 1
+      }).setOrigin(0.5);
+
+      header.add([line, titleBg, title]);
+      this.contentContainer.add(header);
+      currentY += 40;
+
+      // Units
+      const units = getUnitsByFaction(factionId);
+      
+      units.forEach((unit) => {
+        const ownedData = playerData.getOwnedUnit(unit.id);
+        const isActuallyOwned = !!ownedData || (isFactionOwned && unit.isStarter);
+        const isLocked = !isActuallyOwned && !isFactionOwned; 
+        const canBuy = isFactionOwned && !isActuallyOwned;
+
+        const cardH = 100;
+        const container = this.createTastyUnitCard(20, currentY, width - 40, cardH, unit, isActuallyOwned, canBuy, isLocked, factionColor);
+        this.contentContainer.add(container);
+        this.cards.push({ container, y: currentY, height: cardH });
+        
+        currentY += cardH + 12;
+      });
+
+      currentY += 20;
+    });
+
+    this.updateMaxScroll(currentY);
   }
 
-  private createStatusButton(
-    container: Phaser.GameObjects.Container,
-    x: number, y: number, w: number, h: number,
-    skin: SkinData, type: SkinType,
-    owned: boolean, equipped: boolean, rarityColor: number
-  ): void {
-    const colors = getColors();
-    const bg = this.add.graphics();
+  private createTastyUnitCard(x: number, y: number, w: number, h: number, unit: UnitData, isOwned: boolean, canBuy: boolean, isLocked: boolean, factionColor: number) {
+    const fonts = getFonts();
+    const container = this.add.container(x, y);
 
-    if (equipped) {
-      bg.fillStyle(colors.uiAccent, 0.15);
-      bg.fillRoundedRect(x - w/2, y - h/2, w, h, 5);
-      container.add(bg);
-      container.add(this.add.text(x, y, '✓ EQUIPPED', {
-        fontSize: '10px',
-        color: hexToString(colors.uiAccent),
-        fontStyle: 'bold'
-      }).setOrigin(0.5));
-    } else if (owned) {
-      bg.fillStyle(colors.uiPrimary, 0.1);
-      bg.fillRoundedRect(x - w/2, y - h/2, w, h, 5);
-      container.add(bg);
-      container.add(this.add.text(x, y, '✓ OWNED', {
-        fontSize: '10px',
-        color: hexToString(colors.uiPrimary),
-        fontStyle: 'bold'
-      }).setOrigin(0.5));
-    } else {
-      const canAfford = this.canAfford(skin.price);
-      const btnColor = canAfford ? rarityColor : colors.uiTextSecondary;
-      bg.fillStyle(btnColor, 0.1);
-      bg.fillRoundedRect(x - w/2, y - h/2, w, h, 5);
-      container.add(bg);
-      container.add(this.add.text(x, y, formatPrice(skin.price), {
-        fontSize: '11px',
-        color: hexToString(btnColor),
-        fontStyle: 'bold'
-      }).setOrigin(0.5));
-    }
-  }
-
-  private createViewButton(
-    container: Phaser.GameObjects.Container,
-    x: number, y: number, w: number, h: number,
-    skin: SkinData, type: SkinType
-  ): void {
-    const colors = getColors();
+    const rarityColor = getUnitRarityColor(unit.rarity);
     
+    // --- BACKGROUND ---
     const bg = this.add.graphics();
-    bg.fillStyle(colors.uiPrimary, 0.15);
-    bg.fillRoundedRect(x - w/2, y - h/2, w, h, 6);
-    bg.lineStyle(1.5, colors.uiPrimary, 0.5);
-    bg.strokeRoundedRect(x - w/2, y - h/2, w, h, 6);
+    bg.fillStyle(0x151515, 1); // Dark base
+    bg.fillRoundedRect(0, 0, w, h, 10);
+    
+    // Gradient Tint based on faction (Subtle)
+    bg.fillStyle(factionColor, 0.08);
+    bg.fillRoundedRect(0, 0, w, h, 10);
+
+    // Border
+    const borderAlpha = isOwned ? 0.8 : (canBuy ? 0.4 : 0.1);
+    bg.lineStyle(1, isOwned ? rarityColor : factionColor, borderAlpha);
+    bg.strokeRoundedRect(0, 0, w, h, 10);
     container.add(bg);
 
-    container.add(this.add.text(x, y, '👁 VIEW', {
-      fontSize: '11px',
-      color: hexToString(colors.uiPrimary),
-      fontStyle: 'bold'
+    // --- SPRITE & GLOW ---
+    const cx = 60;
+    const cy = h / 2;
+    
+    if (this.textures.exists(unit.assetKey)) {
+      // Glow behind unit
+      const glow = this.add.image(cx, cy, unit.assetKey).setDisplaySize(80, 80).setTint(factionColor).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD);
+      container.add(glow);
+
+      const sprite = this.add.image(cx, cy, unit.assetKey).setDisplaySize(65, 65);
+      if (isLocked) {
+        sprite.setTint(0x000000).setAlpha(0.6);
+      }
+      container.add(sprite);
+    } else {
+      container.add(this.add.circle(cx, cy, 30, 0x333333));
+    }
+
+    // --- TEXT INFO ---
+    const textX = 110;
+    
+    // Name
+    container.add(this.add.text(textX, 20, unit.name.toUpperCase(), {
+      fontSize: '16px', fontFamily: fonts.tech, color: isLocked ? '#666666' : '#ffffff', fontStyle: 'bold'
+    }));
+
+    // Role & Description
+    const classColor = getClassColor(unit.capClass);
+    const roleName = getClassName(unit.capClass);
+    
+    // Create a pill badge for role
+    const pillBg = this.add.graphics();
+    pillBg.fillStyle(classColor, 0.2);
+    pillBg.fillRoundedRect(textX, 42, 80, 16, 4);
+    container.add(pillBg);
+
+    const icon = getClassIcon(unit.capClass);
+    container.add(this.add.text(textX + 40, 50, `${icon} ${roleName}`, {
+      fontSize: '10px', color: hexToString(classColor), fontFamily: fonts.tech
     }).setOrigin(0.5));
 
-    const hitArea = this.add.rectangle(x, y, w, h, 0x000000, 0)
-      .setInteractive({ useHandCursor: true });
-    
-    hitArea.on('pointerdown', () => {
-      // Открываем модалку только если не скроллили
-      if (this.dragDistance < 10 && !this.activeModal) {
-        this.openDetailModal(skin, type);
-      }
-    });
-    
-    container.add(hitArea);
+    // Description text (Flavor)
+    const flavor = this.getUnitFlavor(unit.capClass);
+    container.add(this.add.text(textX, 70, flavor, {
+      fontSize: '10px', color: '#888888', fontStyle: 'italic'
+    }));
+
+    // --- RIGHT SIDE ACTION ---
+    const btnX = w - 60;
+    const btnY = h / 2;
+    const btnW = 90;
+    const btnH = 34;
+
+    if (isOwned) {
+      // UPGRADE BUTTON
+      const unitOwnedData = playerData.getOwnedUnit(unit.id);
+      const level = unitOwnedData ? getCapTotalLevel(unitOwnedData.upgrades) : 4;
+      
+      const btnBg = this.add.graphics();
+      // Metallic gradient look
+      btnBg.fillStyle(0x333333, 1);
+      btnBg.fillRoundedRect(btnX - btnW/2, btnY - btnH/2, btnW, btnH, 6);
+      btnBg.lineStyle(1, 0x666666);
+      btnBg.strokeRoundedRect(btnX - btnW/2, btnY - btnH/2, btnW, btnH, 6);
+      
+      const btnTxt = this.add.text(btnX, btnY, `LVL ${level} ⚡`, { 
+        fontSize: '14px', fontFamily: fonts.tech, color: '#ffcc00', fontStyle: 'bold'
+      }).setOrigin(0.5);
+
+      const hit = this.add.rectangle(btnX, btnY, btnW, btnH).setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => {
+        if (this.dragDistance > 5) return;
+        this.selectedUnitId = unit.id;
+        this.scrollY = 0;
+        this.renderContent();
+      });
+      container.add([btnBg, btnTxt, hit]);
+
+    } else if (canBuy) {
+      // BUY BUTTON
+      const priceTxt = formatUnitPrice(unit.price);
+      const canAfford = (playerData.get().coins >= (unit.price.coins || 0));
+      const buyColor = canAfford ? 0x228b22 : 0x555555;
+
+      const btnBg = this.add.graphics();
+      btnBg.fillStyle(buyColor, 1);
+      btnBg.fillRoundedRect(btnX - btnW/2, btnY - btnH/2, btnW, btnH, 6);
+      
+      // Bevel effect
+      btnBg.fillStyle(0xffffff, 0.1);
+      btnBg.fillRect(btnX - btnW/2, btnY - btnH/2, btnW, btnH/2);
+
+      const btnTxt = this.add.text(btnX, btnY, priceTxt, { 
+        fontSize: '12px', fontFamily: fonts.tech, color: '#ffffff', fontStyle: 'bold'
+      }).setOrigin(0.5);
+
+      const hit = this.add.rectangle(btnX, btnY, btnW, btnH).setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => {
+        if (this.dragDistance > 5) return;
+        if (playerData.buyUnit(unit.id)) {
+          AudioManager.getInstance().playSFX('sfx_cash');
+          this.updateCurrencyDisplay();
+          this.renderContent();
+        }
+      });
+      container.add([btnBg, btnTxt, hit]);
+
+    } else {
+      // LOCKED
+      const lock = this.add.text(btnX, btnY, '🔒 LOCKED', { fontSize: '10px', color: '#555555' }).setOrigin(0.5);
+      container.add(lock);
+    }
+
+    return container;
   }
 
-  private openDetailModal(skin: SkinData, type: SkinType): void {
-    if (this.activeModal) return;
+  // ---------------- FIELDS (PERSPECTIVE) ----------------
 
-    this.activeModal = new SkinDetailModal(
-      this,
-      skin,
-      type,
-      () => {
-        this.activeModal = null;
-        // Обновляем UI после закрытия
-        this.updateCurrencyDisplay();
-        this.scene.restart();
+  private renderFieldsTab(): void {
+    // Only use the 3 real fields
+    this.renderGrid(FIELD_SKINS, 'field');
+  }
+
+  private renderBallsTab(): void {
+    this.renderGrid(BALL_SKINS, 'ball');
+  }
+
+  private renderGrid(items: (BallSkinData | FieldSkinData)[], type: 'ball' | 'field'): void {
+    const { width } = this.cameras.main;
+    const cardW = (width - 45) / 2;
+    const cardH = 160;
+    const colCount = 2;
+    
+    items.forEach((item, i) => {
+      const col = i % colCount;
+      const row = Math.floor(i / colCount);
+      const x = 15 + col * (cardW + 15) + cardW/2;
+      const y = this.visibleAreaTop + 20 + row * (cardH + 15) + cardH/2;
+
+      const container = this.createAssetCard(x, y, cardW, cardH, item, type);
+      this.contentContainer.add(container);
+      this.cards.push({ container, y, height: cardH });
+    });
+
+    const rows = Math.ceil(items.length / colCount);
+    const contentH = rows * (cardH + 15) + 50;
+    this.updateMaxScroll(this.visibleAreaTop + contentH);
+  }
+
+  private createAssetCard(x: number, y: number, w: number, h: number, item: SkinData, type: 'ball' | 'field'): Phaser.GameObjects.Container {
+    const fonts = getFonts();
+    const container = this.add.container(x, y);
+
+    const isOwned = type === 'ball' ? playerData.ownsBallSkin(item.id) : playerData.ownsFieldSkin(item.id);
+    const isEquipped = type === 'ball' ? playerData.get().equippedBallSkin === item.id : playerData.get().equippedFieldSkin === item.id;
+    const rarityColor = getSkinRarityColor(item.rarity);
+
+    // Card BG
+    const bg = this.add.graphics();
+    bg.fillStyle(0x1a1a1a, 1);
+    bg.fillRoundedRect(-w/2, -h/2, w, h, 8);
+    // Rarity Border
+    bg.lineStyle(2, isEquipped ? 0x00ff00 : (isOwned ? rarityColor : 0x333333));
+    bg.strokeRoundedRect(-w/2, -h/2, w, h, 8);
+    container.add(bg);
+
+    // PREVIEW AREA
+    if (type === 'field') {
+      // PERSPECTIVE FIELD (Trapezoid)
+      const fData = item as FieldSkinData;
+      this.drawPerspectiveField(container, 0, -20, 100, 60, fData.fieldColor, fData.lineColor);
+    } else {
+      // BALL
+      const bData = item as BallSkinData;
+      if (bData.textureKey && this.textures.exists(bData.textureKey)) {
+        const img = this.add.image(0, -20, bData.textureKey).setDisplaySize(60, 60);
+        container.add(img);
+      } else {
+        container.add(this.add.circle(0, -20, 30, bData.primaryColor));
       }
-    );
+    }
+
+    // Name
+    container.add(this.add.text(0, 20, item.name, { 
+      fontSize: '12px', fontFamily: fonts.tech, color: '#ffffff'
+    }).setOrigin(0.5));
+
+    // Action Button
+    let btnText = '';
+    let btnColor = 0x444444;
+    
+    if (isEquipped) { btnText = 'EQUIPPED'; btnColor = 0x004400; }
+    else if (isOwned) { btnText = 'EQUIP'; btnColor = 0x0000aa; }
+    else { btnText = formatPrice(item.price); btnColor = 0xffffff; }
+
+    const btn = this.add.container(0, 55);
+    const btnBg = this.add.rectangle(0, 0, w - 20, 28, isOwned ? btnColor : 0x333333).setInteractive({ useHandCursor: true });
+    if (!isOwned) btnBg.setStrokeStyle(1, 0xffffff);
+    
+    const btnTxt = this.add.text(0, 0, btnText, { 
+      fontSize: '10px', fontFamily: fonts.tech, color: !isOwned ? '#ffffff' : '#ffffff' 
+    }).setOrigin(0.5);
+
+    btn.add([btnBg, btnTxt]);
+    container.add(btn);
+
+    // Eye Icon
+    const eye = this.add.text(w/2 - 20, -h/2 + 5, '👁️', { fontSize: '14px' }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    container.add(eye);
+
+    // Logic
+    btnBg.on('pointerdown', () => {
+      if (this.dragDistance > 5) return;
+      AudioManager.getInstance().playSFX('sfx_click');
+      
+      if (isOwned) {
+        if (type === 'ball') playerData.equipBallSkin(item.id);
+        else playerData.equipFieldSkin(item.id);
+        this.renderContent();
+      } else {
+        const success = type === 'ball' 
+           ? playerData.buyBallSkin(item.id, item.price) 
+           : playerData.buyFieldSkin(item.id, item.price);
+        if (success) {
+           AudioManager.getInstance().playSFX('sfx_cash');
+           this.updateCurrencyDisplay();
+           this.renderContent();
+        }
+      }
+    });
+
+    eye.on('pointerdown', () => this.openPreviewOverlay(item, type));
+
+    return container;
+  }
+
+  private drawPerspectiveField(container: Phaser.GameObjects.Container, x: number, y: number, w: number, h: number, color: number, lines: number) {
+    const g = this.add.graphics();
+    g.fillStyle(color, 1);
+    
+    // Trapezoid points
+    const inset = 15;
+    const p1 = { x: x - w/2 + inset, y: y - h/2 }; // TL
+    const p2 = { x: x + w/2 - inset, y: y - h/2 }; // TR
+    const p3 = { x: x + w/2, y: y + h/2 }; // BR
+    const p4 = { x: x - w/2, y: y + h/2 }; // BL
+
+    g.fillPoints([p1, p2, p3, p4], true);
+    
+    // Grid effect
+    g.lineStyle(1, lines, 0.3);
+    g.strokePoints([p1, p2, p3, p4], true);
+    g.lineBetween((p1.x+p2.x)/2, p1.y, (p3.x+p4.x)/2, p3.y); // Center line
+    
+    // Goal Posts (Lines)
+    g.lineStyle(2, 0xffffff, 0.8);
+    g.lineBetween(p1.x - 2, p1.y - 10, p1.x - 2, p1.y);
+    g.lineBetween(p2.x + 2, p2.y - 10, p2.x + 2, p2.y);
+
+    container.add(g);
+  }
+
+  // ==================== UPGRADE PANEL ====================
+
+  private renderUnitUpgradePanel(): void {
+    const { width } = this.cameras.main;
+    const fonts = getFonts();
+    const unit = getUnit(this.selectedUnitId!);
+    const owned = playerData.getOwnedUnit(this.selectedUnitId!) || { upgrades: { power:1, mass:1, aim:1, technique:1 } };
+    
+    if (!unit) return;
+
+    const container = this.add.container(0, this.visibleAreaTop + 20);
+    this.contentContainer.add(container);
+
+    // Header Back
+    const backBtn = this.add.text(20, 0, '◀ BACK', { fontSize: '16px', fontFamily: fonts.tech, color: '#ffff00' })
+      .setInteractive({ useHandCursor: true });
+    backBtn.on('pointerdown', () => {
+      this.selectedUnitId = null;
+      this.renderContent();
+    });
+    container.add(backBtn);
+
+    // Unit Large
+    if (this.textures.exists(unit.assetKey)) {
+      const img = this.add.image(width/2, 80, unit.assetKey).setDisplaySize(120, 120);
+      container.add(img);
+    }
+
+    container.add(this.add.text(width/2, 150, unit.name.toUpperCase(), { 
+      fontSize: '24px', fontFamily: fonts.tech, fontStyle: 'bold'
+    }).setOrigin(0.5));
+
+    // Stats Rows
+    const stats: (keyof CapUpgrades)[] = ['power', 'mass', 'aim', 'technique'];
+    const icons = { power: '💥', mass: '🛡️', aim: '🎯', technique: '✨' };
+    
+    let y = 200;
+    
+    stats.forEach(stat => {
+      const level = owned.upgrades[stat] as number;
+      const cost = getUpgradeCost(level);
+      const isMax = level >= MAX_UPGRADE_LEVEL;
+
+      // Label
+      container.add(this.add.text(30, y, `${icons[stat]} ${stat.toUpperCase()}`, { fontSize: '14px', fontFamily: fonts.tech }));
+      
+      // Bar Background
+      const barBg = this.add.rectangle(140, y + 8, 120, 10, 0x333333).setOrigin(0, 0.5);
+      // Bar Fill
+      const fillW = (level / MAX_UPGRADE_LEVEL) * 120;
+      const barFill = this.add.rectangle(140, y + 8, fillW, 10, 0x00ff00).setOrigin(0, 0.5);
+      
+      container.add([barBg, barFill]);
+
+      // Button
+      if (!isMax) {
+        const btnBg = this.add.rectangle(width - 50, y + 8, 70, 30, 0x222222).setStrokeStyle(1, 0x00ff00).setInteractive({ useHandCursor: true });
+        const btnTxt = this.add.text(width - 50, y + 8, `${cost}💰`, { fontSize: '12px', color: '#00ff00' }).setOrigin(0.5);
+        
+        btnBg.on('pointerdown', () => {
+          if (playerData.upgradeUnit(unit.id, stat)) {
+            AudioManager.getInstance().playSFX('sfx_cash');
+            this.updateCurrencyDisplay();
+            this.renderContent(); 
+          }
+        });
+        container.add([btnBg, btnTxt]);
+      } else {
+        container.add(this.add.text(width - 50, y+8, 'MAX', { fontSize: '12px', color: '#ffff00', fontStyle:'bold' }).setOrigin(0.5));
+      }
+
+      y += 60;
+    });
+
+    this.maxScrollY = 0; 
+  }
+
+  // ==================== VIEW OVERLAY ====================
+
+  private openPreviewOverlay(item: SkinData, type: 'ball' | 'field'): void {
+    this.isOverlayOpen = true;
+    const { width, height } = this.cameras.main;
+    const fonts = getFonts();
+
+    const overlay = this.add.container(0, 0).setDepth(200);
+    const dim = this.add.rectangle(width/2, height/2, width, height, 0x000000, 0.95).setInteractive();
+    overlay.add(dim);
+
+    const closeBtn = this.add.text(width - 40, 40, '✕', { fontSize: '30px' }).setInteractive().setOrigin(0.5);
+    closeBtn.on('pointerdown', () => {
+      overlay.destroy();
+      this.isOverlayOpen = false;
+    });
+    overlay.add(closeBtn);
+
+    overlay.add(this.add.text(width/2, 100, item.name.toUpperCase(), { fontSize: '24px', fontFamily: fonts.tech }).setOrigin(0.5));
+
+    const cx = width/2;
+    const cy = height/2;
+
+    if (type === 'ball') {
+      const bData = item as BallSkinData;
+      if (bData.textureKey && this.textures.exists(bData.textureKey)) {
+        const img = this.add.image(cx, cy, bData.textureKey).setDisplaySize(200, 200);
+        this.tweens.add({ targets: img, angle: 360, duration: 10000, repeat: -1, ease: 'Linear' });
+        overlay.add(img);
+      }
+    } else {
+      const fData = item as FieldSkinData;
+      // Large Field Preview (Rect)
+      const rect = this.add.rectangle(cx, cy, 300, 180, fData.fieldColor).setStrokeStyle(4, fData.lineColor);
+      const center = this.add.circle(cx, cy, 30).setStrokeStyle(2, fData.lineColor);
+      const line = this.add.rectangle(cx, cy, 2, 180, fData.lineColor);
+      overlay.add([rect, center, line]);
+    }
+  }
+
+  // ==================== UTILS ====================
+
+  private getUnitFlavor(role: string): string {
+    const flavors: Record<string, string> = {
+      balanced: 'Versatile unit good at offense and defense.',
+      tank: 'Heavy defender with high mass and push power.',
+      sniper: 'Precise shooter with high aim stats.',
+      trickster: 'Master of spin and unpredictable shots.',
+    };
+    return flavors[role] || 'Unique unit.';
+  }
+
+  private updateMaxScroll(contentBottom: number): void {
+    const viewportH = this.visibleAreaBottom - this.visibleAreaTop;
+    this.maxScrollY = Math.max(0, contentBottom - this.visibleAreaTop - viewportH + 50);
+  }
+
+  private updateCardPositions(): void {
+    this.contentContainer.y = -this.scrollY;
+    const viewTop = this.scrollY;
+    const viewBottom = this.scrollY + (this.visibleAreaBottom - this.visibleAreaTop);
+
+    this.cards.forEach(c => {
+       const top = c.y - 50;
+       const bottom = c.y + c.height + 50;
+       c.container.setVisible(bottom > viewTop && top < viewBottom);
+    });
   }
 
   private updateCurrencyDisplay(): void {
     const data = playerData.get();
-    this.coinsText?.setText(`${data.coins}`);
-    this.starsText?.setText(`${data.stars}`);
+    if (this.coinsText) this.coinsText.setText(`${data.coins}`);
+    if (this.crystalsText) this.crystalsText.setText(`${data.crystals}`);
   }
-
-  // ==================== SCROLLING ====================
 
   private setupScrolling(): void {
     this.input.on('wheel', (_: any, __: any, ___: number, deltaY: number) => {
-      if (this.activeModal) return;
-      this.scrollY = Phaser.Math.Clamp(this.scrollY + deltaY * 0.5, 0, this.maxScrollY);
-      this.scrollVelocity = 0;
-      this.updateCardPositions();
+      if (!this.isOverlayOpen) {
+        this.scrollY = Phaser.Math.Clamp(this.scrollY + deltaY * 0.5, 0, this.maxScrollY);
+        this.scrollVelocity = 0;
+        this.updateCardPositions();
+      }
     });
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (this.activeModal) return;
-      if (p.y > this.visibleAreaTop) {
+      if (p.y > this.visibleAreaTop && !this.isOverlayOpen) {
         this.isDragging = true;
         this.lastPointerY = p.y;
         this.scrollVelocity = 0;
@@ -551,11 +958,9 @@ export class ShopScene extends Phaser.Scene {
     });
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (this.activeModal) return;
-      if (this.isDragging) {
+      if (this.isDragging && !this.isOverlayOpen) {
         const delta = this.lastPointerY - p.y;
         this.dragDistance += Math.abs(delta);
-        this.scrollVelocity = delta;
         this.scrollY = Phaser.Math.Clamp(this.scrollY + delta, 0, this.maxScrollY);
         this.lastPointerY = p.y;
         this.updateCardPositions();
@@ -565,24 +970,5 @@ export class ShopScene extends Phaser.Scene {
     this.input.on('pointerup', () => {
       this.isDragging = false;
     });
-  }
-
-  // ==================== HELPERS ====================
-
-  private isEquipped(skinId: string, type: SkinType): boolean {
-    const data = playerData.get();
-    const map: Record<SkinType, string> = {
-      cap: data.equippedCapSkin,
-      ball: data.equippedBallSkin,
-      field: data.equippedFieldSkin,
-    };
-    return map[type] === skinId;
-  }
-
-  private canAfford(price: SkinPrice): boolean {
-    const data = playerData.get();
-    if (price.stars) return data.stars >= price.stars;
-    if (price.coins) return data.coins >= price.coins;
-    return true;
   }
 }

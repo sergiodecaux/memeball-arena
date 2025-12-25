@@ -5,6 +5,8 @@ export type SkinRarity = 'basic' | 'common' | 'rare' | 'epic' | 'legendary';
 export interface ThemeColors {
   // Background
   background: number;
+  backgroundGradientTop: number;
+  backgroundGradientBottom: number;
   
   // Field
   fieldPrimary: number;
@@ -22,13 +24,19 @@ export interface ThemeColors {
   ballSecondary: number;
   ballGlow: number;
   
-  // UI
+  // UI - New Cyberpunk Palette
   uiBackground: number;
-  uiPrimary: number;
-  uiSecondary: number;
-  uiAccent: number;
+  uiPrimary: number;      // Main purple
+  uiSecondary: number;    // Light purple
+  uiAccent: number;       // Cyan
+  uiAccentPink: number;   // Pink/Magenta - NEW
+  uiGold: number;         // Gold - NEW
   uiText: number;
   uiTextSecondary: number;
+  
+  // Glass effect
+  glassBackground: number;
+  glassBorder: number;
   
   // Teams
   team1Primary: number;
@@ -57,54 +65,67 @@ export interface ThemeConfig {
   useGradients: boolean;
   useShadows: boolean;
   useParticles: boolean;
+  useGlassMorphism: boolean;
   lineWidth: { thin: number; normal: number; thick: number };
-  borderRadius: { small: number; medium: number; large: number };
+  borderRadius: { small: number; medium: number; large: number; xlarge: number };
+  fonts: {
+    tech: string;
+    primary: string;
+  };
 }
 
 export const THEME: ThemeConfig = {
-  name: 'Cyberpunk',
+  name: 'Cyberpunk Premium',
   colors: {
-    // Background
-    background: 0x08080f,
+    // Background - Deep purple gradient
+    background: 0x050505,
+    backgroundGradientTop: 0x3a0d5e,
+    backgroundGradientBottom: 0x050505,
     
     // Field
     fieldPrimary: 0x0a0a12,
     fieldSecondary: 0x151525,
-    fieldLines: 0x00fff5,
-    fieldBorder: 0x9d4edd,
+    fieldLines: 0x00f2ff,
+    fieldBorder: 0xff00de,
     
     // Goal
-    goalPost: 0xff006e,
-    goalNet: 0x00fff5,
-    goalGlow: 0xff006e,
+    goalPost: 0xff00de,
+    goalNet: 0x00f2ff,
+    goalGlow: 0xff00de,
     
     // Ball
     ballPrimary: 0xffffff,
-    ballSecondary: 0x00fff5,
-    ballGlow: 0x00fff5,
+    ballSecondary: 0x00f2ff,
+    ballGlow: 0x00f2ff,
     
-    // UI
-    uiBackground: 0x05050a,
-    uiPrimary: 0x9d4edd,
-    uiSecondary: 0xc77dff,
-    uiAccent: 0x00fff5,
+    // UI - Cyberpunk Palette
+    uiBackground: 0x050505,
+    uiPrimary: 0x9d4edd,      // Purple
+    uiSecondary: 0xc77dff,    // Light purple
+    uiAccent: 0x00f2ff,       // Cyan (primary accent)
+    uiAccentPink: 0xff00de,   // Pink/Magenta
+    uiGold: 0xffd700,         // Gold
     uiText: 0xffffff,
-    uiTextSecondary: 0x6b7280,
+    uiTextSecondary: 0x888899,
+    
+    // Glass effect
+    glassBackground: 0xffffff,  // Will use with low alpha
+    glassBorder: 0xffffff,
     
     // Teams
-    team1Primary: 0x00fff5,
+    team1Primary: 0x00f2ff,
     team1Secondary: 0x0891b2,
-    team1Glow: 0x00fff5,
-    team2Primary: 0xff006e,
+    team1Glow: 0x00f2ff,
+    team2Primary: 0xff00de,
     team2Secondary: 0xbe185d,
-    team2Glow: 0xff006e,
+    team2Glow: 0xff00de,
     
     // Rarity
     rarityBasic: 0x6b7280,
     rarityCommon: 0x3b82f6,
-    rarityRare: 0x9d4edd,
-    rarityEpic: 0xff006e,
-    rarityLegendary: 0xfbbf24,
+    rarityRare: 0x00f2ff,     // Cyan for rare
+    rarityEpic: 0xff00de,     // Pink for epic
+    rarityLegendary: 0xffd700, // Gold for legendary
     
     // Effects
     shadowColor: 0x000000,
@@ -114,8 +135,13 @@ export const THEME: ThemeConfig = {
   useGradients: true,
   useShadows: true,
   useParticles: true,
+  useGlassMorphism: true,
   lineWidth: { thin: 1, normal: 2, thick: 3 },
-  borderRadius: { small: 2, medium: 4, large: 8 },
+  borderRadius: { small: 4, medium: 8, large: 16, xlarge: 30 },
+  fonts: {
+    tech: 'Orbitron',
+    primary: 'Arial',
+  },
 };
 
 export function getTheme(): ThemeConfig {
@@ -124,6 +150,10 @@ export function getTheme(): ThemeConfig {
 
 export function getColors(): ThemeColors {
   return THEME.colors;
+}
+
+export function getFonts() {
+  return THEME.fonts;
 }
 
 export function hexToString(hex: number): string {
@@ -140,4 +170,13 @@ export function getRarityColor(rarity: SkinRarity): number {
     case 'legendary': return colors.rarityLegendary;
     default: return colors.rarityBasic;
   }
+}
+
+// Helper for glass effect
+export function getGlassStyle() {
+  return {
+    bgAlpha: 0.05,
+    borderAlpha: 0.15,
+    blur: 10,
+  };
 }

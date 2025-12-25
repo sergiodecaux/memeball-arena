@@ -1,8 +1,8 @@
 // src/entities/Ball.ts
+// ВЕРСИЯ С PNG-ОРБАМИ И ЭФФЕКТАМИ + УЛУЧШЕННАЯ ФИЗИКА
 
 import Phaser from 'phaser';
 import { COLLISION_CATEGORIES } from '../constants/gameConstants';
-import { getColors } from '../config/themes';
 import { playerData } from '../data/PlayerData';
 import { getBallSkin, BallSkinData } from '../data/SkinsCatalog';
 
@@ -16,51 +16,48 @@ export class Ball {
   private ballSprite!: Phaser.GameObjects.Sprite;
   private glowSprite?: Phaser.GameObjects.Sprite;
   private trailEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
-  private particleEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
 
   private static readonly PHYSICS = {
     RADIUS: 15,
-    MASS: 0.8,
-    RESTITUTION: 0.9,
+    MASS: 1.2,              // было 0.8
+    RESTITUTION: 0.88,      // было 0.85
     FRICTION: 0.002,
-    FRICTION_AIR: 0.008,
+    FRICTION_AIR: 0.005,    // было 0.008
     FRICTION_STATIC: 0.001,
     MAX_SPEED: 28,
   };
 
-  private static readonly DEFAULT_SKIN: BallSkinData = {
-    id: 'ball_default',
-    name: 'Classic',
-    rarity: 'basic',
-    price: {},
-    primaryColor: 0xffffff,
-    secondaryColor: 0x00fff5,
-    glowColor: 0x00fff5,
-    hasGlow: true,
-    hasTrail: false,
-    textureKey: 'ball_default'
-  };
+  private static readonly DEFAULT_SKIN_ID = 'ball_plasma';
 
   constructor(
-    scene: Phaser.Scene, 
-    x: number, 
-    y: number, 
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
     radius?: number,
     skinId?: string
   ) {
     this.scene = scene;
     this.radius = radius || Ball.PHYSICS.RADIUS;
-    
-    const effectiveSkinId = skinId || playerData.get().equippedBallSkin || 'ball_default';
-    this.skinData = getBallSkin(effectiveSkinId) || Ball.DEFAULT_SKIN;
-    
+
+    const player = playerData.get();
+    const equippedId = player.equippedBallSkin;
+    const effectiveSkinId =
+      skinId ||
+      equippedId ||
+      Ball.DEFAULT_SKIN_ID;
+
+    const skin = getBallSkin(effectiveSkinId) || getBallSkin(Ball.DEFAULT_SKIN_ID);
+    if (!skin) {
+      throw new Error('[Ball] No valid ball skin found');
+    }
+    this.skinData = skin;
+
     console.log('[Ball] Using skin:', this.skinData.id, this.skinData.name);
 
     this.sprite = scene.add.container(x, y).setDepth(50);
-    
-    this.createTrail();
-    this.createParticles();
+
     this.createVisuals();
+    this.createTrail();
     this.createPhysicsBody(x, y);
   }
 
@@ -72,178 +69,156 @@ export class Ball {
     return this.body.position.y;
   }
 
+  // ================= ВИЗУАЛ =================
+
   private createVisuals(): void {
-    const { skinData: skin, radius: r, scene } = this;
-    const colors = getColors();
+    const r = this.radius;
 
-    this.sprite.add(
-      scene.add.ellipse(3, 3, r * 2, r * 1.5, colors.shadowColor, colors.shadowAlpha * 0.5)
-    );
+    // Тень под мячом
+    const shadow = this.scene.add.ellipse(3, 3, r * 2, r * 1.4, 0x000000, 0.45);
+    this.sprite.add(shadow);
 
-    if (skin.hasGlow) {
+    // Свечение
+    if (this.skinData.hasGlow) {
       this.createGlow();
     }
 
+    // Спрайт мяча (PNG или процедурный fallback)
     this.createBallSprite();
   }
 
   private createGlow(): void {
-    const { scene, radius: r, skinData: skin } = this;
-    
-    let texKey = 'p_glow';
-    let scale = r / 10;
-    
-    if (!scene.textures.exists('p_glow')) {
-      texKey = this.generateGlowTexture();
-      scale = r / 32 * 1.5;
-    }
+    const r = this.radius;
+    const texKey = this.ensureGlowTexture();
 
-    this.glowSprite = scene.add.sprite(0, 0, texKey)
-      .setTint(skin.glowColor)
-      .setAlpha(0.4)
-      .setScale(scale);
-    
+    this.glowSprite = this.scene.add.sprite(0, 0, texKey)
+      .setTint(this.skinData.glowColor)
+      .setAlpha(0.55)
+      .setScale(r / 16)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
     this.sprite.add(this.glowSprite);
 
-    scene.tweens.add({
+    // Пульсация свечения
+    this.scene.tweens.add({
       targets: this.glowSprite,
-      alpha: { from: 0.3, to: 0.6 },
-      scaleX: scale * 1.2,
-      scaleY: scale * 1.2,
-      duration: 800,
+      alpha: { from: 0.4, to: 0.75 },
+      scale: { from: r / 16, to: r / 13 },
+      duration: 900,
       yoyo: true,
-      repeat: -1
+      repeat: -1,
+      ease: 'Sine.easeInOut',
     });
   }
 
-  private generateGlowTexture(): string {
-    const key = 'ball_glow_tex';
+  private ensureGlowTexture(): string {
+    const key = 'ball_glow_radial';
     if (this.scene.textures.exists(key)) return key;
-    
-    const g = this.scene.add.graphics();
-    g.fillStyle(0xffffff).fillCircle(32, 32, 32);
-    g.generateTexture(key, 64, 64);
-    g.destroy();
+
+    const size = 128;
+    const canvas = this.scene.textures.createCanvas(key, size, size);
+    const ctx = canvas!.getContext();
+
+    const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.4, 'rgba(255,255,255,0.8)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    canvas!.refresh();
+
     return key;
   }
 
   private createBallSprite(): void {
-    const { scene, radius: r, skinData: skin } = this;
-    
-    const textureKey = skin.textureKey;
-    
-    if (textureKey && scene.textures.exists(textureKey)) {
-      this.ballSprite = scene.add.sprite(0, 0, textureKey)
-        .setScale((r * 2) / 64);
+    const r = this.radius;
+    const texKey = this.skinData.textureKey;
+
+    if (texKey && this.scene.textures.exists(texKey)) {
+      // PNG-орб 256x256
+      this.ballSprite = this.scene.add.sprite(0, 0, texKey)
+        .setOrigin(0.5)
+        .setScale((r * 2) / 256);
     } else {
       this.ballSprite = this.createFallbackBallSprite();
     }
-    
+
     this.sprite.add(this.ballSprite);
   }
 
   private createFallbackBallSprite(): Phaser.GameObjects.Sprite {
-    const { scene, radius: r, skinData: skin } = this;
-    const key = `ball_fallback_${skin.id}`;
-    
-    if (!scene.textures.exists(key)) {
-      const g = scene.add.graphics();
-      g.setVisible(false);
-      const size = 64;
-      const center = size / 2;
-      const ballRadius = 30;
-      
-      g.fillStyle(skin.primaryColor);
-      g.fillCircle(center, center, ballRadius);
-      
-      g.fillStyle(skin.secondaryColor);
-      this.drawPentagonOnGraphics(g, center, center, 10);
-      for (let i = 0; i < 5; i++) {
-        const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
-        this.drawPentagonOnGraphics(g, center + Math.cos(angle) * 18, center + Math.sin(angle) * 18, 6);
-      }
-      
-      g.lineStyle(2, skin.glowColor);
-      g.strokeCircle(center, center, ballRadius);
-      
-      g.fillStyle(0xffffff, 0.4);
-      g.fillEllipse(center - 8, center - 8, 10, 6);
-      
-      g.generateTexture(key, size, size);
-      g.destroy();
+    const r = this.radius;
+    const key = `ball_fallback_${this.skinData.id}`;
+
+    if (this.scene.textures.exists(key)) {
+      return this.scene.add.sprite(0, 0, key).setScale((r * 2) / 256);
     }
-    
-    return scene.add.sprite(0, 0, key).setScale((r * 2) / 64);
+
+    const size = 256;
+    const center = size / 2;
+    const ballRadius = 100;
+
+    const g = this.scene.add.graphics();
+    g.setVisible(false);
+
+    // Основной круг
+    g.fillStyle(this.skinData.primaryColor, 1);
+    g.fillCircle(center, center, ballRadius);
+
+    // Внутреннее энергетическое ядро
+    g.fillStyle(this.skinData.secondaryColor, 0.7);
+    g.fillCircle(center, center, ballRadius * 0.7);
+
+    // Концентрические кольца
+    g.lineStyle(4, this.skinData.glowColor, 0.9);
+    for (let i = 0; i < 3; i++) {
+      const off = i * 10;
+      g.strokeCircle(center - off * 0.4, center - off * 0.4, ballRadius - off * 2);
+    }
+
+    // Блик
+    g.fillStyle(0xffffff, 0.5);
+    g.fillEllipse(center - 35, center - 40, 50, 28);
+
+    g.generateTexture(key, size, size);
+    g.destroy();
+
+    return this.scene.add.sprite(0, 0, key).setScale((r * 2) / 256);
   }
 
-  private drawPentagonOnGraphics(g: Phaser.GameObjects.Graphics, x: number, y: number, size: number): void {
-    g.beginPath();
-    for (let i = 0; i < 5; i++) {
-      const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
-      const px = x + Math.cos(angle) * size;
-      const py = y + Math.sin(angle) * size;
-      if (i === 0) g.moveTo(px, py);
-      else g.lineTo(px, py);
-    }
-    g.closePath();
-    g.fillPath();
-  }
+  // ================= ШЛЕЙФ =================
 
   private createTrail(): void {
     if (!this.skinData.hasTrail) return;
 
-    const texKey = this.scene.textures.exists('p_spark') ? 'p_spark' : this.generateTrailTexture();
+    const texKey = this.ensureParticleTexture();
 
     this.trailEmitter = this.scene.add.particles(0, 0, texKey, {
-      speed: 10,
-      scale: { start: 0.5, end: 0 },
-      alpha: { start: 0.6, end: 0 },
-      lifespan: 300,
+      speed: { min: 10, max: 35 },
+      scale: { start: 0.6, end: 0 },
+      alpha: { start: 0.9, end: 0 },
+      lifespan: 450,
       blendMode: 'ADD',
-      tint: this.skinData.trailColor || this.skinData.primaryColor,
-      frequency: 20,
-      follow: this.sprite
+      tint: this.skinData.trailColor || this.skinData.glowColor,
+      frequency: 25,
+      follow: this.sprite,
     });
     this.trailEmitter.setDepth(49).stop();
   }
 
-  private generateTrailTexture(): string {
-    const key = 'ball_trail_tex';
+  private ensureParticleTexture(): string {
+    const key = 'ball_particle_glow';
     if (this.scene.textures.exists(key)) return key;
-    
-    const g = this.scene.add.graphics();
-    g.setVisible(false);
+
+    const g = this.scene.add.graphics().setVisible(false);
     g.fillStyle(0xffffff).fillCircle(8, 8, 8);
     g.generateTexture(key, 16, 16);
     g.destroy();
     return key;
   }
 
-  private createParticles(): void {
-    const effect = this.skinData.particleEffect;
-    if (!effect) return;
-
-    const texKey = this.scene.textures.exists(effect.texture) ? effect.texture : 'p_spark';
-    if (!this.scene.textures.exists(texKey)) return;
-
-    this.particleEmitter = this.scene.add.particles(0, 0, texKey, {
-      speed: effect.speed,
-      scale: effect.scale,
-      alpha: { start: 0.8, end: 0 },
-      lifespan: effect.lifespan,
-      frequency: effect.frequency,
-      blendMode: effect.blendMode as unknown as Phaser.BlendModes,
-      tint: effect.color,
-      gravityY: effect.gravityY || 0,
-      quantity: effect.quantity || 1,
-      follow: this.sprite
-    });
-    this.particleEmitter.setDepth(49);
-
-    if (effect.followVelocity) {
-      this.particleEmitter.stop();
-    }
-  }
+  // ================= ФИЗИКА =================
 
   private createPhysicsBody(x: number, y: number): void {
     const P = Ball.PHYSICS;
@@ -254,13 +229,17 @@ export class Ball {
       frictionStatic: P.FRICTION_STATIC,
       mass: P.MASS,
       label: 'ball',
-      slop: 0.01,
+      slop: 0.01,              // ⭐ явно указываем (меньше проваливания)
       collisionFilter: {
         category: COLLISION_CATEGORIES.BALL,
         mask: COLLISION_CATEGORIES.WALL | COLLISION_CATEGORIES.CAP,
       },
     });
+    
+    console.log(`[Ball] ⚽ Ball configured (mass: ${P.MASS}, restitution: ${P.RESTITUTION}, slop: 0.01)`);
   }
+
+  // ================= UPDATE =================
 
   update(): void {
     this.limitSpeed();
@@ -270,42 +249,41 @@ export class Ball {
 
     const speed = this.getSpeed();
 
+    // Вращение пропорционально скорости
     if (speed > 0.1) {
       this.ballSprite.rotation += speed * 0.05;
     }
 
+    // Лёгкое увеличение при высокой скорости
+    const baseScale = (this.radius * 2) / 256;
+    if (speed > 5) {
+      const factor = 1 + (Math.min(speed, Ball.PHYSICS.MAX_SPEED) / Ball.PHYSICS.MAX_SPEED) * 0.15;
+      this.ballSprite.setScale(baseScale * factor);
+    } else {
+      this.ballSprite.setScale(baseScale);
+    }
+
+    // Шлейф
     if (this.trailEmitter) {
       if (speed > 2) {
         this.trailEmitter.start();
-        this.trailEmitter.particleX = -this.body.velocity.x;
-        this.trailEmitter.particleY = -this.body.velocity.y;
+        this.trailEmitter.particleX = -this.body.velocity.x * 2;
+        this.trailEmitter.particleY = -this.body.velocity.y * 2;
       } else {
         this.trailEmitter.stop();
       }
     }
-
-    if (this.particleEmitter && this.skinData.particleEffect?.followVelocity) {
-      if (speed > 1.5) {
-        this.particleEmitter.start();
-      } else {
-        this.particleEmitter.stop();
-      }
-    }
   }
 
-  /**
-   * Синхронизирует спрайт с позицией физического тела без применения физики
-   * Используется для интерполяции у гостя в PvP
-   */
   syncSpriteWithBody(): void {
     const { x, y } = this.body.position;
     this.sprite.setPosition(x, y);
-    
+
     const speed = this.getSpeed();
     if (speed > 0.1) {
       this.ballSprite.rotation += speed * 0.03;
     }
-    
+
     if (this.trailEmitter) {
       if (speed > 2) {
         this.trailEmitter.start();
@@ -360,7 +338,7 @@ export class Ball {
 
   destroy(): void {
     this.trailEmitter?.destroy();
-    this.particleEmitter?.destroy();
+    this.glowSprite?.destroy();
     this.sprite.destroy();
     this.scene.matter.world.remove(this.body);
   }

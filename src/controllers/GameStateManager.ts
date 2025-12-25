@@ -15,11 +15,11 @@ export class GameStateManager {
   private caps: Cap[];
   
   private stoppedFrames = 0;
-  private readonly STOP_THRESHOLD = 0.15;
-  private readonly FRAMES_TO_CONFIRM = 15;
+  private readonly STOP_THRESHOLD = 0.28;      // было 0.15 → объекты останавливаются естественнее
+  private readonly FRAMES_TO_CONFIRM = 8;      // было 15 → быстрее подтверждение
   
   private movingStartTime = 0;
-  private readonly MIN_MOVING_TIME = 800;
+  private readonly MIN_MOVING_TIME = 400;      // было 800 → вдвое быстрее темп!
   
   private onTurnChangeCallback?: (player: PlayerNumber) => void;
   private onStateChangeCallback?: (state: GameState) => void;
@@ -49,10 +49,6 @@ export class GameStateManager {
     return this.currentPlayer;
   }
 
-  /**
-   * Устанавливает текущего игрока (owner команды)
-   * В PvP: 1 = Host team, 2 = Guest team
-   */
   setCurrentPlayer(player: PlayerNumber): void {
     this.currentPlayer = player;
   }
@@ -83,12 +79,10 @@ export class GameStateManager {
   update(): void {
     if (this.state !== 'moving') return;
     
-    // В PvP только хост проверяет остановку
     if (this.isPvPMode && !this.isHost) {
       return;
     }
     
-    // Минимальное время движения
     const elapsed = Date.now() - this.movingStartTime;
     if (elapsed < this.MIN_MOVING_TIME) {
       return;
@@ -112,13 +106,10 @@ export class GameStateManager {
     this.stoppedFrames = 0;
     
     if (this.isPvPMode) {
-      // В PvP только уведомляем (хост отправит на сервер)
       this.onAllStoppedCallback?.();
-      // Не меняем стейт сами, ждем ответа от сервера!
       return;
     }
     
-    // AI режим
     this.onAllStoppedCallback?.();
     this.nextTurn();
   }

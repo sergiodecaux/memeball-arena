@@ -1,21 +1,19 @@
 // src/controllers/match/MatchController.ts
-
 import { PlayerNumber, Formation } from '../../types';
 import { playerData } from '../../data/PlayerData';
 
 export interface MatchResult {
-  winner: PlayerNumber;
+  winner: PlayerNumber | null;
   playerGoals: number;
   opponentGoals: number;
   xpEarned: number;
   coinsEarned: number;
   isWin: boolean;
+  isDraw?: boolean;
   isPerfectGame: boolean;
   newAchievements: string[];
-  // PvP поля
-  rewards?: { coins: number; xp: number };
   isPvP?: boolean;
-  message?: string;
+  reason?: string;
 }
 
 export interface MatchState {
@@ -24,14 +22,14 @@ export interface MatchState {
   pendingFormation: Formation | null;
   matchStartTime: number;
   isFinished: boolean;
+  matchDuration: number;
+  timeLeft: number;
 }
 
-/**
- * Контроллер матча - управляет результатами, формациями и сохранением
- */
 export class MatchController {
   private state: MatchState;
-  
+  private timerEvent?: Phaser.Time.TimerEvent;
+
   constructor() {
     this.state = {
       scores: { 1: 0, 2: 0 },
@@ -39,50 +37,31 @@ export class MatchController {
       pendingFormation: null,
       matchStartTime: Date.now(),
       isFinished: false,
+      matchDuration: 300000,
+      timeLeft: 300
     };
   }
 
-  // ==================== ФОРМАЦИИ ====================
+  startMatch(scene: Phaser.Scene): void {
+    this.state.matchStartTime = Date.now();
+    this.state.timeLeft = 300;
 
-  getCurrentFormation(): Formation {
-    return this.state.currentFormation;
+    this.timerEvent = scene.time.addEvent({
+      delay: 1000,
+      callback: this.updateTimer,
+      callbackScope: this,
+      loop: true
+    });
   }
 
-  getPendingFormation(): Formation | null {
-    return this.state.pendingFormation;
-  }
+  private updateTimer(): void {
+    const elapsed = Date.now() - this.state.matchStartTime;
+    this.state.timeLeft = Math.max(0, Math.floor((this.state.matchDuration - elapsed) / 1000));
 
-  setPendingFormation(formation: Formation): void {
-    this.state.pendingFormation = formation;
-    playerData.selectFormation(formation.id);
-    console.log(`📋 Pending formation set: ${formation.name}`);
-  }
-
-  updateCurrentFormation(formation: Formation): void {
-    this.state.currentFormation = formation;
-    console.log(`🔄 Current formation updated: ${formation.name}`);
-  }
-
-  applyPendingFormation(): boolean {
-    if (this.state.pendingFormation) {
-      this.state.currentFormation = this.state.pendingFormation;
-      this.state.pendingFormation = null;
-      console.log(`✅ Formation applied: ${this.state.currentFormation.name}`);
-      return true;
+    if (this.state.timeLeft === 0 && !this.state.isFinished) {
+      this.finishMatchByTime();
     }
-    return false;
   }
-
-  hasPendingFormation(): boolean {
-    return this.state.pendingFormation !== null;
-  }
-
-  reloadCurrentFormation(): void {
-    this.state.currentFormation = playerData.getSelectedFormation();
-    console.log(`🔃 Formation reloaded: ${this.state.currentFormation.name}`);
-  }
-
-  // ==================== СЧЁТ ====================
 
   addGoal(player: PlayerNumber): void {
     this.state.scores[player]++;
@@ -92,54 +71,59 @@ export class MatchController {
     return { ...this.state.scores };
   }
 
-  resetScores(): void {
-    this.state.scores = { 1: 0, 2: 0 };
+  getTimeLeft(): number {
+    return this.state.timeLeft;
   }
 
-  // ==================== РЕЗУЛЬТАТЫ МАТЧА ====================
+  getMatchDuration(): number {
+    return 300;
+  }
 
-  finishMatch(winner: PlayerNumber): MatchResult {
+  getTimeString(): string {
+    const mins = Math.floor(this.state.timeLeft / 60);
+    const secs = this.state.timeLeft % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  finishMatchByTime(): MatchResult {
     this.state.isFinished = true;
-    
+    const playerGoals = this.state.scores[1];
+    const opponentGoals = this.state.scores[2];
+
+    if (playerGoals > opponentGoals) return this.finishMatch(1);
+    if (opponentGoals > playerGoals) return this.finishMatch(2);
+    return this.finishMatch(null);
+  }
+
+  finishMatch(winner: PlayerNumber | null): MatchResult {
+    this.state.isFinished = true;
+    if (this.timerEvent) this.timerEvent.destroy();
+
     const playerGoals = this.state.scores[1];
     const opponentGoals = this.state.scores[2];
     const isWin = winner === 1;
+    const isDraw = winner === null;
     const isPerfectGame = isWin && opponentGoals === 0;
-    
-    // Рассчитываем награды
-    let xpEarned = 10;
-    let coinsEarned = 0;
-    
-    if (isWin) {
-      xpEarned += 50;
+
+    let xpEarned = isWin ? 80 : isDraw ? 40 : 20;
+    let coinsEarned = isWin ? 150 : isDraw ? 75 : 30;
+
+    if (isPerfectGame) {
+      xpEarned += 40;
       coinsEarned += 100;
-      
-      if (isPerfectGame) {
-        xpEarned += 25;
-        coinsEarned += 50;
-      }
-    } else {
-      xpEarned += 15;
-      coinsEarned += 20;
     }
-    
-    // Бонус за голы
-    xpEarned += playerGoals * 10;
-    coinsEarned += playerGoals * 10;
-    
-    // Сохраняем статистику
-    const result: 'win' | 'loss' | 'draw' = isWin ? 'win' : 'loss';
+
+    xpEarned += playerGoals * 12;
+    coinsEarned += playerGoals * 15;
+
+    const result: 'win' | 'loss' | 'draw' = isWin ? 'win' : isDraw ? 'draw' : 'loss';
     playerData.updateStats(result, playerGoals, opponentGoals);
-    
-    // Добавляем время игры
+
     const playTimeSeconds = Math.floor((Date.now() - this.state.matchStartTime) / 1000);
     playerData.addPlayTime(playTimeSeconds);
-    
-    // Проверяем достижения
+
     const newAchievements = this.checkAchievements(isWin, playerGoals, opponentGoals);
-    
-    console.log(`📊 Match finished: ${result}, ${playerGoals}:${opponentGoals}, +${xpEarned}XP, +${coinsEarned} coins`);
-    
+
     return {
       winner,
       playerGoals,
@@ -147,82 +131,62 @@ export class MatchController {
       xpEarned,
       coinsEarned,
       isWin,
+      isDraw,
       isPerfectGame,
       newAchievements,
     };
   }
 
-  handleSurrender(): MatchResult {
+  surrender(): MatchResult {
     return this.finishMatch(2);
   }
 
   private checkAchievements(isWin: boolean, playerGoals: number, opponentGoals: number): string[] {
-    const newAchievements: string[] = [];
+    const achievements: string[] = [];
     const stats = playerData.get().stats;
-    const level = playerData.get().level;
-    
-    const tryUnlock = (id: string): void => {
-      if (playerData.unlockAchievement(id)) {
-        newAchievements.push(id);
-      }
-    };
-    
-    if (isWin && stats.wins === 1) {
-      tryUnlock('first_victory');
-    }
-    
-    if (stats.currentWinStreak >= 3) {
-      tryUnlock('hot_streak');
-    }
-    if (stats.currentWinStreak >= 5) {
-      tryUnlock('unstoppable');
-    }
-    
-    if (stats.goalsScored >= 10) {
-      tryUnlock('sharpshooter');
-    }
-    if (stats.goalsScored >= 50) {
-      tryUnlock('goal_machine');
-    }
-    
-    if (isWin && opponentGoals === 0) {
-      tryUnlock('clean_sheet');
-    }
-    
-    if (stats.gamesPlayed >= 10) {
-      tryUnlock('regular_player');
-    }
-    if (stats.gamesPlayed >= 50) {
-      tryUnlock('dedicated');
-    }
-    
-    if (level >= 10) {
-      tryUnlock('rising_star');
-    }
-    if (level >= 25) {
-      tryUnlock('veteran');
-    }
-    
-    return newAchievements;
-  }
 
-  // ==================== СОСТОЯНИЕ ====================
+    if (isWin && stats.wins === 1) achievements.push('first_victory');
+    if (stats.currentWinStreak >= 5) achievements.push('unstoppable');
+    if (playerGoals >= 7) achievements.push('goal_machine');
+    if (isWin && opponentGoals === 0) achievements.push('clean_sheet');
 
-  isMatchFinished(): boolean {
-    return this.state.isFinished;
+    achievements.forEach(id => playerData.unlockAchievement(id));
+    return achievements;
   }
 
   reset(): void {
+    if (this.timerEvent) this.timerEvent.destroy();
+    
     this.state = {
       scores: { 1: 0, 2: 0 },
       currentFormation: playerData.getSelectedFormation(),
       pendingFormation: null,
       matchStartTime: Date.now(),
       isFinished: false,
+      matchDuration: 300000,
+      timeLeft: 300
     };
   }
 
-  getMatchStartTime(): number {
-    return this.state.matchStartTime;
+  getCurrentFormation(): Formation { 
+    return this.state.currentFormation; 
+  }
+  
+  setPendingFormation(f: Formation): void { 
+    this.state.pendingFormation = f; 
+    playerData.selectFormation(f.id); 
+  }
+  
+  applyPendingFormation(): boolean {
+    if (this.state.pendingFormation) {
+      this.state.currentFormation = this.state.pendingFormation;
+      this.state.pendingFormation = null;
+      return true;
+    }
+    return false;
+  }
+  
+  hasPendingFormation(): boolean { 
+    return this.state.pendingFormation !== null; 
   }
 }

@@ -114,7 +114,11 @@ export class MatchmakingScene extends Phaser.Scene {
   private createMySkinPreview(): void {
     const { centerX, height } = this.cameras.main;
     const data = playerData.get();
-    const capSkin = getCapSkin(data.equippedCapSkin);
+    
+    // Берём первую фишку из команды для превью
+    const teamCapIds = playerData.getTeamCapIds();
+    const firstCapId = teamCapIds[0] || 'meme_doge';
+    const capSkin = getCapSkin(firstCapId);
     
     if (!capSkin) return;
     

@@ -1,10 +1,22 @@
 // src/renderers/FieldRenderer.ts
 
 import Phaser from 'phaser';
-import { GOAL } from '../constants/gameConstants';
+import { GOAL, FactionArena } from '../constants/gameConstants';
 import { FieldBounds } from '../types';
 import { getFieldSkin, FieldSkinData, FieldEffectConfig } from '../data/SkinsCatalog';
 import { playerData } from '../data/PlayerData';
+
+type GoalSide = 'top' | 'bottom';
+
+// Расширенный тип стиля, включающий organic
+type FieldStyle = 'neon' | 'industrial' | 'carbon' | 'organic' | 'generic';
+
+interface GoalVisual {
+  side: GoalSide;
+  container: Phaser.GameObjects.Container;
+  frame: Phaser.GameObjects.Graphics;
+  net: Phaser.GameObjects.Graphics;
+}
 
 export class FieldRenderer {
   private scene: Phaser.Scene;
@@ -13,6 +25,11 @@ export class FieldRenderer {
   private bounds: FieldBounds;
   private scale: number;
   private skin: FieldSkinData;
+  
+  // Арена фракции (опционально)
+  private arena?: FactionArena;
+  private arenaBackground?: Phaser.GameObjects.Image;
+  private arenaVignette?: Phaser.GameObjects.Graphics;
 
   // Эффекты
   private particleEmitters: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
@@ -20,15 +37,24 @@ export class FieldRenderer {
   private borderGraphics?: Phaser.GameObjects.Graphics;
   private ambientContainer?: Phaser.GameObjects.Container;
 
+  // Ворота
+  private topGoal?: GoalVisual;
+  private bottomGoal?: GoalVisual;
+
   private static readonly DEFAULT_SKIN: FieldSkinData = {
     id: 'field_default',
-    name: 'Cyber Grid',
+    name: 'Neon Cyber',
     rarity: 'basic',
     price: {},
-    fieldColor: 0x0f172a,
-    lineColor: 0x0ea5e9,
-    borderColor: 0x1e40af,
-    goalColor: 0x0ea5e9,
+    style: 'neon',
+    fieldColor: 0x05080a,
+    lineColor: 0x00f3ff,
+    borderColor: 0x00f3ff,
+    goalColor: 0x00f3ff,
+    goalFrameColor: 0x00f3ff,
+    goalNetColor: 0x00f3ff,
+    goalDepthMultiplier: 1,
+    textureKey: 'tex_field_circuit'
   };
 
   /**
@@ -36,20 +62,38 @@ export class FieldRenderer {
    * @param bounds - Границы поля
    * @param fieldScale - Масштаб поля
    * @param skinId - ID скина поля (опционально, если не указан - берётся из playerData)
+   * @param arena - Арена фракции (опционально, переопределяет цвета скина)
    */
   constructor(
     scene: Phaser.Scene, 
     bounds: FieldBounds, 
     fieldScale: number = 1,
-    skinId?: string
+    skinId?: string,
+    arena?: FactionArena
   ) {
     this.scene = scene;
     this.bounds = bounds;
     this.scale = fieldScale;
+    this.arena = arena;
 
     // Определяем скин
     const effectiveSkinId = skinId || playerData.get().equippedFieldSkin || 'field_default';
     this.skin = getFieldSkin(effectiveSkinId) || getFieldSkin('field_default') || FieldRenderer.DEFAULT_SKIN;
+    
+    // Если передана арена - переопределяем цвета скина
+    if (arena) {
+      this.skin = {
+        ...this.skin,
+        fieldColor: arena.ambientColor,
+        lineColor: arena.lineColor,
+        borderColor: arena.borderColor,
+        goalColor: arena.goalColor,
+        goalFrameColor: arena.goalColor,
+        goalNetColor: arena.lineColor,
+        style: arena.style as any,
+      };
+      console.log('[FieldRenderer] Using arena:', arena.name, 'with style:', arena.style);
+    }
     
     console.log('[FieldRenderer] Using skin:', this.skin.id, this.skin.name);
 
@@ -57,23 +101,95 @@ export class FieldRenderer {
   }
 
   render(): void {
+    // Если есть арена - рисуем её фон
+    if (this.arena) {
+      this.createArenaBackground();
+    }
+    
     this.createFloor();
     this.drawField();
+    this.createGoals();
     this.createEffects();
+    
+    // Если есть арена - добавляем виньетку поверх
+    if (this.arena) {
+      this.createArenaVignette();
+    }
+  }
+
+  /**
+   * Создаёт фоновое изображение арены
+   */
+  private createArenaBackground(): void {
+    if (!this.arena) return;
+    
+    const { bounds, scene } = this;
+    const { width, height } = scene.scale;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    
+    // Проверяем, загружена ли текстура арены
+    if (scene.textures.exists(this.arena.assetKey)) {
+      this.arenaBackground = scene.add.image(centerX, centerY, this.arena.assetKey);
+      this.arenaBackground.setDepth(-20);
+      
+      // Масштабируем под экран
+      const scaleX = width / this.arenaBackground.width;
+      const scaleY = height / this.arenaBackground.height;
+      const scale = Math.max(scaleX, scaleY) * 1.1; // +10% чтобы покрыть края
+      this.arenaBackground.setScale(scale);
+      
+      // Лёгкое затемнение
+      this.arenaBackground.setAlpha(0.9);
+      
+      console.log(`[FieldRenderer] Arena background: ${this.arena.name} (${this.arena.assetKey})`);
+    } else {
+      console.warn(`[FieldRenderer] Arena texture not found: ${this.arena.assetKey}`);
+    }
+  }
+
+  /**
+   * Создаёт виньетку поверх арены для фокусировки на центре
+   */
+  private createArenaVignette(): void {
+    if (!this.arena) return;
+    
+    const { bounds, scene } = this;
+    const { width, height } = scene.scale;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    
+    this.arenaVignette = scene.add.graphics();
+    this.arenaVignette.setDepth(0.5); // Между фоном и полем
+    
+    // Создаём радиальную виньетку через множество концентрических эллипсов
+    const maxRadius = Math.max(width, height) * 0.8;
+    const steps = 20;
+    
+    for (let i = steps; i >= 0; i--) {
+      const ratio = i / steps;
+      const radius = maxRadius * (0.5 + ratio * 0.5);
+      const alpha = (1 - ratio) * 0.4; // Максимум 0.4 альфа на краях
+      
+      this.arenaVignette.fillStyle(0x000000, alpha / steps);
+      this.arenaVignette.fillEllipse(centerX, centerY, radius * 2, radius * 2);
+    }
   }
 
   private createFloor(): void {
     const { bounds, skin, scene } = this;
 
-    // Тёмный фон под всем
-    const darkBg = scene.add.rectangle(
-      bounds.centerX,
-      bounds.centerY,
-      bounds.width + 100,
-      bounds.height + 100,
-      0x020617
-    );
-    darkBg.setDepth(-15);
+    // Тёмный фон под всем (если нет арены)
+    if (!this.arena) {
+      const darkBg = scene.add.rectangle(
+        bounds.centerX,
+        bounds.centerY,
+        bounds.width + 100,
+        bounds.height + 100,
+        0x020617
+      );
+      darkBg.setDepth(-15);
+    }
 
     const textureKey = skin.textureKey;
 
@@ -86,7 +202,7 @@ export class FieldRenderer {
         textureKey
       );
       this.floorPattern.setTint(skin.fieldColor);
-      this.floorPattern.setAlpha(0.25);
+      this.floorPattern.setAlpha(this.arena ? 0.15 : 0.25); // Прозрачнее если есть арена
       this.floorPattern.setDepth(-10);
     } else {
       const bg = scene.add.rectangle(
@@ -96,35 +212,98 @@ export class FieldRenderer {
         bounds.height,
         skin.fieldColor
       );
+      bg.setAlpha(this.arena ? 0.7 : 1); // Полупрозрачно если есть арена
       bg.setDepth(-10);
     }
+  }
+
+  /**
+   * Получает стиль поля с поддержкой organic
+   */
+  private getFieldStyle(): FieldStyle {
+    const skinStyle = this.skin.style || 'generic';
+    // Приводим к расширенному типу
+    if (skinStyle === 'neon' || skinStyle === 'industrial' || skinStyle === 'carbon') {
+      return skinStyle;
+    }
+    // Проверяем арену для organic стиля
+    if (this.arena?.style === 'organic') {
+      return 'organic';
+    }
+    return 'generic';
   }
 
   private drawField(): void {
     const g = this.graphics;
     const b = this.bounds;
     const s = this.skin;
+    const style = this.getFieldStyle();
+    
+    // Интенсивность свечения из арены
+    const glowIntensity = this.arena?.glowIntensity || 1.0;
 
     g.clear();
     g.setDepth(1);
 
-    // Граница с неоновым эффектом
-    g.lineStyle(12, s.borderColor, 0.15);
-    g.strokeRect(b.left, b.top, b.width, b.height);
-    g.lineStyle(6, s.borderColor, 0.3);
-    g.strokeRect(b.left, b.top, b.width, b.height);
-    g.lineStyle(3, s.borderColor, 0.8);
-    g.strokeRect(b.left, b.top, b.width, b.height);
+    // Граница/борта поля под разные стили
+    if (style === 'neon') {
+      // Неоновый «трёхслойный» бордюр
+      g.lineStyle(12, s.borderColor, 0.18 * glowIntensity);
+      g.strokeRect(b.left, b.top, b.width, b.height);
+      g.lineStyle(6, s.borderColor, 0.35 * glowIntensity);
+      g.strokeRect(b.left, b.top, b.width, b.height);
+      g.lineStyle(3, s.borderColor, 0.9);
+      g.strokeRect(b.left, b.top, b.width, b.height);
+    } else if (style === 'industrial') {
+      // Толстый тёмный бордюр + внутренняя светлая рамка
+      g.fillStyle(0x111111, 1);
+      g.fillRect(b.left - 8, b.top - 8, b.width + 16, b.height + 16);
+
+      g.lineStyle(10, s.borderColor, 1);
+      g.strokeRect(b.left, b.top, b.width, b.height);
+      g.lineStyle(3, 0x555555, 0.8);
+      g.strokeRect(b.left + 6, b.top + 6, b.width - 12, b.height - 12);
+    } else if (style === 'carbon') {
+      // «Премиальный» серый бордюр без сильного свечения
+      g.fillStyle(0x101010, 1);
+      g.fillRect(b.left - 6, b.top - 6, b.width + 12, b.height + 12);
+
+      g.lineStyle(8, s.borderColor, 0.9);
+      g.strokeRect(b.left, b.top, b.width, b.height);
+      g.lineStyle(2, 0xaaaaaa, 0.4);
+      g.strokeRect(b.left + 6, b.top + 6, b.width - 12, b.height - 12);
+    } else if (style === 'organic') {
+      // Органический стиль для Insect
+      g.fillStyle(0x0a1a0f, 0.9);
+      g.fillRect(b.left - 6, b.top - 6, b.width + 12, b.height + 12);
+
+      // Волнистая граница (имитация)
+      g.lineStyle(6, s.borderColor, 0.7);
+      g.strokeRect(b.left, b.top, b.width, b.height);
+      
+      // Внутреннее "пульсирующее" свечение
+      g.lineStyle(12, s.borderColor, 0.15 * glowIntensity);
+      g.strokeRect(b.left + 3, b.top + 3, b.width - 6, b.height - 6);
+    } else {
+      // Фоллбек
+      g.lineStyle(8, s.borderColor, 0.3);
+      g.strokeRect(b.left, b.top, b.width, b.height);
+      g.lineStyle(3, s.borderColor, 0.9);
+      g.strokeRect(b.left, b.top, b.width, b.height);
+    }
 
     // Центральная линия
-    g.lineStyle(2, s.lineColor, 0.6);
+    const lineAlpha = style === 'organic' ? 0.5 : 0.6;
+    g.lineStyle(2, s.lineColor, lineAlpha);
     g.lineBetween(b.left, b.centerY, b.right, b.centerY);
 
     // Центральный круг
     const circleRadius = 60 * this.scale;
-    g.lineStyle(2, s.lineColor, 0.6);
+    g.lineStyle(2, s.lineColor, lineAlpha);
     g.strokeCircle(b.centerX, b.centerY, circleRadius);
-    g.fillStyle(s.lineColor, 0.08);
+    
+    const fillAlpha = style === 'carbon' ? 0.05 : (style === 'organic' ? 0.1 : 0.08);
+    g.fillStyle(s.lineColor, fillAlpha);
     g.fillCircle(b.centerX, b.centerY, circleRadius);
     g.fillStyle(s.lineColor, 1);
     g.fillCircle(b.centerX, b.centerY, 4);
@@ -133,13 +312,10 @@ export class FieldRenderer {
     const penaltyWidth = 140 * this.scale;
     const penaltyHeight = 50 * this.scale;
     
-    g.lineStyle(2, s.lineColor, 0.5);
+    const penaltyAlpha = style === 'carbon' ? 0.45 : lineAlpha;
+    g.lineStyle(2, s.lineColor, penaltyAlpha);
     g.strokeRect(b.centerX - penaltyWidth / 2, b.top, penaltyWidth, penaltyHeight);
     g.strokeRect(b.centerX - penaltyWidth / 2, b.bottom - penaltyHeight, penaltyWidth, penaltyHeight);
-
-    // Ворота
-    this.drawGoal(b.centerX, b.top, s.goalColor, -1);
-    this.drawGoal(b.centerX, b.bottom, s.goalColor, 1);
 
     // Угловые дуги
     const cornerRadius = 15 * this.scale;
@@ -156,46 +332,288 @@ export class FieldRenderer {
     g.beginPath();
     g.arc(b.right, b.bottom, cornerRadius, Math.PI, -Math.PI / 2);
     g.strokePath();
+    
+    // Дополнительные эффекты для арены
+    if (this.arena) {
+      this.drawArenaAccents(g);
+    }
   }
 
-  private drawGoal(x: number, y: number, color: number, direction: number): void {
-    const g = this.graphics;
-    const goalWidth = GOAL.WIDTH * this.scale;
-    const goalDepth = GOAL.DEPTH * this.scale;
-
-    // Зона ворот (свечение)
-    g.fillStyle(color, 0.1);
-    g.fillRect(
-      x - goalWidth / 2,
-      direction === -1 ? y - goalDepth : y,
-      goalWidth,
-      goalDepth
-    );
-
-    // Каркас ворот
-    g.lineStyle(4, color, 1);
-    g.beginPath();
-
-    if (direction === -1) {
-      g.moveTo(x - goalWidth / 2, y);
-      g.lineTo(x - goalWidth / 2, y - goalDepth);
-      g.lineTo(x + goalWidth / 2, y - goalDepth);
-      g.lineTo(x + goalWidth / 2, y);
-    } else {
-      g.moveTo(x - goalWidth / 2, y);
-      g.lineTo(x - goalWidth / 2, y + goalDepth);
-      g.lineTo(x + goalWidth / 2, y + goalDepth);
-      g.lineTo(x + goalWidth / 2, y);
+  /**
+   * Рисует дополнительные акценты для арены фракции
+   */
+  private drawArenaAccents(g: Phaser.GameObjects.Graphics): void {
+    if (!this.arena) return;
+    
+    const b = this.bounds;
+    const color = this.arena.lineColor;
+    const intensity = this.arena.glowIntensity;
+    
+    // Свечение в углах поля
+    const cornerGlowSize = 40 * this.scale;
+    const corners = [
+      { x: b.left, y: b.top },
+      { x: b.right, y: b.top },
+      { x: b.left, y: b.bottom },
+      { x: b.right, y: b.bottom },
+    ];
+    
+    corners.forEach(corner => {
+      // Мягкое свечение
+      for (let r = cornerGlowSize; r > 0; r -= 5) {
+        const alpha = (r / cornerGlowSize) * 0.1 * intensity;
+        g.fillStyle(color, alpha);
+        g.fillCircle(corner.x, corner.y, r);
+      }
+    });
+    
+    // Акцентные точки на центральной линии
+    const dotCount = 5;
+    const dotSpacing = b.width / (dotCount + 1);
+    
+    g.fillStyle(color, 0.6);
+    for (let i = 1; i <= dotCount; i++) {
+      const x = b.left + dotSpacing * i;
+      g.fillCircle(x, b.centerY, 3 * this.scale);
     }
-    g.strokePath();
+  }
 
-    // Линия ворот
-    g.lineStyle(2, 0xffffff, 0.7);
-    g.lineBetween(x - goalWidth / 2, y, x + goalWidth / 2, y);
+  /** Создаём визуальные ворота (рама + сетка) сверху и снизу */
+  private createGoals(): void {
+    this.topGoal = this.createGoalVisual('top');
+    this.bottomGoal = this.createGoalVisual('bottom');
+  }
 
-    // Внешнее свечение ворот
-    g.lineStyle(8, color, 0.15);
-    g.lineBetween(x - goalWidth / 2, y, x + goalWidth / 2, y);
+  private createGoalVisual(side: GoalSide): GoalVisual {
+    const { bounds, scene } = this;
+    const s = this.skin;
+    const style = this.getFieldStyle();
+
+    const isTop = side === 'top';
+    const x = bounds.centerX;
+    const y = isTop ? bounds.top : bounds.bottom;
+    const dir = isTop ? -1 : 1;
+
+    const goalWidth = GOAL.WIDTH * this.scale;
+    const baseDepth = GOAL.DEPTH * this.scale;
+    const depthMultiplier = s.goalDepthMultiplier ?? 1;
+    const goalDepth = baseDepth * depthMultiplier;
+
+    const frameColor = s.goalFrameColor ?? s.goalColor;
+    const netColor = s.goalNetColor ?? 0xffffff;
+
+    const container = scene.add.container(x, y);
+    container.setDepth(5);
+
+    // Фон внутри ворот (тёмная коробка)
+    const bg = scene.add.graphics();
+    const boxColor =
+      style === 'neon' ? 0x00141a :
+      style === 'industrial' ? 0x101010 :
+      style === 'organic' ? 0x051a0a :
+      0x050505;
+
+    const startY = isTop ? -goalDepth : 0;
+    bg.fillStyle(boxColor, style === 'neon' ? 0.9 : 1);
+    bg.fillRect(-goalWidth / 2, startY, goalWidth, goalDepth);
+
+    // Внутренняя тень по краю
+    bg.lineStyle(2, 0x000000, 0.7);
+    bg.strokeRect(-goalWidth / 2, startY, goalWidth, goalDepth);
+
+    container.add(bg);
+
+    // Сетка ворот
+    const net = scene.add.graphics();
+    const netAlpha =
+      style === 'neon' ? 0.4 :
+      style === 'carbon' ? 0.75 :
+      style === 'organic' ? 0.5 :
+      0.5;
+
+    net.lineStyle(1.5 * this.scale, netColor, netAlpha);
+
+    const pad = 4 * this.scale;
+    const netLeft = -goalWidth / 2 + pad;
+    const netRight = goalWidth / 2 - pad;
+    const netTop = startY + pad;
+    const netBottom = startY + goalDepth - pad;
+
+    if (style === 'industrial') {
+      // Диагональная «рабица»
+      const step = 10 * this.scale;
+      const height = netBottom - netTop;
+
+      net.lineStyle(1.3 * this.scale, netColor, netAlpha);
+
+      for (let x0 = netLeft - height; x0 < netRight + height; x0 += step) {
+        net.beginPath();
+        net.moveTo(x0, netBottom);
+        net.lineTo(x0 + height, netTop);
+        net.strokePath();
+      }
+      for (let x0 = netLeft; x0 < netRight + height; x0 += step) {
+        net.beginPath();
+        net.moveTo(x0, netTop);
+        net.lineTo(x0 - height, netBottom);
+        net.strokePath();
+      }
+    } else if (style === 'organic') {
+      // Органическая "паутина" для Insect
+      const step = 8 * this.scale;
+      
+      // Вертикальные линии с небольшим изгибом
+      for (let x0 = netLeft; x0 <= netRight + 0.01; x0 += step) {
+        net.beginPath();
+        const wobble = Math.sin(x0 * 0.1) * 2;
+        net.moveTo(x0 + wobble, netTop);
+        net.lineTo(x0 - wobble, netBottom);
+        net.strokePath();
+      }
+      
+      // Горизонтальные линии
+      for (let y0 = netTop; y0 <= netBottom + 0.01; y0 += step) {
+        net.beginPath();
+        net.moveTo(netLeft, y0);
+        net.lineTo(netRight, y0);
+        net.strokePath();
+      }
+    } else {
+      // Квадратная сетка
+      const step = (style === 'carbon' ? 6 : 8) * this.scale;
+
+      for (let x0 = netLeft; x0 <= netRight + 0.01; x0 += step) {
+        net.beginPath();
+        net.moveTo(x0, netTop);
+        net.lineTo(x0, netBottom);
+        net.strokePath();
+      }
+      for (let y0 = netTop; y0 <= netBottom + 0.01; y0 += step) {
+        net.beginPath();
+        net.moveTo(netLeft, y0);
+        net.lineTo(netRight, y0);
+        net.strokePath();
+      }
+    }
+
+    container.add(net);
+
+    // Рама ворот
+    const frame = scene.add.graphics();
+    const mainThickness =
+      style === 'carbon' ? 5 * this.scale :
+      style === 'industrial' ? 4 * this.scale :
+      style === 'organic' ? 5 * this.scale :
+      4 * this.scale;
+
+    frame.lineStyle(mainThickness, frameColor, 1);
+    frame.beginPath();
+
+    if (isTop) {
+      frame.moveTo(-goalWidth / 2, 0);
+      frame.lineTo(-goalWidth / 2, -goalDepth);
+      frame.lineTo(goalWidth / 2, -goalDepth);
+      frame.lineTo(goalWidth / 2, 0);
+    } else {
+      frame.moveTo(-goalWidth / 2, 0);
+      frame.lineTo(-goalWidth / 2, goalDepth);
+      frame.lineTo(goalWidth / 2, goalDepth);
+      frame.lineTo(goalWidth / 2, 0);
+    }
+    frame.strokePath();
+
+    // Линия ворот по линии поля
+    frame.lineStyle(2 * this.scale, 0xffffff, style === 'carbon' ? 0.95 : 0.75);
+    frame.beginPath();
+    frame.moveTo(-goalWidth / 2, 0);
+    frame.lineTo(goalWidth / 2, 0);
+    frame.strokePath();
+
+    // Внешнее лёгкое свечение для неона и органического стиля
+    if (style === 'neon' || style === 'organic') {
+      const glowIntensity = this.arena?.glowIntensity || 1.0;
+      frame.lineStyle(7 * this.scale, frameColor, 0.25 * glowIntensity);
+      frame.beginPath();
+      frame.moveTo(-goalWidth / 2, 0);
+      frame.lineTo(goalWidth / 2, 0);
+      frame.strokePath();
+    }
+
+    // Красная линия в глубине ворот для Elite Carbon / Void
+    if (style === 'carbon') {
+      const accentColor = this.arena?.id === 'void' ? 0x9d00ff : 0xff0040;
+      const backY = isTop ? startY : startY + goalDepth;
+      frame.lineStyle(3 * this.scale, accentColor, 0.9);
+      frame.beginPath();
+      frame.moveTo(-goalWidth / 2, backY);
+      frame.lineTo(goalWidth / 2, backY);
+      frame.strokePath();
+    }
+
+    container.add(frame);
+
+    // Лёгкая тень от ворот на поле
+    const shadow = scene.add.graphics();
+    const shadowWidth = goalWidth * 1.1;
+    const shadowHeight = 18 * this.scale;
+    shadow.fillStyle(0x000000, 0.6);
+    shadow.fillEllipse(0, dir * (shadowHeight * 0.8), shadowWidth, shadowHeight);
+    shadow.setAlpha(style === 'neon' ? 0.7 : 0.9);
+    shadow.setDepth(-1);
+    container.add(shadow);
+
+    return { side, container, frame, net };
+  }
+
+  /** Анимация «удара в штангу» — мнущиеся ворота */
+  playGoalPostHit(side: GoalSide, intensity: number): void {
+    const goal = side === 'top' ? this.topGoal : this.bottomGoal;
+    if (!goal) return;
+
+    const clamped = Phaser.Math.Clamp(intensity, 0, 1);
+    const scaleAmount = 1 + 0.05 * clamped;
+    const duration = 120 + 100 * clamped;
+
+    this.scene.tweens.add({
+      targets: goal.container,
+      scaleX: scaleAmount,
+      scaleY: scaleAmount,
+      yoyo: true,
+      duration,
+      ease: 'Quad.easeOut'
+    });
+
+    this.scene.tweens.add({
+      targets: goal.net,
+      alpha: { from: goal.net.alpha, to: Math.min(1, goal.net.alpha + 0.3) },
+      yoyo: true,
+      duration,
+      ease: 'Sine.easeOut'
+    });
+    
+    // Дополнительная вспышка цвета арены при ударе
+    if (this.arena) {
+      const flash = this.scene.add.graphics();
+      flash.setDepth(10);
+      
+      const goalY = side === 'top' ? this.bounds.top : this.bounds.bottom;
+      const goalWidth = GOAL.WIDTH * this.scale;
+      
+      flash.fillStyle(this.arena.lineColor, 0.5 * clamped);
+      flash.fillRect(
+        this.bounds.centerX - goalWidth / 2 - 10,
+        goalY - 20,
+        goalWidth + 20,
+        40
+      );
+      
+      this.scene.tweens.add({
+        targets: flash,
+        alpha: 0,
+        duration: duration * 2,
+        onComplete: () => flash.destroy()
+      });
+    }
   }
 
   private createEffects(): void {
@@ -250,7 +668,7 @@ export class FieldRenderer {
 
     const { bounds, scene } = this;
     const color = effect.glowColor || this.skin.lineColor;
-    const intensity = effect.glowIntensity || 0.2;
+    const intensity = (effect.glowIntensity || 0.2) * (this.arena?.glowIntensity || 1.0);
 
     this.glowGraphics = scene.add.graphics();
     this.glowGraphics.setDepth(-5);
@@ -285,7 +703,7 @@ export class FieldRenderer {
   private createBorderEffect(effect: FieldEffectConfig): void {
     const { bounds, scene } = this;
     const color = effect.glowColor || this.skin.borderColor;
-    const intensity = effect.glowIntensity || 0.5;
+    const intensity = (effect.glowIntensity || 0.5) * (this.arena?.glowIntensity || 1.0);
 
     this.borderGraphics = scene.add.graphics();
     this.borderGraphics.setDepth(3);
@@ -434,5 +852,13 @@ export class FieldRenderer {
     this.ambientContainer?.destroy();
     this.floorPattern?.destroy();
     this.graphics.destroy();
+    
+    this.arenaBackground?.destroy();
+    this.arenaVignette?.destroy();
+
+    this.topGoal?.container.destroy(true);
+    this.bottomGoal?.container.destroy(true);
+    this.topGoal = undefined;
+    this.bottomGoal = undefined;
   }
 }

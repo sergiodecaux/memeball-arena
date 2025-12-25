@@ -1,7 +1,7 @@
 // src/managers/MultiplayerManager.ts
 
 import { io, Socket } from 'socket.io-client';
-import { playerData } from '../data/PlayerData';
+import { playerData, CapUpgrades } from '../data/PlayerData';
 
 const SERVER_URL = 'https://memeball.duckdns.org';
 
@@ -16,6 +16,15 @@ export interface PvPPlayer {
   fieldSkin: string;
   formation: any;
   playerIndex: number;
+
+  // Аватар
+  avatarId?: string;
+  
+  // Команда фишек
+  teamCapIds?: string[];
+  
+  // Прокачка каждой фишки
+  capUpgrades?: Record<string, CapUpgrades>;
 }
 
 export interface GameStartData {
@@ -41,6 +50,7 @@ export interface ShootData {
   capId: number;
   force: { x: number; y: number };
   position: { x: number; y: number };
+  hitOffset?: number;  // Для закрутки Trickster
   tick?: number;
   serverTime?: number;
 }
@@ -167,17 +177,42 @@ export class MultiplayerManager {
 
     const data = playerData.get();
     const formation = playerData.getSelectedFormation();
+    const name = playerData.getNickname
+      ? playerData.getNickname()
+      : (data.username || 'Player');
+    const avatarId = playerData.getAvatarId
+      ? playerData.getAvatarId()
+      : undefined;
+    const teamCapIds = playerData.getTeamCapIds 
+      ? playerData.getTeamCapIds() 
+      : ['meme_doge', 'meme_gigachad', 'meme_doge'];
+
+    // Собираем прокачку для каждой фишки в команде
+    const capUpgrades: Record<string, CapUpgrades> = {};
+    const uniqueCapIds = [...new Set(teamCapIds)];
     
+    for (const capId of uniqueCapIds) {
+      capUpgrades[capId] = playerData.getCapStats(capId);
+    }
+
     const payload = {
-      name: data.username || 'Player',
+      name,
       level: data.level || 1,
-      capSkin: data.equippedCapSkin || 'cap_default_cyan',
+      // Fallback for old servers: use first cap in team or default
+      capSkin: teamCapIds[0] || 'meme_doge', 
       ballSkin: data.equippedBallSkin || 'ball_default',
       fieldSkin: data.equippedFieldSkin || 'field_default',
-      formation: formation
+      formation: formation,
+      avatarId,
+      teamCapIds,
+      capUpgrades  // Прокачка фишек
     };
 
-    console.log('[MP] Finding game with:', payload);
+    console.log('[MP] Finding game with:', {
+      ...payload,
+      capUpgrades: Object.keys(capUpgrades).map(id => `${id}: power=${capUpgrades[id].power}`)
+    });
+    
     this.socket.emit('find_game', payload);
   }
 
@@ -187,17 +222,29 @@ export class MultiplayerManager {
 
   // ==================== GAME ACTIONS ====================
 
-  sendShoot(capId: number, force: { x: number; y: number }, position: { x: number; y: number }): void {
+  sendShoot(
+    capId: number, 
+    force: { x: number; y: number }, 
+    position: { x: number; y: number },
+    hitOffset?: number
+  ): void {
     if (!this.socket || !this.roomId) return;
 
-    console.log('[MP] Sending shoot - capId:', capId, 'force:', force);
-
-    this.socket.emit('shoot', {
+    const shootData: any = {
       roomId: this.roomId,
       capId,
       force,
       position
-    });
+    };
+
+    // Добавляем hitOffset только если он значимый (для Trickster закрутки)
+    if (hitOffset !== undefined && Math.abs(hitOffset) > 0.1) {
+      shootData.hitOffset = hitOffset;
+    }
+
+    console.log('[MP] Sending shoot - capId:', capId, 'force:', force, hitOffset ? `hitOffset: ${hitOffset.toFixed(2)}` : '');
+
+    this.socket.emit('shoot', shootData);
   }
 
   sendObjectsStopped(): void {
@@ -299,6 +346,13 @@ export class MultiplayerManager {
     return this.gameData.players.find(p => p.id !== this.myId) || null;
   }
 
+  /** Получить прокачку фишки оппонента */
+  getOpponentCapUpgrades(capId: string): CapUpgrades | null {
+    const opponent = this.getOpponent();
+    if (!opponent?.capUpgrades) return null;
+    return opponent.capUpgrades[capId] || null;
+  }
+
   amIFieldOwner(): boolean {
     return this.gameData?.fieldOwnerId === this.myId;
   }
@@ -348,7 +402,10 @@ export class MultiplayerManager {
 
     this.socket.on('game_start', (data: GameStartData) => {
       console.log('[MP] Game starting!');
-      console.log('[MP] Players:', data.players.map(p => `${p.name} (idx ${p.playerIndex})`));
+      console.log('[MP] Players:', data.players.map(p => {
+        const upgrades = p.capUpgrades ? Object.keys(p.capUpgrades).length + ' caps' : 'no upgrades';
+        return `${p.name} (idx ${p.playerIndex}, ${upgrades})`;
+      }));
       
       this.roomId = data.roomId;
       this.hostId = data.hostId;
@@ -358,11 +415,18 @@ export class MultiplayerManager {
       console.log('[MP] I am player index:', myIdx, myIdx === 0 ? '(HOST)' : '(GUEST)');
       console.log('[MP] My caps:', myIdx * 3, myIdx * 3 + 1, myIdx * 3 + 2);
       
+      // Логируем прокачку оппонента
+      const opponent = this.getOpponent();
+      if (opponent?.capUpgrades) {
+        console.log('[MP] Opponent cap upgrades:', opponent.capUpgrades);
+      }
+      
       this.emit('game_start', data);
     });
 
     this.socket.on('shoot_executed', (data: ShootData) => {
-      console.log('[MP] Shoot executed - player:', data.playerIndex, 'cap:', data.capId);
+      const hasHitOffset = data.hitOffset !== undefined && Math.abs(data.hitOffset) > 0.1;
+      console.log('[MP] Shoot executed - player:', data.playerIndex, 'cap:', data.capId, hasHitOffset ? `curve: ${data.hitOffset?.toFixed(2)}` : '');
       this.emit('shoot_executed', data);
     });
 
