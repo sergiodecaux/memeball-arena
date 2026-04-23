@@ -7,7 +7,7 @@ import { AudioManager } from '../../managers/AudioManager';
 
 export interface PauseMenuCallbacks {
   onResume: () => void;
-  onChangeFormation: () => void;
+  onChangeFormation?: () => void; // Опционально, так как недоступно в PvP режиме
   onSettings: () => void;
   onSurrender: () => void;
 }
@@ -43,7 +43,9 @@ export class PauseMenu {
     const fonts = getFonts();
     
     const panelWidth = 300;
-    const panelHeight = 360;
+    // Высота панели зависит от количества пунктов меню
+    const hasFormationOption = !!this.callbacks.onChangeFormation;
+    const panelHeight = hasFormationOption ? 360 : 300; // Меньше высота, если нет опции смены формации
     
     // Panel background with glow
     const glow = this.scene.add.graphics();
@@ -90,11 +92,13 @@ export class PauseMenu {
     });
     btnY += btnGap;
     
-    // Change Formation
-    this.createButton(0, btnY, btnWidth, btnHeight, '📐', i18n.t('changeFormation'), colors.uiPrimary, () => {
-      this.hide(() => this.callbacks.onChangeFormation());
-    });
-    btnY += btnGap;
+    // Change Formation (только если доступно)
+    if (this.callbacks.onChangeFormation) {
+      this.createButton(0, btnY, btnWidth, btnHeight, '📐', i18n.t('changeFormation'), colors.uiPrimary, () => {
+        this.hide(() => this.callbacks.onChangeFormation!());
+      });
+      btnY += btnGap;
+    }
     
     // Settings
     this.createButton(0, btnY, btnWidth, btnHeight, '⚙️', i18n.t('settings'), 0x6b7280, () => {

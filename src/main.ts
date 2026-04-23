@@ -1,73 +1,32 @@
-// src/main.ts
-
 import Phaser from 'phaser';
-import { tgApp } from './utils/TelegramWebApp';
-import { BootScene } from './scenes/BootScene';
-import { FactionSelectScene } from './scenes/FactionSelectScene';
-import { MainMenuScene } from './scenes/MainMenuScene';
-import { GameScene } from './scenes/GameScene';
-import { MatchmakingScene } from './scenes/MatchmakingScene';
-import { ShopScene } from './scenes/ShopScene';
-import { ProfileScene } from './scenes/ProfileScene';
-import { ProfileSetupScene } from './scenes/ProfileSetupScene';
-import { SettingsScene } from './scenes/SettingsScene';
-import { TeamScene } from './scenes/TeamScene'; // ← НОВАЯ СЦЕНА
+import { gameConfig } from './config/gameConfig';
 
-// Инициализируем Telegram WebApp ДО создания игры
-const viewport = tgApp.getViewport();
-console.log('[Main] Starting game with viewport:', viewport);
+console.log('🚀 Starting Galaxy League...');
 
-const config: Phaser.Types.Core.GameConfig = {
-  type: Phaser.AUTO,
-  parent: 'game-container',
-  scale: {
-    mode: Phaser.Scale.RESIZE,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
-    width: viewport.width,
-    height: viewport.stableHeight,
-  },
-  physics: {
-    default: 'matter',
-    matter: {
-      gravity: { x: 0, y: 0 },
-      debug: false,
-    },
-  },
-  scene: [
-    BootScene,
-    FactionSelectScene,
-    MainMenuScene,
-    GameScene,
-    MatchmakingScene,
-    ShopScene,
-    ProfileScene,
-    ProfileSetupScene,
-    SettingsScene,
-    TeamScene,           // ← НОВАЯ: замена TacticsScene + TeamModal
-  ],
-  backgroundColor: '#050505',
-  
-  // ✅ PIXEL-PERFECT РЕЖИМ — КРИТИЧНО ВАЖНО
-  render: {
-    pixelArt: true,        // Отключает билинейную фильтрацию
-    antialias: false,      // Отключает сглаживание
-    antialiasGL: false,    // Отключает WebGL сглаживание
-    roundPixels: true,     // Округляет позиции до целых пикселей
-  },
-};
-
-// Создаём игру
-const game = new Phaser.Game(config);
-
-// Обновляем размер при изменении viewport
-tgApp.onViewportChange((newViewport) => {
-  console.log('[Main] Viewport changed, resizing game:', newViewport);
-  game.scale.resize(newViewport.width, newViewport.stableHeight);
-});
-
-// Обработка resize окна браузера (для десктопа)
-window.addEventListener('resize', () => {
-  if (!tgApp.isInTelegram()) {
-    game.scale.resize(window.innerWidth, window.innerHeight);
+// Простая инициализация Telegram WebApp (если доступен)
+const tg = (window as any).Telegram?.WebApp;
+if (tg) {
+  try {
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor('#050505');
+    tg.setBackgroundColor('#050505');
+    console.log('[Main] Telegram WebApp initialized');
+  } catch (e) {
+    console.warn('[Main] Telegram WebApp init failed:', e);
   }
+}
+
+// Создаём игру сразу, без async/await
+const game = new Phaser.Game(gameConfig);
+
+// Обработка resize
+window.addEventListener('resize', () => {
+  game.scale.refresh();
 });
+
+// Сохраняем ссылку на игру
+(window as any).game = game;
+(window as any).__GAME__ = game;
+
+console.log('[Main] Phaser.Game created');

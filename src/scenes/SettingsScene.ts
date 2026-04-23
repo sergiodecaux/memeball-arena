@@ -1,45 +1,313 @@
-// src/scenes/SettingsScene.ts
+// ✅ ИЗМЕНЕНО: Удалена кнопка "Назад", добавлен SwipeNavigationManager, улучшена типографика
 
 import Phaser from 'phaser';
-import { getColors, hexToString, getFonts, getGlassStyle } from '../config/themes';
+import { getColors, hexToString, getFonts, getGlassStyle, TYPOGRAPHY, applyTextShadow } from '../config/themes';
 import { playerData } from '../data/PlayerData';
 import { applyScreenScale, DESIGN_WIDTH, DESIGN_HEIGHT } from '../config/gameConfig';
 import { AudioManager } from '../managers/AudioManager';
 import { i18n, Language } from '../localization/i18n';
+import { tgApp } from '../utils/TelegramWebApp';
+import { hapticSelection, hapticImpact } from '../utils/Haptics';
+import { SWIPE_NAVIGATION } from '../constants/gameConstants';
 
 export class SettingsScene extends Phaser.Scene {
   private screenScaleValue: number = 1.0;
   private scaleText!: Phaser.GameObjects.Text;
   private previewRect!: Phaser.GameObjects.Rectangle;
   private contentContainer!: Phaser.GameObjects.Container;
+  
+  private topInset = 0;
+  private bottomInset = 0;
+  private headerHeight = 90;
+  private contentTop = 0;
+  private visibleAreaBottom = 0;
+
+  // Swipe Navigation
+  private swipeStartX: number = 0;
+  private swipeStartY: number = 0;
+  private swipeStartTime: number = 0;
+  private isSwipeActive: boolean = false;
+  private swipeIndicator?: Phaser.GameObjects.Graphics;
+  private swipeOverlay?: Phaser.GameObjects.Graphics;
+  private swipeArrow?: Phaser.GameObjects.Container;
 
   constructor() {
     super({ key: 'SettingsScene' });
   }
 
   create(): void {
+    this.topInset = tgApp.getTopInset();
+    this.bottomInset = tgApp.getBottomInset();
+    this.headerHeight = 90 + this.topInset;
+
+    const { height } = this.cameras.main;
+    // ✅ ИЗМЕНЕНО: Убран отступ под кнопку "Назад"
+    this.visibleAreaBottom = height - 20 - this.bottomInset;
+
+    console.log('[SettingsScene] Insets - Top:', this.topInset, 'Bottom:', this.bottomInset);
+
     const data = playerData.get();
     this.screenScaleValue = data.settings.screenScale || 1.0;
+    this.isSwipeActive = false;
 
     this.createBackground();
     this.createHeader();
     this.createScrollableContent();
+    // ✅ УДАЛЕНО: this.createBottomBackButton();
+    this.createSwipeIndicator();
+    this.setupSwipeNavigation();
   }
+
+  // ========== SWIPE NAVIGATION ==========
+
+  private createSwipeIndicator(): void {
+    const { height } = this.cameras.main;
+    const colors = getColors();
+
+    // Индикатор у левого края
+    this.swipeIndicator = this.add.graphics();
+    this.swipeIndicator.setDepth(50);
+
+    // Вертикальная полоска
+    this.swipeIndicator.fillStyle(
+      SWIPE_NAVIGATION.INDICATOR_COLOR,
+      SWIPE_NAVIGATION.INDICATOR_ALPHA_IDLE
+    );
+    this.swipeIndicator.fillRoundedRect(
+      0,
+      this.headerHeight + 20,
+      SWIPE_NAVIGATION.INDICATOR_WIDTH,
+      height - this.headerHeight - 60 - this.bottomInset,
+      2
+    );
+
+    // Пульсация
+    this.tweens.add({
+      targets: this.swipeIndicator,
+      alpha: { from: 0.3, to: 0.6 },
+      duration: SWIPE_NAVIGATION.PULSE_SPEED,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    // Overlay для эффекта свайпа (изначально скрыт)
+    this.swipeOverlay = this.add.graphics();
+    this.swipeOverlay.setDepth(200);
+    this.swipeOverlay.setVisible(false);
+
+    // Контейнер для стрелки "назад"
+    this.swipeArrow = this.add.container(40, height / 2);
+    this.swipeArrow.setDepth(201);
+    this.swipeArrow.setVisible(false);
+    this.swipeArrow.setAlpha(0);
+
+    const arrowBg = this.add.graphics();
+    arrowBg.fillStyle(0x000000, 0.7);
+    arrowBg.fillCircle(0, 0, 28);
+    arrowBg.lineStyle(2, colors.uiAccent, 0.8);
+    arrowBg.strokeCircle(0, 0, 28);
+    this.swipeArrow.add(arrowBg);
+
+    const arrowText = this.add.text(0, 0, '◀', {
+      fontSize: `${SWIPE_NAVIGATION.ARROW_SIZE}px`,
+      color: hexToString(colors.uiAccent),
+    }).setOrigin(0.5);
+    this.swipeArrow.add(arrowText);
+  }
+
+  private setupSwipeNavigation(): void {
+    const { width, height } = this.cameras.main;
+
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      // Проверяем, что касание в зоне левого края
+      if (pointer.x <= SWIPE_NAVIGATION.EDGE_ZONE_WIDTH) {
+        this.swipeStartX = pointer.x;
+        this.swipeStartY = pointer.y;
+        this.swipeStartTime = Date.now();
+        this.isSwipeActive = true;
+
+        // Подсветка индикатора
+        if (this.swipeIndicator) {
+          this.swipeIndicator.clear();
+          this.swipeIndicator.fillStyle(
+            SWIPE_NAVIGATION.INDICATOR_COLOR,
+            SWIPE_NAVIGATION.INDICATOR_ALPHA_ACTIVE
+          );
+          this.swipeIndicator.fillRoundedRect(
+            0,
+            this.headerHeight + 20,
+            SWIPE_NAVIGATION.INDICATOR_WIDTH + 2,
+            height - this.headerHeight - 60 - this.bottomInset,
+            2
+          );
+        }
+
+        hapticSelection();
+      }
+    });
+
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (!this.isSwipeActive) return;
+
+      const deltaX = pointer.x - this.swipeStartX;
+      const deltaY = Math.abs(pointer.y - this.swipeStartY);
+
+      // Проверяем вертикальный дрифт
+      if (deltaY > SWIPE_NAVIGATION.MAX_VERTICAL_DRIFT) {
+        this.cancelSwipe();
+        return;
+      }
+
+      if (deltaX > 10) {
+        // Показываем прогресс свайпа
+        const progress = Math.min(deltaX / (width * SWIPE_NAVIGATION.THRESHOLD_PERCENT), 1);
+        this.showSwipeProgress(progress, deltaX);
+      }
+    });
+
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      if (!this.isSwipeActive) return;
+
+      const deltaX = pointer.x - this.swipeStartX;
+      const deltaTime = Date.now() - this.swipeStartTime;
+      const velocity = deltaX / (deltaTime / 1000);
+
+      const thresholdDistance = width * SWIPE_NAVIGATION.THRESHOLD_PERCENT;
+
+      // Проверяем условия срабатывания
+      if (deltaX >= thresholdDistance || velocity >= SWIPE_NAVIGATION.VELOCITY_THRESHOLD) {
+        this.completeSwipe();
+      } else {
+        this.cancelSwipe();
+      }
+    });
+  }
+
+  private showSwipeProgress(progress: number, deltaX: number): void {
+    const { width, height } = this.cameras.main;
+
+    // Overlay с градиентом
+    if (this.swipeOverlay) {
+      this.swipeOverlay.setVisible(true);
+      this.swipeOverlay.clear();
+
+      const alpha = progress * SWIPE_NAVIGATION.DIMMING_MAX;
+      
+      // Градиентное затемнение слева
+      for (let i = 0; i < 20; i++) {
+        const segmentAlpha = alpha * (1 - i / 20);
+        this.swipeOverlay.fillStyle(0x000000, segmentAlpha);
+        this.swipeOverlay.fillRect(
+          (deltaX / 20) * i,
+          0,
+          deltaX / 20 + 1,
+          height
+        );
+      }
+    }
+
+    // Стрелка
+    if (this.swipeArrow) {
+      this.swipeArrow.setVisible(true);
+      this.swipeArrow.setAlpha(progress);
+      this.swipeArrow.x = 40 + deltaX * 0.3;
+    }
+  }
+
+  private completeSwipe(): void {
+    hapticImpact('medium');
+    AudioManager.getInstance().playUISwoosh();
+
+    const { width } = this.cameras.main;
+
+    // Сохраняем настройки перед выходом
+    this.saveSettings();
+
+    // Анимация завершения
+    this.tweens.add({
+      targets: this.swipeOverlay,
+      alpha: 1,
+      duration: SWIPE_NAVIGATION.ANIMATION_DURATION,
+      ease: 'Quad.easeOut',
+    });
+
+    if (this.swipeArrow) {
+      this.tweens.add({
+        targets: this.swipeArrow,
+        x: width / 2,
+        alpha: 0,
+        duration: SWIPE_NAVIGATION.ANIMATION_DURATION,
+        ease: 'Quad.easeOut',
+      });
+    }
+
+    // Переход в главное меню
+    this.time.delayedCall(SWIPE_NAVIGATION.ANIMATION_DURATION, () => {
+      this.scene.start('MainMenuScene');
+    });
+  }
+
+  private cancelSwipe(): void {
+    this.isSwipeActive = false;
+    const { height } = this.cameras.main;
+
+    // Возврат индикатора
+    if (this.swipeIndicator) {
+      this.swipeIndicator.clear();
+      this.swipeIndicator.fillStyle(
+        SWIPE_NAVIGATION.INDICATOR_COLOR,
+        SWIPE_NAVIGATION.INDICATOR_ALPHA_IDLE
+      );
+      this.swipeIndicator.fillRoundedRect(
+        0,
+        this.headerHeight + 20,
+        SWIPE_NAVIGATION.INDICATOR_WIDTH,
+        height - this.headerHeight - 60 - this.bottomInset,
+        2
+      );
+    }
+
+    // Скрытие overlay с анимацией
+    if (this.swipeOverlay) {
+      this.tweens.add({
+        targets: this.swipeOverlay,
+        alpha: 0,
+        duration: 150,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          this.swipeOverlay?.setVisible(false);
+        },
+      });
+    }
+
+    // Скрытие стрелки
+    if (this.swipeArrow) {
+      this.tweens.add({
+        targets: this.swipeArrow,
+        x: 40,
+        alpha: 0,
+        duration: 150,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          this.swipeArrow?.setVisible(false);
+        },
+      });
+    }
+  }
+
+  // ========== BACKGROUND ==========
 
   private createBackground(): void {
     const { width, height } = this.cameras.main;
     const colors = getColors();
 
     const bg = this.add.graphics();
-    
-    // Base gradient
     bg.fillStyle(colors.background, 1);
     bg.fillRect(0, 0, width, height);
     
-    // Purple radial glow at top
     this.drawRadialGradient(bg, width / 2, 0, height * 0.5, colors.backgroundGradientTop, 0.4);
 
-    // Grid
     bg.lineStyle(1, colors.uiPrimary, 0.03);
     for (let x = 0; x < width; x += 40) bg.lineBetween(x, 0, x, height);
     for (let y = 0; y < height; y += 40) bg.lineBetween(0, y, width, y);
@@ -61,45 +329,24 @@ export class SettingsScene extends Phaser.Scene {
     const colors = getColors();
     const fonts = getFonts();
 
-    // Header background
     const headerBg = this.add.graphics();
     headerBg.fillStyle(0x000000, 0.8);
-    headerBg.fillRect(0, 0, width, 70);
+    headerBg.fillRect(0, 0, width, this.headerHeight);
     headerBg.lineStyle(2, colors.uiAccent, 0.3);
-    headerBg.lineBetween(0, 70, width, 70);
+    headerBg.lineBetween(0, this.headerHeight, width, this.headerHeight);
     headerBg.setDepth(100);
 
-    // Back button
-    const backBtn = this.add.container(50, 35).setDepth(101);
-    const backBg = this.add.graphics();
-    backBg.fillStyle(0x000000, 0.5);
-    backBg.fillRoundedRect(-35, -16, 70, 32, 16);
-    backBg.lineStyle(1, colors.glassBorder, 0.3);
-    backBg.strokeRoundedRect(-35, -16, 70, 32, 16);
-    backBtn.add(backBg);
-    backBtn.add(this.add.text(0, 0, `← ${i18n.t('back')}`, {
-      fontSize: '12px',
-      fontFamily: fonts.tech,
-      color: '#ffffff',
-    }).setOrigin(0.5));
-
-    backBtn.setInteractive(new Phaser.Geom.Rectangle(-35, -16, 70, 32), Phaser.Geom.Rectangle.Contains);
-    backBtn.on('pointerover', () => backBtn.setScale(1.05));
-    backBtn.on('pointerout', () => backBtn.setScale(1));
-    backBtn.on('pointerdown', () => {
-      AudioManager.getInstance().playSFX('sfx_click');
-      this.saveSettings();
-      this.scene.start('MainMenuScene');
-    });
-
-    // Title with icon
-    this.add.text(width / 2, 35, `⚙️ ${i18n.t('settings').toUpperCase()}`, {
-      fontSize: '20px',
+    // ✅ УЛУЧШЕНО: Типографика для заголовка
+    const title = this.add.text(width / 2, 40 + this.topInset, `⚙️ ${i18n.t('settings').toUpperCase()}`, {
+      fontSize: `${TYPOGRAPHY.sizes.xl}px`,
       fontFamily: fonts.tech,
       color: '#ffffff',
       letterSpacing: 2,
     }).setOrigin(0.5).setDepth(101);
+    applyTextShadow(title, 'medium');
   }
+
+  // ✅ УДАЛЕНО: createBottomBackButton() - полностью удалён
 
   private createScrollableContent(): void {
     const { width, height } = this.cameras.main;
@@ -107,16 +354,24 @@ export class SettingsScene extends Phaser.Scene {
     const fonts = getFonts();
     const data = playerData.get();
 
-    this.contentContainer = this.add.container(0, 0);
+    this.contentTop = this.headerHeight;
+    // ✅ ИЗМЕНЕНО: Убран bottomBarHeight
+    const visibleHeight = height - this.headerHeight - 20 - this.bottomInset;
 
-    let y = 95;
+    const maskShape = this.make.graphics({});
+    maskShape.fillStyle(0xffffff);
+    maskShape.fillRect(0, this.headerHeight, width, visibleHeight);
+    const mask = maskShape.createGeometryMask();
 
-    // ===== LANGUAGE SECTION =====
+    this.contentContainer = this.add.container(0, this.headerHeight);
+    this.contentContainer.setMask(mask);
+
+    let y = 15;
+
     y = this.createSectionHeader(y, '🌍', i18n.t('language'));
     y = this.createLanguageSelector(y);
     y += 20;
 
-    // ===== AUDIO SECTION =====
     y = this.createSectionHeader(y, '🔊', 'AUDIO');
     
     y = this.createToggle(y, '🔊', i18n.t('sound'), data.settings.soundEnabled, (val) => {
@@ -135,7 +390,10 @@ export class SettingsScene extends Phaser.Scene {
       data.settings.vibrationEnabled = val;
       if (val) {
         try {
-          window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success');
+          // Используем Vibration API для Game режима
+          if (navigator.vibrate) {
+            navigator.vibrate([10, 50, 10]);
+          }
         } catch (e) {}
       }
       playerData.save();
@@ -143,9 +401,12 @@ export class SettingsScene extends Phaser.Scene {
 
     y += 20;
 
-    // ===== DISPLAY SECTION =====
     y = this.createSectionHeader(y, '📐', 'DISPLAY');
     this.createScreenScaleSlider(y);
+    y += 20;
+
+    y = this.createSectionHeader(y, '🔄', 'DATA');
+    y = this.createResetProgressButton(y);
   }
 
   private createSectionHeader(y: number, icon: string, title: string): number {
@@ -153,23 +414,21 @@ export class SettingsScene extends Phaser.Scene {
     const colors = getColors();
     const fonts = getFonts();
 
-    // Section title
-    this.add.text(25, y, `${icon} ${title}`, {
-      fontSize: '14px',
+    // ✅ УЛУЧШЕНО: Типографика
+    this.contentContainer.add(this.add.text(25, y, `${icon} ${title}`, {
+      fontSize: `${TYPOGRAPHY.sizes.md}px`,
       fontFamily: fonts.tech,
       color: hexToString(colors.uiAccent),
       letterSpacing: 1,
-    });
+    }));
 
-    // Line
     const line = this.add.graphics();
     line.lineStyle(1, colors.uiAccent, 0.2);
     line.lineBetween(25, y + 22, width - 25, y + 22);
+    this.contentContainer.add(line);
 
     return y + 35;
   }
-
-  // ==================== LANGUAGE SELECTOR ====================
 
   private createLanguageSelector(y: number): number {
     const { width } = this.cameras.main;
@@ -211,16 +470,17 @@ export class SettingsScene extends Phaser.Scene {
       drawBg(false);
       btn.add(bg);
 
-      btn.add(this.add.text(20, btnHeight / 2, flag, { fontSize: '24px' }).setOrigin(0, 0.5));
+      // ✅ УЛУЧШЕНО: Типографика
+      btn.add(this.add.text(20, btnHeight / 2, flag, { fontSize: `${TYPOGRAPHY.sizes.xxl}px` }).setOrigin(0, 0.5));
       btn.add(this.add.text(55, btnHeight / 2, name, {
-        fontSize: '14px',
+        fontSize: `${TYPOGRAPHY.sizes.md}px`,
         fontFamily: fonts.tech,
         color: isSelected ? hexToString(colors.uiAccent) : '#ffffff',
       }).setOrigin(0, 0.5));
 
       if (isSelected) {
         btn.add(this.add.text(btnWidth - 20, btnHeight / 2, '✓', {
-          fontSize: '16px',
+          fontSize: `${TYPOGRAPHY.sizes.lg}px`,
           color: hexToString(colors.uiAccent),
         }).setOrigin(0.5));
       }
@@ -234,9 +494,12 @@ export class SettingsScene extends Phaser.Scene {
         hitArea.on('pointerout', () => drawBg(false));
         hitArea.on('pointerdown', () => {
           AudioManager.getInstance().playSFX('sfx_click');
+          hapticSelection();
           this.changeLanguage(lang);
         });
       }
+      
+      this.contentContainer.add(btn);
     });
 
     const rows = Math.ceil(languages.length / 2);
@@ -251,8 +514,6 @@ export class SettingsScene extends Phaser.Scene {
     this.scene.restart();
   }
 
-  // ==================== TOGGLES ====================
-
   private createToggle(y: number, icon: string, label: string, initialValue: boolean, onChange: (val: boolean) => void): number {
     const { width } = this.cameras.main;
     const colors = getColors();
@@ -261,21 +522,23 @@ export class SettingsScene extends Phaser.Scene {
     const rowHeight = 55;
     const rowY = y;
 
-    // Row background
+    // ✅ УЛУЧШЕНО: Многослойные тени для карточки
     const rowBg = this.add.graphics();
+    rowBg.fillStyle(0x000000, 0.15);
+    rowBg.fillRoundedRect(27, rowY + 2, width - 50, rowHeight, 12);
     rowBg.fillStyle(0x1a1a2e, 0.4);
     rowBg.fillRoundedRect(25, rowY, width - 50, rowHeight, 12);
     rowBg.lineStyle(1, colors.glassBorder, 0.1);
     rowBg.strokeRoundedRect(25, rowY, width - 50, rowHeight, 12);
+    this.contentContainer.add(rowBg);
 
-    // Label
-    this.add.text(45, rowY + rowHeight / 2, `${icon} ${label}`, {
-      fontSize: '15px',
+    // ✅ УЛУЧШЕНО: Типографика
+    this.contentContainer.add(this.add.text(45, rowY + rowHeight / 2, `${icon} ${label}`, {
+      fontSize: `${TYPOGRAPHY.sizes.md}px`,
       fontFamily: fonts.tech,
       color: '#ffffff',
-    }).setOrigin(0, 0.5);
+    }).setOrigin(0, 0.5));
 
-    // Toggle switch
     const toggleWidth = 56;
     const toggleHeight = 28;
     const toggleX = width - 55;
@@ -292,7 +555,6 @@ export class SettingsScene extends Phaser.Scene {
       toggleBg.fillRoundedRect(toggleX - toggleWidth / 2, toggleY - toggleHeight / 2, toggleWidth, toggleHeight, 14);
       
       if (isOn) {
-        // Glow effect when on
         toggleBg.lineStyle(2, colors.uiAccent, 0.5);
         toggleBg.strokeRoundedRect(toggleX - toggleWidth / 2, toggleY - toggleHeight / 2, toggleWidth, toggleHeight, 14);
       }
@@ -304,15 +566,18 @@ export class SettingsScene extends Phaser.Scene {
     };
 
     drawToggle();
+    
+    this.contentContainer.add(toggleBg);
+    this.contentContainer.add(toggleCircle);
 
     const hitArea = this.add.rectangle(toggleX, toggleY, toggleWidth + 20, toggleHeight + 20, 0x000000, 0);
     hitArea.setInteractive({ useHandCursor: true });
 
     hitArea.on('pointerdown', () => {
       AudioManager.getInstance().playSFX('sfx_click');
+      hapticSelection();
       isOn = !isOn;
       
-      // Animate toggle
       this.tweens.add({
         targets: toggleCircle,
         x: isOn ? toggleX + toggleWidth / 2 - 14 : toggleX - toggleWidth / 2 + 14,
@@ -323,64 +588,64 @@ export class SettingsScene extends Phaser.Scene {
       drawToggle();
       onChange(isOn);
     });
+    
+    this.contentContainer.add(hitArea);
 
     return y + rowHeight + 8;
   }
-
-  // ==================== SCREEN SCALE SLIDER ====================
 
   private createScreenScaleSlider(y: number): void {
     const { width, height } = this.cameras.main;
     const colors = getColors();
     const fonts = getFonts();
 
-    // Description
-    this.add.text(width / 2, y + 5, 'Adjust to remove black bars', {
-      fontSize: '11px',
+    // ✅ УЛУЧШЕНО: Типографика
+    this.contentContainer.add(this.add.text(width / 2, y + 5, 'Adjust to remove black bars', {
+      fontSize: `${TYPOGRAPHY.sizes.xs}px`,
       color: hexToString(colors.uiTextSecondary),
-    }).setOrigin(0.5);
+    }).setOrigin(0.5));
 
     y += 35;
 
-    // Slider container background
+    // ✅ УЛУЧШЕНО: Многослойные тени
     const sliderBg = this.add.graphics();
+    sliderBg.fillStyle(0x000000, 0.15);
+    sliderBg.fillRoundedRect(27, y - 13, width - 50, 70, 12);
     sliderBg.fillStyle(0x1a1a2e, 0.5);
     sliderBg.fillRoundedRect(25, y - 15, width - 50, 70, 12);
     sliderBg.lineStyle(1, colors.glassBorder, 0.1);
     sliderBg.strokeRoundedRect(25, y - 15, width - 50, 70, 12);
+    this.contentContainer.add(sliderBg);
 
-    // Slider
     const sliderWidth = width - 130;
     const sliderX = 65;
     const sliderY = y + 15;
 
-    // Slider track
     const sliderTrack = this.add.graphics();
     sliderTrack.fillStyle(0x2a2a3e, 1);
     sliderTrack.fillRoundedRect(sliderX, sliderY - 4, sliderWidth, 8, 4);
+    this.contentContainer.add(sliderTrack);
 
-    // Slider fill
     const sliderFill = this.add.graphics();
+    this.contentContainer.add(sliderFill);
 
-    // Handle
     const handle = this.add.circle(0, sliderY, 14, colors.uiAccent);
     handle.setStrokeStyle(3, 0xffffff);
+    this.contentContainer.add(handle);
 
-    // Value text
     this.scaleText = this.add.text(width / 2, sliderY + 30, '', {
-      fontSize: '14px',
+      fontSize: `${TYPOGRAPHY.sizes.md}px`,
       fontFamily: fonts.tech,
       color: '#ffffff',
     }).setOrigin(0.5);
+    this.contentContainer.add(this.scaleText);
 
-    // Minus button
     this.createScaleButton(sliderX - 25, sliderY, '-', () => {
       this.screenScaleValue = Math.max(0.8, this.screenScaleValue - 0.05);
       updateSlider();
       this.applyScale();
     });
 
-    // Plus button
     this.createScaleButton(sliderX + sliderWidth + 25, sliderY, '+', () => {
       this.screenScaleValue = Math.min(1.3, this.screenScaleValue + 0.05);
       updateSlider();
@@ -402,7 +667,6 @@ export class SettingsScene extends Phaser.Scene {
       this.scaleText.setText(`${Math.round(this.screenScaleValue * 100)}%`);
     };
 
-    // Slider interaction
     const sliderHitArea = this.add.rectangle(sliderX + sliderWidth / 2, sliderY, sliderWidth, 40, 0x000000, 0);
     sliderHitArea.setInteractive({ useHandCursor: true, draggable: true });
 
@@ -417,14 +681,14 @@ export class SettingsScene extends Phaser.Scene {
       updateSlider();
       this.applyScale();
     });
+    
+    this.contentContainer.add(sliderHitArea);
 
     updateSlider();
 
-    // Preview
     y += 85;
     this.createPreview(y);
 
-    // Reset button
     y += 140;
     this.createResetButton(y, updateSlider);
   }
@@ -446,8 +710,9 @@ export class SettingsScene extends Phaser.Scene {
     drawBg(false);
     btn.add(bg);
 
+    // ✅ УЛУЧШЕНО: Типографика
     btn.add(this.add.text(0, -1, text, {
-      fontSize: '22px',
+      fontSize: `${TYPOGRAPHY.sizes.xl}px`,
       fontFamily: fonts.tech,
       color: '#ffffff',
     }).setOrigin(0.5));
@@ -457,8 +722,11 @@ export class SettingsScene extends Phaser.Scene {
     btn.on('pointerout', () => drawBg(false));
     btn.on('pointerdown', () => {
       AudioManager.getInstance().playSFX('sfx_click');
+      hapticSelection();
       onClick();
     });
+    
+    this.contentContainer.add(btn);
   }
 
   private updateScaleFromPointer(x: number, sliderX: number, sliderWidth: number): void {
@@ -477,23 +745,23 @@ export class SettingsScene extends Phaser.Scene {
     const colors = getColors();
     const fonts = getFonts();
 
-    this.add.text(width / 2, y, 'Preview:', {
-      fontSize: '12px',
+    // ✅ УЛУЧШЕНО: Типографика
+    this.contentContainer.add(this.add.text(width / 2, y, 'Preview:', {
+      fontSize: `${TYPOGRAPHY.sizes.sm}px`,
       fontFamily: fonts.tech,
       color: hexToString(colors.uiTextSecondary),
-    }).setOrigin(0.5);
+    }).setOrigin(0.5));
 
     y += 20;
 
     const previewWidth = 70;
     const previewHeight = 120;
 
-    // Frame (phone outline)
     const frame = this.add.graphics();
     frame.lineStyle(2, 0x4a4a5a);
     frame.strokeRoundedRect(width / 2 - previewWidth / 2, y, previewWidth, previewHeight, 8);
+    this.contentContainer.add(frame);
 
-    // Content area
     this.previewRect = this.add.rectangle(
       width / 2,
       y + previewHeight / 2,
@@ -503,6 +771,7 @@ export class SettingsScene extends Phaser.Scene {
       0.25
     );
     this.previewRect.setStrokeStyle(2, colors.uiAccent);
+    this.contentContainer.add(this.previewRect);
 
     this.updatePreview();
   }
@@ -540,8 +809,9 @@ export class SettingsScene extends Phaser.Scene {
     drawBg(false);
     btn.add(bg);
 
+    // ✅ УЛУЧШЕНО: Типографика
     btn.add(this.add.text(0, 0, '↺ Reset to 100%', {
-      fontSize: '13px',
+      fontSize: `${TYPOGRAPHY.sizes.sm}px`,
       fontFamily: fonts.tech,
       color: '#ffffff',
     }).setOrigin(0.5));
@@ -552,11 +822,14 @@ export class SettingsScene extends Phaser.Scene {
     btn.on('pointerout', () => drawBg(false));
     btn.on('pointerdown', () => {
       AudioManager.getInstance().playSFX('sfx_click');
+      hapticSelection();
       this.screenScaleValue = 1.0;
       updateSlider();
       this.applyScale();
       this.updatePreview();
     });
+    
+    this.contentContainer.add(btn);
   }
 
   private applyScale(): void {
@@ -568,5 +841,51 @@ export class SettingsScene extends Phaser.Scene {
     const data = playerData.get();
     data.settings.screenScale = this.screenScaleValue;
     playerData.save();
+  }
+
+  private createResetProgressButton(y: number): number {
+    const { width } = this.cameras.main;
+    const colors = getColors();
+    const fonts = getFonts();
+
+    const btn = this.add.container(width / 2, y + 30);
+
+    const bg = this.add.graphics();
+    const drawBg = (hover: boolean) => {
+      bg.clear();
+      bg.fillStyle(hover ? 0xdc2626 : 0x7f1d1d, 1);
+      bg.fillRoundedRect(-width / 2 + 25, -25, width - 50, 50, 12);
+      bg.lineStyle(2, hover ? 0xff4444 : 0x991b1b, 0.8);
+      bg.strokeRoundedRect(-width / 2 + 25, -25, width - 50, 50, 12);
+    };
+    drawBg(false);
+    btn.add(bg);
+
+    // ✅ УЛУЧШЕНО: Типографика
+    btn.add(this.add.text(0, 0, '🔄 СБРОС ПРОГРЕССА', {
+      fontSize: `${TYPOGRAPHY.sizes.md}px`,
+      fontFamily: fonts.tech,
+      color: '#ffffff',
+      letterSpacing: 1,
+    }).setOrigin(0.5));
+
+    btn.setInteractive(new Phaser.Geom.Rectangle(-width / 2 + 25, -25, width - 50, 50), Phaser.Geom.Rectangle.Contains);
+
+    btn.on('pointerover', () => drawBg(true));
+    btn.on('pointerout', () => drawBg(false));
+    btn.on('pointerdown', () => {
+      AudioManager.getInstance().playSFX('sfx_click');
+      hapticImpact('heavy');
+      
+      // Подтверждение
+      if (confirm('Вы уверены? Это удалит весь прогресс и перезагрузит игру.')) {
+        localStorage.clear();
+        window.location.reload();
+      }
+    });
+    
+    this.contentContainer.add(btn);
+
+    return y + 80;
   }
 }

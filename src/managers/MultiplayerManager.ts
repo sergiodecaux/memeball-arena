@@ -1,9 +1,20 @@
 // src/managers/MultiplayerManager.ts
 
 import { io, Socket } from 'socket.io-client';
-import { playerData, CapUpgrades } from '../data/PlayerData';
+import { playerData, CapUpgrades, DEFAULT_FORMATIONS } from '../data/PlayerData';
+import { logInfo, logWarn, logError } from '../utils/ProductionLogger';
+import { globalCleanup } from '../utils/GlobalCleanup';
 
-const SERVER_URL = 'https://memeball.duckdns.org';
+// PvP Server configuration
+const PROD_BASE_URL = 'https://game.galaxyleague.ru';
+const PROD_PATH = '/pvp/socket.io/';
+
+const DEV_BASE_URL = 'http://217.26.31.130:3000';
+const DEV_PATH = '/socket.io/';
+
+// Выбираем конфигурацию в зависимости от режима
+const SERVER_URL = import.meta.env.MODE === 'development' ? DEV_BASE_URL : PROD_BASE_URL;
+const SOCKET_PATH = import.meta.env.MODE === 'development' ? DEV_PATH : PROD_PATH;
 
 // ==================== TYPES ====================
 
@@ -16,6 +27,9 @@ export interface PvPPlayer {
   fieldSkin: string;
   formation: any;
   playerIndex: number;
+  factionId?: string;
+  teamUnitIds?: string[];
+  teamSize?: number;
 
   // Аватар
   avatarId?: string;
@@ -45,12 +59,12 @@ export interface GameStartData {
 }
 
 export interface ShootData {
-  odotterId: string;
+  shooterId: string;
   playerIndex: number;
-  capId: number;
+  capId: string | number;
   force: { x: number; y: number };
   position: { x: number; y: number };
-  hitOffset?: number;  // Для закрутки Trickster
+  hitOffset?: number;
   tick?: number;
   serverTime?: number;
 }
@@ -114,13 +128,16 @@ export class MultiplayerManager {
   async connect(): Promise<boolean> {
     return new Promise((resolve) => {
       if (this.socket?.connected) {
+        logInfo('PVP', 'Already connected', { socketId: this.socket.id });
         resolve(true);
         return;
       }
 
       console.log('[MP] Connecting to:', SERVER_URL);
+      logInfo('PVP', 'Connecting to server', { serverUrl: SERVER_URL });
 
       this.socket = io(SERVER_URL, {
+        path: SOCKET_PATH,
         transports: ['websocket', 'polling'],
         timeout: 10000,
         reconnection: true,
@@ -128,24 +145,33 @@ export class MultiplayerManager {
         reconnectionDelay: 1000
       });
 
-      const timeout = setTimeout(() => {
+      const timeout = globalCleanup.setTimeout(() => {
         if (!this.isConnected) {
           console.error('[MP] Connection timeout');
+          logError('PVP', 'Connection timeout', { serverUrl: SERVER_URL, timeout: 10000 });
           resolve(false);
         }
       }, 10000);
 
       this.socket.on('connect', () => {
-        clearTimeout(timeout);
+        globalCleanup.clearTimeout(timeout);
+        const wasConnected = this.isConnected;
         console.log('[MP] Connected! ID:', this.socket?.id);
+        logInfo('PVP', 'Connected successfully', { socketId: this.socket?.id });
         this.myId = this.socket?.id || null;
         this.isConnected = true;
         this.setupListeners();
+        
+        // 2.3: Эмитим событие переподключения если было отключение
+        if (!wasConnected && this.roomId) {
+          this.emit('reconnected');
+        }
+        
         resolve(true);
       });
 
       this.socket.on('connect_error', (error) => {
-        clearTimeout(timeout);
+        globalCleanup.clearTimeout(timeout);
         console.error('[MP] Connection error:', error.message);
         this.isConnected = false;
         resolve(false);
@@ -172,46 +198,106 @@ export class MultiplayerManager {
 
   // ==================== MATCHMAKING ====================
 
+  /**
+   * ✅ ИСПРАВЛЕННЫЙ МЕТОД: Корректно собирает команду и формацию
+   */
   findGame(): void {
-    if (!this.socket) return;
+    if (!this.socket) {
+      logError('PVP', 'Cannot find game - socket not connected');
+      // Попытка авто-подключения
+      this.connect().then(success => {
+        if (success) this.findGame();
+      });
+      return;
+    }
 
+    logInfo('PVP', 'Starting matchmaking', { socketId: this.myId });
+
+    // 1. Получаем основные данные игрока
     const data = playerData.get();
-    const formation = playerData.getSelectedFormation();
-    const name = playerData.getNickname
-      ? playerData.getNickname()
-      : (data.username || 'Player');
-    const avatarId = playerData.getAvatarId
-      ? playerData.getAvatarId()
-      : undefined;
-    const teamCapIds = playerData.getTeamCapIds 
-      ? playerData.getTeamCapIds() 
-      : ['meme_doge', 'meme_gigachad', 'meme_doge'];
+    const name = playerData.getNickname ? playerData.getNickname() : (data.username || 'Player');
+    const avatarId = playerData.getAvatarId ? playerData.getAvatarId() : undefined;
+    
+    // 2. Фракция и команда
+    const factionId = playerData.getFaction();
+    
+    // ✅ ИСПРАВЛЕНО: Получаем реальные ID юнитов из выбранной фракции
+    let teamCapIds: string[] = [];
+    if (factionId) {
+      // Берем юнитов из PlayerData для текущей фракции
+      // getTeamUnits уже возвращает массив строк (ID юнитов)
+      teamCapIds = playerData.getTeamUnits(factionId);
+    }
 
-    // Собираем прокачку для каждой фишки в команде
+    // Если список пуст (что-то пошло не так), используем безопасный дефолт,
+    // но только как крайнюю меру
+    if (!teamCapIds || teamCapIds.length === 0) {
+      console.warn('[MP] ⚠️ No units found for faction, using fallback Meme Team');
+      teamCapIds = ['meme_doge', 'meme_gigachad', 'meme_doge'];
+    }
+
+    // 3. Формация (КРИТИЧНО для расстановки)
+    let formation = playerData.getSelectedFormation();
+    
+    // 🔥 ЗАЩИТА: Убеждаемся, что формация существует и соответствует размеру команды
+    if (!formation || formation.teamSize !== teamCapIds.length) {
+      console.warn('[MP] ⚠️ Formation mismatch or missing!', {
+        hasFormation: !!formation,
+        formationSize: formation?.teamSize,
+        teamSize: teamCapIds.length
+      });
+      
+      // Ищем дефолтную формацию для размера команды
+      const defaultFormation = DEFAULT_FORMATIONS.find(f => f.teamSize === teamCapIds.length);
+      if (defaultFormation) {
+        formation = defaultFormation;
+        console.log('[MP] ✅ Using default formation for team size:', teamCapIds.length);
+      } else {
+        // Если все еще нет формации, используем последнюю попытку - создаем простую формацию
+        console.warn('[MP] ⚠️ Creating fallback formation');
+        formation = {
+          id: 'fallback_formation',
+          name: 'Fallback',
+          teamSize: teamCapIds.length,
+          slots: teamCapIds.map((_, i) => ({
+            id: `slot_${i}`,
+            x: 0.3 + (i * 0.2),
+            y: 0.7 + (i * 0.1)
+          })),
+          isCustom: false
+        };
+      }
+    }
+
+    // 4. Собираем прокачку для каждой фишки
     const capUpgrades: Record<string, CapUpgrades> = {};
     const uniqueCapIds = [...new Set(teamCapIds)];
-    
     for (const capId of uniqueCapIds) {
       capUpgrades[capId] = playerData.getCapStats(capId);
     }
 
+    // 5. Формируем финальный пакет
     const payload = {
+      playerId: data.id || this.socket.id, // Идентификатор для сервера
       name,
       level: data.level || 1,
-      // Fallback for old servers: use first cap in team or default
-      capSkin: teamCapIds[0] || 'meme_doge', 
+      
+      // Визуал
+      capSkin: teamCapIds[0], // Для превью (берем первую фишку)
       ballSkin: data.equippedBallSkin || 'ball_default',
       fieldSkin: data.equippedFieldSkin || 'field_default',
-      formation: formation,
       avatarId,
-      teamCapIds,
-      capUpgrades  // Прокачка фишек
+      
+      // ✅ ГЛАВНЫЕ ДАННЫЕ ДЛЯ СИНХРОНИЗАЦИИ
+      formation: formation,   // Координаты расстановки (ВСЕГДА валидная)
+      teamCapIds: teamCapIds, // Массив ID фишек
+      capUpgrades: capUpgrades, // Данные прокачки
+      factionId: factionId,   // Фракция
+      
+      teamSize: teamCapIds.length
     };
 
-    console.log('[MP] Finding game with:', {
-      ...payload,
-      capUpgrades: Object.keys(capUpgrades).map(id => `${id}: power=${capUpgrades[id].power}`)
-    });
+    console.log('[MP] 🔍 Finding game with payload:', payload);
     
     this.socket.emit('find_game', payload);
   }
@@ -220,10 +306,58 @@ export class MultiplayerManager {
     this.socket?.emit('cancel_search');
   }
 
+  // ==================== FORMATION ====================
+
+  changeFormation(formation: string | null): void {
+    if (!this.socket || !this.roomId) {
+      console.warn('[MP] Cannot change formation - not in room');
+      return;
+    }
+
+    console.log('[MP] Changing formation:', formation);
+    this.socket.emit('change_formation', {
+      roomId: this.roomId,
+      formation
+    });
+  }
+
+  // ==================== ABILITIES ====================
+
+  sendCardActivated(cardId: string, targetPosition?: { x: number; y: number }, unitIds?: string[]): void {
+    if (!this.socket || !this.roomId) {
+      console.warn('[MP] Cannot send card activation - not in room');
+      return;
+    }
+
+    console.log('[MP] Sending card activation:', cardId);
+    this.socket.emit('card_activated', {
+      roomId: this.roomId,
+      cardId,
+      targetPosition,
+      unitIds
+    });
+  }
+
+  // ==================== SUBSTITUTIONS ====================
+
+  sendSubstitution(oldCapId: string, newCapId: string): void {
+    if (!this.socket || !this.roomId) {
+      console.warn('[MP] Cannot send substitution - not in room');
+      return;
+    }
+
+    console.log('[MP] Sending substitution:', oldCapId, '->', newCapId);
+    this.socket.emit('request_substitution', {
+      roomId: this.roomId,
+      oldCapId,
+      newCapId
+    });
+  }
+
   // ==================== GAME ACTIONS ====================
 
   sendShoot(
-    capId: number, 
+    capId: string | number, 
     force: { x: number; y: number }, 
     position: { x: number; y: number },
     hitOffset?: number
@@ -237,12 +371,11 @@ export class MultiplayerManager {
       position
     };
 
-    // Добавляем hitOffset только если он значимый (для Trickster закрутки)
     if (hitOffset !== undefined && Math.abs(hitOffset) > 0.1) {
       shootData.hitOffset = hitOffset;
     }
 
-    console.log('[MP] Sending shoot - capId:', capId, 'force:', force, hitOffset ? `hitOffset: ${hitOffset.toFixed(2)}` : '');
+    console.log('[MP] Sending shoot - capId:', capId, 'force:', force);
 
     this.socket.emit('shoot', shootData);
   }
@@ -255,7 +388,7 @@ export class MultiplayerManager {
   sendGoal(scorerId: string, finalPositions?: FinalPositions): void {
     if (!this.socket || !this.roomId || !this.isHost()) return;
     
-    console.log('[MP] Sending goal with positions:', finalPositions ? 'yes' : 'no');
+    console.log('[MP] Sending goal, scorer:', scorerId);
     
     this.socket.emit('goal', { 
       roomId: this.roomId, 
@@ -293,8 +426,6 @@ export class MultiplayerManager {
   sendPingSync(clientTime: number): void {
     this.socket?.emit('ping_sync', clientTime);
   }
-
-  // ==================== RECONCILIATION ====================
 
   requestReconciliation(fromTick: number): void {
     if (!this.socket || !this.roomId) return;
@@ -346,7 +477,6 @@ export class MultiplayerManager {
     return this.gameData.players.find(p => p.id !== this.myId) || null;
   }
 
-  /** Получить прокачку фишки оппонента */
   getOpponentCapUpgrades(capId: string): CapUpgrades | null {
     const opponent = this.getOpponent();
     if (!opponent?.capUpgrades) return null;
@@ -402,36 +532,19 @@ export class MultiplayerManager {
 
     this.socket.on('game_start', (data: GameStartData) => {
       console.log('[MP] Game starting!');
-      console.log('[MP] Players:', data.players.map(p => {
-        const upgrades = p.capUpgrades ? Object.keys(p.capUpgrades).length + ' caps' : 'no upgrades';
-        return `${p.name} (idx ${p.playerIndex}, ${upgrades})`;
-      }));
-      
       this.roomId = data.roomId;
       this.hostId = data.hostId;
       this.gameData = data;
-      
-      const myIdx = this.getMyPlayerIndex();
-      console.log('[MP] I am player index:', myIdx, myIdx === 0 ? '(HOST)' : '(GUEST)');
-      console.log('[MP] My caps:', myIdx * 3, myIdx * 3 + 1, myIdx * 3 + 2);
-      
-      // Логируем прокачку оппонента
-      const opponent = this.getOpponent();
-      if (opponent?.capUpgrades) {
-        console.log('[MP] Opponent cap upgrades:', opponent.capUpgrades);
-      }
-      
       this.emit('game_start', data);
     });
 
     this.socket.on('shoot_executed', (data: ShootData) => {
-      const hasHitOffset = data.hitOffset !== undefined && Math.abs(data.hitOffset) > 0.1;
-      console.log('[MP] Shoot executed - player:', data.playerIndex, 'cap:', data.capId, hasHitOffset ? `curve: ${data.hitOffset?.toFixed(2)}` : '');
+      console.log('[MP] Shoot executed');
       this.emit('shoot_executed', data);
     });
 
     this.socket.on('turn_change', (data) => {
-      console.log('[MP] Turn change to:', data.currentTurn === this.myId ? 'ME' : 'OPPONENT');
+      console.log('[MP] Turn change');
       this.emit('turn_change', data);
     });
 
@@ -478,6 +591,26 @@ export class MultiplayerManager {
 
     this.socket.on('reconciliation_data', (data) => {
       this.emit('reconciliation_data', data);
+    });
+
+    this.socket.on('opponent_formation_changed', (data) => {
+      console.log('[MP] Opponent changed formation:', data.formation);
+      this.emit('opponent_formation_changed', data);
+    });
+
+    this.socket.on('ability_executed', (data) => {
+      console.log('[MP] Ability executed');
+      this.emit('ability_executed', data);
+    });
+
+    this.socket.on('substitution_executed', (data) => {
+      console.log('[MP] Substitution executed');
+      this.emit('substitution_executed', data);
+    });
+
+    this.socket.on('action_rejected', (data: { reason: string; action: string }) => {
+      console.warn('[MP] Action rejected by server:', data);
+      this.emit('action_rejected', data);
     });
   }
 

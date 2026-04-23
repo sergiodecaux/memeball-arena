@@ -124,13 +124,26 @@ export function createCapIcon(
     badgeBg.setStrokeStyle(1.5, roleColor, 0.9);
     container.add(badgeBg);
 
-    container.add(
-      scene.add
-        .text(bx, by, getRoleIcon(skin.role), {
-          fontSize: `${Math.round(badgeR * 1.2)}px`,
-        })
-        .setOrigin(0.5)
-    );
+    // Use PNG icon with fallback to emoji
+    const iconSize = Math.round(badgeR * 1.2);
+    const roleIconKey = `role_${skin.role}`;
+    
+    if (scene.textures.exists(roleIconKey)) {
+      const icon = scene.add.image(bx, by, roleIconKey);
+      const scale = iconSize / 128;
+      icon.setScale(scale);
+      icon.setOrigin(0.5);
+      container.add(icon);
+    } else {
+      // Fallback to emoji
+      container.add(
+        scene.add
+          .text(bx, by, getRoleIcon(skin.role), {
+            fontSize: `${iconSize}px`,
+          })
+          .setOrigin(0.5)
+      );
+    }
   }
 
   return container;

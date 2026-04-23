@@ -4,9 +4,12 @@ import Phaser from 'phaser';
 import { getColors, hexToString, getFonts } from '../../config/themes';
 import { i18n } from '../../localization/i18n';
 import { playerData, DEFAULT_FORMATIONS } from '../../data/PlayerData';
-import { Formation, FormationSlot } from '../../types';
+import { FormationSlot } from '../../types';
+import { Formation } from '../../data/PlayerData';
 import { getCapSkin, CAP_SKINS, getRoleIcon, getRoleColor } from '../../data/SkinsCatalog';
 import { AudioManager } from '../../managers/AudioManager';
+import { FactionId, FACTIONS } from '../../constants/gameConstants';
+import { getUnit, getClassColor, getClassIcon } from '../../data/UnitsCatalog';
 
 export interface FormationMenuCallbacks {
   onSelect: (formation: Formation) => void;
@@ -21,12 +24,17 @@ export class FormationMenu {
   private currentFormationId: string;
   private selectedFormation: Formation;
   private formationPreviewContainer!: Phaser.GameObjects.Container;
+  private playerFaction: FactionId;
+  private isDraggingPuck: boolean = false;
+  private draggablePucks: Phaser.GameObjects.Container[] = [];
 
-  constructor(scene: Phaser.Scene, currentFormationId: string, callbacks: FormationMenuCallbacks) {
+  constructor(scene: Phaser.Scene, currentFormationId: string, callbacks: FormationMenuCallbacks, playerFaction?: FactionId) {
     this.scene = scene;
     this.callbacks = callbacks;
     this.currentFormationId = currentFormationId;
     this.selectedFormation = playerData.getSelectedFormation();
+    // Используем переданную фракцию или получаем из playerData
+    this.playerFaction = playerFaction || playerData.getFaction() || 'cyborg';
 
     const { width, height } = scene.cameras.main;
 
@@ -52,8 +60,9 @@ export class FormationMenu {
     const fonts = getFonts();
     const { width, height } = this.scene.cameras.main;
 
-    const panelWidth = Math.min(400, width - 30);
-    const panelHeight = Math.min(520, height - 50);
+    // ✅ ИСПРАВЛЕНО: Уменьшены размеры панели, чтобы она не выходила за пределы экрана
+    const panelWidth = Math.min(360, width - 40);
+    const panelHeight = Math.min(600, height - 80);
 
     // Background with glow
     const glow = this.scene.add.graphics();
@@ -82,16 +91,16 @@ export class FormationMenu {
     }).setOrigin(0.5));
 
     // Hint
-    this.container.add(this.scene.add.text(0, -panelHeight / 2 + 55, 'Select position layout for your team', {
+    this.container.add(this.scene.add.text(0, -panelHeight / 2 + 55, 'Drag units to customize or select preset', {
       fontSize: '11px',
       color: hexToString(colors.uiTextSecondary),
     }).setOrigin(0.5));
 
-    // Formation preview
-    this.createFormationPreview(0, -panelHeight / 2 + 175, panelWidth - 60);
+    // Formation preview with drag & drop
+    this.createFormationPreview(0, -panelHeight / 2 + 180, panelWidth - 60);
 
-    // Formation list
-    this.createFormationList(-panelWidth / 2 + 20, 50, panelWidth - 40, 160);
+    // Formation list (scrollable)
+    this.createFormationList(-panelWidth / 2 + 20, 60, panelWidth - 40, 140);
 
     // Buttons
     this.createButtons(panelHeight / 2 - 50);
@@ -105,16 +114,21 @@ export class FormationMenu {
 
   private renderFormationPreview(): void {
     this.formationPreviewContainer.removeAll(true);
+    this.draggablePucks = [];
 
     const colors = getColors();
     const fonts = getFonts();
     const formation = this.selectedFormation;
-    const teamCapIds = playerData.getTeamCapIds();
+    // ✅ ИСПРАВЛЕНО: Используем актуальную команду игрока для текущей фракции
+    const teamUnits = playerData.getTeamUnits(this.playerFaction);
+    const factionConfig = FACTIONS[this.playerFaction];
 
     const fieldW = 200;
     const fieldH = 150;
+    const fieldX = 0;
+    const fieldY = 0;
 
-    // Field background
+    // Field background with faction color accent
     const field = this.scene.add.graphics();
     field.fillStyle(0x1a472a, 0.9);
     field.fillRoundedRect(-fieldW / 2, -fieldH / 2, fieldW, fieldH, 10);
@@ -135,99 +149,226 @@ export class FormationMenu {
     field.strokeRoundedRect(-fieldW / 2, -fieldH / 2, fieldW, fieldH, 10);
     this.formationPreviewContainer.add(field);
 
-    // Formation name
-    this.formationPreviewContainer.add(this.scene.add.text(0, -fieldH / 2 - 30, formation.name, {
+    // Formation name with faction info
+    const formationNameText = this.scene.add.text(0, -fieldH / 2 - 35, formation.name, {
       fontSize: '16px',
       fontFamily: fonts.tech,
       color: '#ffffff',
-    }).setOrigin(0.5));
+    }).setOrigin(0.5);
+    this.formationPreviewContainer.add(formationNameText);
 
-    // Draw slots with actual team caps
+    // Faction badge
+    const factionNameText = this.scene.add.text(0, -fieldH / 2 - 18, factionConfig.name.toUpperCase(), {
+      fontSize: '10px',
+      fontFamily: fonts.tech,
+      color: hexToString(factionConfig.color),
+    }).setOrigin(0.5);
+    this.formationPreviewContainer.add(factionNameText);
+
+    // ✅ ДОБАВЛЕНО: Drag & drop для редактирования формации
     formation.slots.forEach((slot, index) => {
-      const slotX = (slot.x - 0.5) * fieldW;
-      const slotY = (slot.y - 0.5) * fieldH;
+      const slotX = fieldX - fieldW / 2 + slot.x * fieldW;
+      const slotY = fieldY - fieldH / 2 + slot.y * fieldH;
       
-      const capId = teamCapIds[index] || 'meme_doge';
-      const capSkin = getCapSkin(capId);
-      
-      this.createSlotPreview(slotX, slotY, capSkin);
+      const unitId = teamUnits[index];
+      if (unitId) {
+        const puck = this.createDraggablePuck(slotX, slotY, unitId, index, fieldW, fieldH, fieldX, fieldY);
+        this.scene.input.setDraggable(puck);
+        this.draggablePucks.push(puck);
+        
+        puck.on('dragstart', () => {
+          this.isDraggingPuck = true;
+          puck.setScale(1.1);
+          AudioManager.getInstance().playSFX('sfx_click');
+        });
+
+        puck.on('drag', (_p: any, dragX: number, dragY: number) => {
+          const minX = fieldX - fieldW / 2 + 24;
+          const maxX = fieldX + fieldW / 2 - 24;
+          // ✅ ИСПРАВЛЕНО: Ограничиваем редактирование только своей половиной поля (y >= 0.5)
+          // Игрок играет в нижней половине, поэтому y должен быть >= 0.5 (центр поля)
+          const minY = fieldY; // Центр поля (y = 0.5 в относительных координатах)
+          const maxY = fieldY + fieldH / 2 - 24; // Нижняя граница поля
+
+          const clX = Phaser.Math.Clamp(dragX, minX, maxX);
+          const clY = Phaser.Math.Clamp(dragY, minY, maxY);
+          puck.setPosition(clX, clY);
+        });
+
+        puck.on('dragend', () => {
+          this.isDraggingPuck = false;
+          puck.setScale(1);
+          AudioManager.getInstance().playSFX('sfx_swish');
+
+          const nx = (puck.x - (fieldX - fieldW / 2)) / fieldW;
+          const ny = (puck.y - (fieldY - fieldH / 2)) / fieldH;
+          
+          // ✅ ИСПРАВЛЕНО: Гарантируем, что позиция находится в нижней половине поля (y >= 0.5)
+          const clampedY = Math.max(0.5, Math.min(1.0, ny));
+          this.savePuckPosition(index, nx, clampedY);
+        });
+
+        this.formationPreviewContainer.add(puck);
+      } else {
+        // Fallback для пустого слота
+        this.createEmptySlotPreview(slotX, slotY);
+      }
     });
   }
 
-  private createSlotPreview(x: number, y: number, capSkin: any): void {
+  /**
+   * Создает перетаскиваемую фишку юнита (как в TeamScene)
+   */
+  private createDraggablePuck(
+    x: number,
+    y: number,
+    unitId: string,
+    index: number,
+    fieldWidth: number,
+    fieldHeight: number,
+    fieldX: number,
+    fieldY: number
+  ): Phaser.GameObjects.Container {
     const container = this.scene.add.container(x, y);
-    const radius = 22;
+    const unit = getUnit(unitId);
+    const color = unit ? getClassColor(unit.capClass) : 0xffffff;
+    const r = Math.min(22, fieldWidth * 0.055);
 
-    if (!capSkin) {
-      // Fallback
-      const circle = this.scene.add.circle(0, 0, radius, 0x666666, 0.8);
-      container.add(circle);
-      this.formationPreviewContainer.add(container);
+    // Glow
+    const glow = this.scene.add.graphics();
+    glow.fillStyle(color, 0.28);
+    glow.fillCircle(0, 0, r + 5);
+    container.add(glow);
+
+    // Circle
+    const circle = this.scene.add.circle(0, 0, r, 0x000000);
+    circle.setStrokeStyle(2, color);
+    container.add(circle);
+
+    if (unit) {
+      try {
+        // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
+        const img = this.scene.add.image(0, 0, unit.assetKey).setDisplaySize(r * 1.75, r * 1.75);
+        container.add(img);
+        container.add(this.scene.add.text(0, r + 10, getClassIcon(unit.capClass), { fontSize: '12px' }).setOrigin(0.5));
+      } catch {
+        container.add(this.scene.add.text(0, 0, (index + 1).toString(), { fontSize: `${r * 0.8}px`, color: '#fff' }).setOrigin(0.5));
+      }
+    } else {
+      container.add(this.scene.add.text(0, 0, (index + 1).toString(), { fontSize: `${r * 0.8}px`, color: '#fff' }).setOrigin(0.5));
+    }
+
+    container.setSize(r * 2 + 12, r * 2 + 22);
+    container.setInteractive({ useHandCursor: true, draggable: true });
+    return container;
+  }
+
+  /**
+   * Сохраняет позицию фишки в формацию
+   */
+  private savePuckPosition(slotIndex: number, x: number, y: number): void {
+    const current = this.selectedFormation;
+    const newSlots = current.slots.map((s) => ({ ...s }));
+    newSlots[slotIndex].x = x;
+    newSlots[slotIndex].y = y;
+
+    if (current.isCustom) {
+      // Обновляем существующую кастомную формацию
+      playerData.updateCustomFormation(current.id, newSlots);
+      this.selectedFormation = { ...current, slots: newSlots };
+    } else {
+      // Создаем новую кастомную формацию
+      // ✅ ИСПРАВЛЕНО: Используем teamSize из формации или вычисляем из slots.length как fallback
+      // Type assertion to ensure TypeScript recognizes teamSize property
+      const formationWithTeamSize = current as Formation;
+      const teamSize = formationWithTeamSize.teamSize ?? current.slots.length;
+      const customFormation = playerData.createCustomFormation('CUSTOM', newSlots, teamSize);
+      this.selectedFormation = customFormation;
+      playerData.selectFormation(customFormation.id);
+    }
+    
+    // Перерисовываем превью
+    this.renderFormationPreview();
+  }
+
+  /**
+   * Создает превью слота с актуальным юнитом игрока (стиль как в TeamScene)
+   * @deprecated Используйте createDraggablePuck для редактируемых фишек
+   */
+  private createUnitSlotPreview(x: number, y: number, unitId: string): void {
+    const container = this.scene.add.container(x, y);
+    const radius = 20;
+
+    const unit = getUnit(unitId);
+    if (!unit) {
+      this.createEmptySlotPreview(x, y);
       return;
     }
 
-    const roleColor = getRoleColor(capSkin.role);
+    const classColor = getClassColor(unit.capClass);
+    const classIcon = getClassIcon(unit.capClass);
 
-    // Glow
-    const glow = this.scene.add.circle(0, 0, radius + 4, roleColor, 0.35);
+    // Glow эффект (как в TeamScene)
+    const glow = this.scene.add.graphics();
+    glow.fillStyle(classColor, 0.35);
+    glow.fillCircle(0, 0, radius + 4);
     container.add(glow);
 
     // Shadow
     container.add(this.scene.add.ellipse(2, 2, radius * 1.7, radius * 1.3, 0x000000, 0.3));
 
-    // Cap visual
-    if (capSkin.visual?.type === 'image' && capSkin.visual.imageKey) {
-      const imageKey = capSkin.visual.imageKey;
-      if (this.scene.textures.exists(imageKey)) {
-        const borderColor = capSkin.visual.borderColor ?? capSkin.primaryColor;
-        
-        container.add(this.scene.add.circle(0, 0, radius + 2, borderColor));
-        container.add(this.scene.add.circle(0, 0, radius, 0xffffff));
-        
-        const image = this.scene.add.image(0, 0, imageKey);
-        const texture = this.scene.textures.get(imageKey);
-        const frame = texture.getSourceImage();
-        const imgSize = Math.max(frame.width, frame.height);
-        const targetSize = radius * 2 * 0.85;
-        image.setScale(targetSize / imgSize);
-        container.add(image);
-        
-        // Mask
-        const maskGraphics = this.scene.add.graphics();
-        maskGraphics.setVisible(false);
-        maskGraphics.fillStyle(0xffffff);
-        const worldPos = this.formationPreviewContainer.getWorldTransformMatrix();
-        maskGraphics.fillCircle(worldPos.tx + x, worldPos.ty + y, radius);
-        image.setMask(maskGraphics.createGeometryMask());
-        
+    // Кольцо с цветом класса
+    const ring = this.scene.add.circle(0, 0, radius + 2, 0x000000);
+    ring.setStrokeStyle(2, classColor);
+    container.add(ring);
+
+    // Фон для изображения
+    container.add(this.scene.add.circle(0, 0, radius, 0x1a1a2e));
+
+    // Изображение юнита
+    try {
+      if (this.scene.textures.exists(unit.assetKey)) {
+        // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
+        const img = this.scene.add.image(0, 0, unit.assetKey).setDisplaySize(radius * 2.0, radius * 2.0);
+        container.add(img);
       } else {
-        this.drawFallbackCap(container, radius, capSkin);
+        // Fallback: цветной круг
+        const fallbackCircle = this.scene.add.circle(0, 0, radius - 2, classColor, 0.6);
+        container.add(fallbackCircle);
       }
-    } else if (capSkin.visual?.textureKey && this.scene.textures.exists(capSkin.visual.textureKey)) {
-      const scale = (radius * 2) / 128;
-      const sprite = this.scene.add.sprite(0, 0, capSkin.visual.textureKey).setScale(scale);
-      container.add(sprite);
-    } else {
-      this.drawFallbackCap(container, radius, capSkin);
+    } catch (e) {
+      // Fallback: цветной круг
+      const fallbackCircle = this.scene.add.circle(0, 0, radius - 2, classColor, 0.6);
+      container.add(fallbackCircle);
     }
 
-    // Role icon badge
-    const iconBg = this.scene.add.circle(radius * 0.6, -radius * 0.6, 10, 0x000000, 0.8);
+    // Иконка класса (badge внизу)
+    const iconBg = this.scene.add.circle(radius * 0.7, radius * 0.7, 8, 0x000000, 0.9);
     container.add(iconBg);
-    container.add(this.scene.add.text(radius * 0.6, -radius * 0.6, getRoleIcon(capSkin.role), {
-      fontSize: '10px',
+    container.add(this.scene.add.text(radius * 0.7, radius * 0.7, classIcon, {
+      fontSize: '9px',
     }).setOrigin(0.5));
 
     this.formationPreviewContainer.add(container);
   }
 
-  private drawFallbackCap(container: Phaser.GameObjects.Container, radius: number, capSkin: any): void {
-    const capGraphics = this.scene.add.graphics();
-    capGraphics.fillStyle(capSkin?.primaryColor || 0x06b6d4);
-    capGraphics.fillCircle(0, 0, radius);
-    capGraphics.lineStyle(2, capSkin?.secondaryColor || 0x0891b2);
-    capGraphics.strokeCircle(0, 0, radius);
-    container.add(capGraphics);
+  /**
+   * Создает превью пустого слота
+   */
+  private createEmptySlotPreview(x: number, y: number): void {
+    const container = this.scene.add.container(x, y);
+    const radius = 20;
+
+    const circle = this.scene.add.circle(0, 0, radius, 0x1a1a2e, 0.6);
+    circle.setStrokeStyle(1, 0x334155, 0.5);
+    container.add(circle);
+
+    container.add(this.scene.add.text(0, 0, '+', {
+      fontSize: '16px',
+      color: '#64748b',
+    }).setOrigin(0.5));
+
+    this.formationPreviewContainer.add(container);
   }
 
   private createFormationList(x: number, y: number, width: number, height: number): void {
@@ -239,18 +380,23 @@ export class FormationMenu {
     this.container.add(listContainer);
 
     // Title
-    listContainer.add(this.scene.add.text(width / 2, -15, 'FORMATIONS', {
+    listContainer.add(this.scene.add.text(width / 2, -15, 'PRESETS', {
       fontSize: '11px',
       fontFamily: fonts.tech,
       color: hexToString(colors.uiTextSecondary),
     }).setOrigin(0.5));
 
-    const itemW = 75;
-    const itemH = 60;
-    const gap = 10;
+    const itemW = 70;
+    const itemH = 55;
+    const gap = 8;
+    const maxVisible = Math.floor((width - 20) / (itemW + gap));
+    const scrollable = formations.length > maxVisible;
 
     formations.forEach((formation, index) => {
+      // ✅ ИСПРАВЛЕНО: Скроллируемый список, чтобы не выходил за пределы
       const itemX = index * (itemW + gap);
+      if (itemX + itemW > width && !scrollable) return; // Пропускаем если не помещается
+      
       const isSelected = formation.id === this.selectedFormation.id;
 
       const item = this.scene.add.container(itemX, 25);
@@ -304,18 +450,23 @@ export class FormationMenu {
     w: number, h: number
   ): void {
     const colors = getColors();
-    const teamCapIds = playerData.getTeamCapIds();
+    // ✅ ИСПРАВЛЕНО: Используем актуальную команду игрока для текущей фракции
+    const teamUnits = playerData.getTeamUnits(this.playerFaction);
     
     formation.slots.forEach((slot, index) => {
       const dotX = x + (slot.x - 0.5) * w;
       const dotY = y + (slot.y - 0.5) * h;
       
-      // Get color from actual cap's role
-      const capId = teamCapIds[index] || 'meme_doge';
-      const capSkin = getCapSkin(capId);
-      const color = capSkin ? getRoleColor(capSkin.role) : colors.uiAccent;
-      
-      container.add(this.scene.add.circle(dotX, dotY, 5, color, 1));
+      // Get color from actual unit's class
+      const unitId = teamUnits[index];
+      if (unitId) {
+        const unit = getUnit(unitId);
+        const color = unit ? getClassColor(unit.capClass) : colors.uiAccent;
+        container.add(this.scene.add.circle(dotX, dotY, 5, color, 1));
+      } else {
+        // Пустой слот - серый цвет
+        container.add(this.scene.add.circle(dotX, dotY, 4, 0x64748b, 0.5));
+      }
     });
   }
 

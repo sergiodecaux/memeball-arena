@@ -1,442 +1,409 @@
 // src/scenes/MatchmakingScene.ts
+// Сцена поиска PvP матчей с визуальной анимацией
 
 import Phaser from 'phaser';
-import { getColors, hexToString } from '../config/themes';
-import { MultiplayerManager, GameStartData, PvPPlayer } from '../managers/MultiplayerManager';
-import { AudioManager } from '../managers/AudioManager';
 import { playerData } from '../data/PlayerData';
-import { getCapSkin, getFieldSkin, getRarityColor } from '../data/SkinsCatalog';
+import { AudioManager } from '../managers/AudioManager';
+import { PvPManager } from '../managers/PvPManager';
+import { EventBus, GameEvents } from '../core/EventBus';
+import { DEFAULT_PVP_CONFIG } from '../types/pvp';
+import { hapticImpact, hapticSelection } from '../utils/Haptics';
+import { tgApp } from '../utils/TelegramWebApp';
+import { safeSceneStart } from '../utils/SceneHelpers';
+
+type MatchmakingMode = 'casual' | 'ranked';
 
 export class MatchmakingScene extends Phaser.Scene {
-  private mp!: MultiplayerManager;
-  private statusText!: Phaser.GameObjects.Text;
-  private dotsText!: Phaser.GameObjects.Text;
-  private cancelButton!: Phaser.GameObjects.Container;
-  private searchTimer = 0;
-  private dotCount = 0;
+  private pvpManager?: PvPManager;
+  private mode: MatchmakingMode = 'ranked';
   private isSearching = false;
+  private searchStartTime = 0;
   
-  // Found opponent display
-  private matchFoundContainer?: Phaser.GameObjects.Container;
-
+  // UI элементы
+  private background?: Phaser.GameObjects.Image;
+  private vignette?: Phaser.GameObjects.Graphics;
+  private container?: Phaser.GameObjects.Container;
+  private statusText?: Phaser.GameObjects.Text;
+  private timerText?: Phaser.GameObjects.Text;
+  private cancelButton?: Phaser.GameObjects.Container;
+  private searchAnimation?: Phaser.GameObjects.Container;
+  
+  private timerEvent?: Phaser.Time.TimerEvent;
+  private s = 1; // UI scale
+  
   constructor() {
     super({ key: 'MatchmakingScene' });
   }
-
-  create(): void {
-    const { centerX, centerY, width, height } = this.cameras.main;
-    const colors = getColors();
-    
-    this.mp = MultiplayerManager.getInstance();
-    
-    // Background
-    this.add.rectangle(centerX, centerY, width, height, colors.background);
-    
-    // Animated background particles
-    this.createBackgroundParticles();
-    
-    // Title
-    this.add.text(centerX, 80, '⚔️ PVP ARENA ⚔️', {
-      fontFamily: 'Arial Black',
-      fontSize: '28px',
-      color: hexToString(colors.uiAccent),
-      stroke: '#000000',
-      strokeThickness: 4
-    }).setOrigin(0.5);
-    
-    // Status text
-    this.statusText = this.add.text(centerX, centerY - 30, 'Connecting to server...', {
-      fontFamily: 'Arial',
-      fontSize: '20px',
-      color: '#ffffff',
-      stroke: '#000000',
-      strokeThickness: 3
-    }).setOrigin(0.5);
-    
-    // Animated dots
-    this.dotsText = this.add.text(centerX, centerY + 10, '', {
-      fontFamily: 'Arial',
-      fontSize: '32px',
-      color: hexToString(colors.uiPrimary),
-    }).setOrigin(0.5);
-    
-    // My skin preview
-    this.createMySkinPreview();
-    
-    // Cancel button
-    this.createCancelButton(centerX, height - 80);
-    
-    // Start connection
-    this.connectAndSearch();
-    
-    // Animation timers
-    this.time.addEvent({
-      delay: 500,
-      callback: this.updateDots,
-      callbackScope: this,
-      loop: true
-    });
-    
-    this.time.addEvent({
-      delay: 1000,
-      callback: this.updateSearchTimer,
-      callbackScope: this,
-      loop: true
-    });
+  
+  init(data?: { mode?: MatchmakingMode }): void {
+    this.mode = data?.mode || 'ranked';
   }
-
-  private createBackgroundParticles(): void {
+  
+  create(): void {
+    this.s = tgApp.getUIScale();
     const { width, height } = this.cameras.main;
     
-    // Simple floating particles
-    for (let i = 0; i < 20; i++) {
-      const x = Phaser.Math.Between(0, width);
-      const y = Phaser.Math.Between(0, height);
-      const size = Phaser.Math.Between(2, 5);
-      
-      const particle = this.add.circle(x, y, size, 0x00ffff, 0.3);
-      
-      this.tweens.add({
-        targets: particle,
-        y: y - 100,
-        alpha: 0,
-        duration: Phaser.Math.Between(3000, 6000),
-        repeat: -1,
-        onRepeat: () => {
-          particle.x = Phaser.Math.Between(0, width);
-          particle.y = height + 50;
-          particle.alpha = 0.3;
-        }
-      });
-    }
+    // Audio
+    const audio = AudioManager.getInstance();
+    audio.init(this);
+    audio.playMusic('bgm_menu');
+    
+    // Background
+    this.createBackground();
+    
+    // Container
+    this.container = this.add.container(width / 2, height / 2).setDepth(10);
+    
+    // Title
+    const title = this.add.text(0, -height * 0.3, 
+      this.mode === 'ranked' ? 'РЕЙТИНГОВЫЙ МАТЧ' : 'AI',
+      {
+        fontFamily: 'Orbitron',
+        fontSize: `${28 * this.s}px`,
+        color: this.mode === 'ranked' ? '#9d00ff' : '#39ff14',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 8,
+      }
+    );
+    title.setOrigin(0.5);
+    title.setShadow(4 * this.s, 4 * this.s, '#000000', 10, true, true);
+    this.container.add(title);
+    
+    // Status text
+    this.statusText = this.add.text(0, -height * 0.1, 'Подключение к серверу...', {
+      fontFamily: 'Rajdhani',
+      fontSize: `${20 * this.s}px`,
+      color: '#ffffff',
+      fontStyle: 'bold',
+      align: 'center',
+      wordWrap: { width: width * 0.8 },
+      stroke: '#000000',
+      strokeThickness: 6,
+    });
+    this.statusText.setOrigin(0.5);
+    this.container.add(this.statusText);
+    
+    // Timer text
+    this.timerText = this.add.text(0, -height * 0.05, '', {
+      fontFamily: 'Rajdhani',
+      fontSize: `${18 * this.s}px`,
+      color: '#00f2ff',
+      align: 'center',
+      stroke: '#000000',
+      strokeThickness: 5,
+    });
+    this.timerText.setOrigin(0.5);
+    this.container.add(this.timerText);
+    
+    // Search animation
+    this.createSearchAnimation();
+    
+    // Cancel button
+    this.createCancelButton();
+    
+    // ✅ NEW PVP: Инициализация новой системы
+    this.initializePvP();
+    
+    // Start connection
+    this.time.delayedCall(500, () => {
+      this.startMatchmaking();
+    });
   }
-
-  private createMySkinPreview(): void {
-    const { centerX, height } = this.cameras.main;
-    const data = playerData.get();
+  
+  private createBackground(): void {
+    const { width, height } = this.cameras.main;
     
-    // Берём первую фишку из команды для превью
-    const teamCapIds = playerData.getTeamCapIds();
-    const firstCapId = teamCapIds[0] || 'meme_doge';
-    const capSkin = getCapSkin(firstCapId);
+    // Gradient background
+    const bg = this.add.graphics();
+    bg.fillGradientStyle(0x0a0a14, 0x0a0a14, 0x1a1a2e, 0x1a1a2e, 1, 1, 1, 1);
+    bg.fillRect(0, 0, width, height);
     
-    if (!capSkin) return;
-    
-    const container = this.add.container(centerX, height - 180);
-    
-    // Label
-    const label = this.add.text(0, -40, 'YOUR LOADOUT', {
-      fontFamily: 'Arial',
-      fontSize: '12px',
-      color: '#888888',
-    }).setOrigin(0.5);
-    container.add(label);
-    
-    // Skin circle preview
-    const skinCircle = this.add.circle(0, 0, 25, capSkin.primaryColor);
-    skinCircle.setStrokeStyle(2, capSkin.secondaryColor);
-    container.add(skinCircle);
-    
-    // Rarity indicator
-    const rarityColor = getRarityColor(capSkin.rarity);
-    const rarityRing = this.add.circle(0, 0, 30, rarityColor, 0);
-    rarityRing.setStrokeStyle(2, rarityColor);
-    container.add(rarityRing);
-    
-    // Skin name
-    const skinName = this.add.text(0, 45, capSkin.name, {
-      fontFamily: 'Arial',
-      fontSize: '14px',
-      color: hexToString(rarityColor),
-    }).setOrigin(0.5);
-    container.add(skinName);
+    // Vignette
+    this.vignette = this.add.graphics().setDepth(5);
+    this.vignette.fillGradientStyle(
+      0x000000, 0x000000, 0x000000, 0x000000,
+      0, 0, 0.6, 0.6
+    );
+    this.vignette.fillRect(0, height * 0.7, width, height * 0.3);
   }
-
-  private createCancelButton(x: number, y: number): void {
-    this.cancelButton = this.add.container(x, y);
+  
+  private createSearchAnimation(): void {
+    const { width, height } = this.cameras.main;
+    this.searchAnimation = this.add.container(0, height * 0.1);
+    
+    // Rotating circle
+    const circle = this.add.graphics();
+    circle.lineStyle(4 * this.s, 0x9d00ff, 1);
+    circle.arc(0, 0, 50 * this.s, 0, Math.PI * 1.5, false);
+    circle.strokePath();
+    
+    this.searchAnimation.add(circle);
+    this.container?.add(this.searchAnimation);
+    
+    // Rotate animation
+    this.tweens.add({
+      targets: circle,
+      angle: 360,
+      duration: 1500,
+      repeat: -1,
+      ease: 'Linear',
+    });
+    
+    // Pulse animation
+    this.tweens.add({
+      targets: this.searchAnimation,
+      scaleX: 1.1,
+      scaleY: 1.1,
+      alpha: 0.6,
+      duration: 1000,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+  }
+  
+  private createCancelButton(): void {
+    const { width, height } = this.cameras.main;
+    const buttonY = height * 0.35;
+    
+    this.cancelButton = this.add.container(0, buttonY);
+    
+    const buttonWidth = 200 * this.s;
+    const buttonHeight = 50 * this.s;
     
     const bg = this.add.graphics();
-    bg.fillStyle(0x333333, 1);
-    bg.fillRoundedRect(-100, -25, 200, 50, 12);
-    bg.lineStyle(2, 0x666666, 1);
-    bg.strokeRoundedRect(-100, -25, 200, 50, 12);
+    bg.fillStyle(0xff4500, 1);
+    bg.lineStyle(2, 0xffffff, 0.5);
+    bg.fillRoundedRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 8);
+    bg.strokeRoundedRect(-buttonWidth / 2, -buttonHeight / 2, buttonWidth, buttonHeight, 8);
     this.cancelButton.add(bg);
     
-    const text = this.add.text(0, 0, '✖ CANCEL', {
-      fontFamily: 'Arial Black',
-      fontSize: '16px',
+    const label = this.add.text(0, 0, 'ОТМЕНА', {
+      fontFamily: 'Orbitron',
+      fontSize: `${16 * this.s}px`,
       color: '#ffffff',
-    }).setOrigin(0.5);
-    this.cancelButton.add(text);
+      fontStyle: 'bold',
+    });
+    label.setOrigin(0.5);
+    this.cancelButton.add(label);
     
-    this.cancelButton.setInteractive(
-      new Phaser.Geom.Rectangle(-100, -25, 200, 50),
-      Phaser.Geom.Rectangle.Contains
-    );
+    // Interactive
+    const hitArea = this.add.rectangle(0, 0, buttonWidth, buttonHeight, 0xffffff, 0.001);
+    hitArea.setInteractive({ useHandCursor: true });
     
-    this.cancelButton.on('pointerover', () => this.cancelButton.setScale(1.05));
-    this.cancelButton.on('pointerout', () => this.cancelButton.setScale(1));
-    this.cancelButton.on('pointerdown', () => this.cancelSearch());
+    hitArea.on('pointerdown', () => {
+      AudioManager.getInstance().playUIClick();
+      hapticImpact('medium');
+      this.cancelSearch();
+    });
+    
+    hitArea.on('pointerover', () => {
+      this.tweens.add({
+        targets: this.cancelButton,
+        scaleX: 1.05,
+        scaleY: 1.05,
+        duration: 150,
+      });
+    });
+    
+    hitArea.on('pointerout', () => {
+      this.tweens.add({
+        targets: this.cancelButton,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 150,
+      });
+    });
+    
+    this.cancelButton.add(hitArea);
+    this.container?.add(this.cancelButton);
   }
-
-  private async connectAndSearch(): Promise<void> {
-    this.statusText.setText('Connecting to server...');
+  
+  // ✅ NEW PVP: Инициализация новой системы
+  private initializePvP(): void {
+    // Получаем или создаём PvPManager
+    this.pvpManager = PvPManager.getInstance({
+      serverUrl: DEFAULT_PVP_CONFIG.serverUrl,
+      autoReconnect: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5,
+    });
     
-    const connected = await this.mp.connect();
+    // Подписываемся на события
+    EventBus.on(GameEvents.PVP_CONNECTED, this.onConnected, this);
+    EventBus.on(GameEvents.PVP_DISCONNECTED, this.onDisconnected, this);
+    EventBus.on(GameEvents.PVP_MATCH_FOUND, this.onMatchFound, this);
+    EventBus.on(GameEvents.PVP_ERROR, this.onError, this);
+  }
+  
+  // ✅ NEW PVP: Обработчики событий
+  private onConnected(): void {
+    console.log('[MatchmakingScene] ✅ Подключено к PVP серверу');
+    this.updateStatus('Поиск оппонента...', '#00f2ff');
+  }
+  
+  private onDisconnected(payload: { reason: string }): void {
+    console.log('[MatchmakingScene] Отключено:', payload.reason);
+    this.updateStatus('Потеряно соединение с сервером', '#ff4500');
+    this.time.delayedCall(2000, () => {
+      this.handleBack();
+    });
+  }
+  
+  private onMatchFound(payload: { roomId: string; opponentId: string; yourTeam: number }): void {
+    console.log('[MatchmakingScene] 🎮 Матч найден!', payload);
     
-    if (!connected) {
-      this.statusText.setText('❌ Connection failed!\nCheck your internet connection.');
-      this.dotsText.setText('');
+    this.isSearching = false;
+    this.updateStatus('Оппонент найден!', '#39ff14');
+    hapticImpact('heavy');
+    
+    // Показываем VS
+    this.time.delayedCall(500, () => {
+      this.updateStatus(`VS OPPONENT`, '#fbbf24');
+    });
+    
+    // Запуск матча через 2 секунды
+    this.time.delayedCall(2000, () => {
+      this.startMatch(payload);
+    });
+  }
+  
+  private onError(payload: { type: string; message: string }): void {
+    console.error('[MatchmakingScene] Ошибка:', payload);
+    this.updateStatus(`Ошибка: ${payload.message}`, '#ff4500');
+    this.time.delayedCall(2000, () => {
+      this.handleBack();
+    });
+  }
+  
+  // ✅ NEW PVP: Начало поиска матча
+  private async startMatchmaking(): Promise<void> {
+    if (!this.pvpManager) {
+      this.updateStatus('PVP Manager не инициализирован', '#ff4500');
+      this.time.delayedCall(2000, () => this.handleBack());
       return;
     }
     
-    // Setup event listeners
-    this.setupListeners();
-    
-    // Start searching
-    this.isSearching = true;
-    this.searchTimer = 0;
-    this.statusText.setText('Searching for opponent...');
-    this.mp.findGame();
-  }
-
-  private setupListeners(): void {
-    this.mp.on('waiting', (data: any) => {
-      this.statusText.setText('Searching for opponent...');
-    });
-    
-    this.mp.on('game_start', (data: GameStartData) => {
-      this.isSearching = false;
-      AudioManager.getInstance().playSFX('sfx_click');
-      this.showMatchFound(data);
-    });
-    
-    this.mp.on('search_cancelled', () => {
-      this.scene.start('MainMenuScene');
-    });
-    
-    this.mp.on('disconnected', () => {
-      this.statusText.setText('❌ Disconnected from server');
-      this.dotsText.setText('');
-      this.isSearching = false;
-    });
-  }
-
-  private showMatchFound(data: GameStartData): void {
-    const { centerX, centerY, width, height } = this.cameras.main;
-    const colors = getColors();
-    
-    // Hide search UI
-    this.statusText.setVisible(false);
-    this.dotsText.setVisible(false);
-    this.cancelButton.setVisible(false);
-    
-    // Find me and opponent
-    const myId = this.mp.getMyId();
-    const me = data.players.find(p => p.id === myId)!;
-    const opponent = data.players.find(p => p.id !== myId)!;
-    const amIFieldOwner = data.fieldOwnerId === myId;
-    
-    // Create match found container
-    this.matchFoundContainer = this.add.container(centerX, centerY);
-    
-    // Background overlay
-    const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.8);
-    this.matchFoundContainer.add(overlay);
-    
-    // Title
-    const title = this.add.text(0, -150, '⚔️ MATCH FOUND! ⚔️', {
-      fontFamily: 'Arial Black',
-      fontSize: '24px',
-      color: '#ff4757',
-      stroke: '#000000',
-      strokeThickness: 4
-    }).setOrigin(0.5);
-    this.matchFoundContainer.add(title);
-    
-    // Player cards
-    const myCard = this.createPlayerCard(-100, -20, me, true, 'YOU');
-    const oppCard = this.createPlayerCard(100, -20, opponent, false, opponent.name);
-    this.matchFoundContainer.add(myCard);
-    this.matchFoundContainer.add(oppCard);
-    
-    // VS text
-    const vsText = this.add.text(0, -20, 'VS', {
-      fontFamily: 'Arial Black',
-      fontSize: '32px',
-      color: '#ffffff',
-      stroke: '#ff0000',
-      strokeThickness: 6
-    }).setOrigin(0.5);
-    this.matchFoundContainer.add(vsText);
-    
-    // Animate VS
-    this.tweens.add({
-      targets: vsText,
-      scale: { from: 0.5, to: 1.2 },
-      duration: 500,
-      yoyo: true,
-      repeat: 2
-    });
-    
-    // Field info
-    const fieldOwner = amIFieldOwner ? 'YOUR' : `${opponent.name}'s`;
-    const fieldSkin = getFieldSkin(data.fieldSkin);
-    const fieldInfo = this.add.text(0, 100, `🏟️ Playing on ${fieldOwner} field`, {
-      fontFamily: 'Arial',
-      fontSize: '16px',
-      color: amIFieldOwner ? '#4ade80' : '#f59e0b',
-      stroke: '#000000',
-      strokeThickness: 3
-    }).setOrigin(0.5);
-    this.matchFoundContainer.add(fieldInfo);
-    
-    // Field skin name
-    if (fieldSkin) {
-      const fieldName = this.add.text(0, 125, `"${fieldSkin.name}"`, {
-        fontFamily: 'Arial',
-        fontSize: '14px',
-        color: hexToString(getRarityColor(fieldSkin.rarity)),
-      }).setOrigin(0.5);
-      this.matchFoundContainer.add(fieldName);
-    }
-    
-    // Start game after delay
-    this.time.delayedCall(3000, () => {
-      this.startPvPGame(data);
-    });
-  }
-
-  private createPlayerCard(x: number, y: number, player: PvPPlayer, isMe: boolean, displayName: string): Phaser.GameObjects.Container {
-    const container = this.add.container(x, y);
-    
-    const capSkin = getCapSkin(player.capSkin);
-    const primaryColor = capSkin?.primaryColor || (isMe ? 0x00ff00 : 0xff0000);
-    const secondaryColor = capSkin?.secondaryColor || primaryColor;
-    const rarityColor = capSkin ? getRarityColor(capSkin.rarity) : 0xffffff;
-    
-    // Card background
-    const bg = this.add.graphics();
-    bg.fillStyle(isMe ? 0x003300 : 0x330000, 0.5);
-    bg.fillRoundedRect(-70, -80, 140, 160, 10);
-    bg.lineStyle(2, isMe ? 0x00ff00 : 0xff0000, 0.8);
-    bg.strokeRoundedRect(-70, -80, 140, 160, 10);
-    container.add(bg);
-    
-    // Cap skin preview
-    const capCircle = this.add.circle(0, -30, 30, primaryColor);
-    capCircle.setStrokeStyle(3, secondaryColor);
-    container.add(capCircle);
-    
-    // Rarity ring
-    const rarityRing = this.add.circle(0, -30, 35, rarityColor, 0);
-    rarityRing.setStrokeStyle(2, rarityColor);
-    container.add(rarityRing);
-    
-    // Glow effect for legendary/epic
-    if (capSkin && (capSkin.rarity === 'legendary' || capSkin.rarity === 'epic')) {
-      this.tweens.add({
-        targets: rarityRing,
-        alpha: { from: 0.5, to: 1 },
-        duration: 500,
-        yoyo: true,
-        repeat: -1
+    try {
+      this.updateStatus('Подключение к серверу...', '#ffffff');
+      
+      // Подключаемся к серверу
+      await this.pvpManager.connect();
+      
+      // Сервер отправит событие PVP_CONNECTED, которое обновит статус
+      this.isSearching = true;
+      this.searchStartTime = Date.now();
+      
+      // Start timer
+      this.timerEvent = this.time.addEvent({
+        delay: 1000,
+        callback: () => {
+          const elapsed = Math.floor((Date.now() - this.searchStartTime) / 1000);
+          const minutes = Math.floor(elapsed / 60);
+          const seconds = elapsed % 60;
+          this.timerText?.setText(
+            `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+          );
+        },
+        loop: true,
+      });
+      
+      // Получаем данные игрока
+      const player = playerData.get();
+      
+      // Начинаем поиск матча
+      this.pvpManager.findGame(this.mode);
+      
+    } catch (error) {
+      console.error('[MatchmakingScene] Ошибка подключения:', error);
+      this.updateStatus('Не удалось подключиться к серверу', '#ff4500');
+      this.time.delayedCall(2000, () => {
+        this.handleBack();
       });
     }
-    
-    // Name
-    const name = this.add.text(0, 25, displayName, {
-      fontFamily: 'Arial Black',
-      fontSize: '14px',
-      color: isMe ? '#4ade80' : '#ff6b6b',
-      stroke: '#000000',
-      strokeThickness: 3
-    }).setOrigin(0.5);
-    container.add(name);
-    
-    // Level
-    const level = this.add.text(0, 45, `Lv.${player.level}`, {
-      fontFamily: 'Arial',
-      fontSize: '12px',
-      color: '#aaaaaa',
-    }).setOrigin(0.5);
-    container.add(level);
-    
-    // Skin name
-    if (capSkin) {
-      const skinName = this.add.text(0, 62, capSkin.name, {
-        fontFamily: 'Arial',
-        fontSize: '10px',
-        color: hexToString(rarityColor),
-      }).setOrigin(0.5);
-      container.add(skinName);
-    }
-    
-    // Animate entrance
-    container.setScale(0);
-    this.tweens.add({
-      targets: container,
-      scale: 1,
-      duration: 400,
-      ease: 'Back.easeOut',
-      delay: isMe ? 0 : 200
-    });
-    
-    return container;
   }
-
-  private startPvPGame(data: GameStartData): void {
-    // Clear listeners
-    this.mp.off('waiting');
-    this.mp.off('game_start');
-    this.mp.off('search_cancelled');
-    
-    // Start game scene with PvP data
-    this.scene.start('GameScene', {
-      vsAI: false,
-      isPvP: true,
-      pvpData: data
-    });
-  }
-
+  
+  // ✅ NEW PVP: Отмена поиска
   private cancelSearch(): void {
-    AudioManager.getInstance().playSFX('sfx_click');
+    if (this.isSearching && this.pvpManager) {
+      this.pvpManager.cancelSearch();
+      this.isSearching = false;
+    }
+    this.handleBack();
+  }
+  
+  private updateStatus(text: string, color: string): void {
+    this.statusText?.setText(text);
+    this.statusText?.setColor(color);
     
-    if (this.isSearching) {
-      this.mp.cancelSearch();
+    // Pulse effect
+    this.tweens.add({
+      targets: this.statusText,
+      scaleX: 1.1,
+      scaleY: 1.1,
+      duration: 200,
+      yoyo: true,
+      ease: 'Back.easeOut',
+    });
+  }
+  
+  // ✅ NEW PVP: Запуск матча
+  private startMatch(matchData: { roomId: string; opponentId: string; yourTeam: number }): void {
+    console.log('[MatchmakingScene] Запуск матча:', matchData);
+    
+    // Store match mode in player data
+    const pdata = playerData.get();
+    pdata.currentMatchMode = this.mode;
+    playerData.save();
+    
+    // Cleanup
+    this.cleanup();
+    
+    // ✅ NEW PVP: Запуск GameScene с новой системой
+    this.scene.stop('MatchmakingScene');
+    safeSceneStart(this, 'GameScene', {
+      mode: 'pvp',  // ⬅️ Новый флаг
+      roomId: matchData.roomId,
+      yourTeam: matchData.yourTeam,
+      opponentId: matchData.opponentId,
+      matchContext: 'casual',
+      useFactions: true,
+    });
+  }
+  
+  private async handleBack(): Promise<void> {
+    AudioManager.getInstance().stopAllSounds();
+    this.cleanup();
+    this.scene.stop('MatchmakingScene');
+    await safeSceneStart(this, 'MatchModeSelectScene');
+  }
+  
+  // ✅ NEW PVP: Cleanup
+  private cleanup(): void {
+    // Отписываемся от событий
+    EventBus.off(GameEvents.PVP_CONNECTED, this.onConnected, this);
+    EventBus.off(GameEvents.PVP_DISCONNECTED, this.onDisconnected, this);
+    EventBus.off(GameEvents.PVP_MATCH_FOUND, this.onMatchFound, this);
+    EventBus.off(GameEvents.PVP_ERROR, this.onError, this);
+    
+    // Отменяем поиск если активен
+    if (this.isSearching && this.pvpManager) {
+      this.pvpManager.cancelSearch();
+      this.isSearching = false;
     }
     
-    this.mp.off('waiting');
-    this.mp.off('game_start');
-    this.mp.off('search_cancelled');
-    this.mp.off('disconnected');
+    if (this.timerEvent) {
+      this.timerEvent.destroy();
+      this.timerEvent = undefined;
+    }
     
-    this.scene.start('MainMenuScene');
+    if (this.tweens) {
+      this.tweens.killAll();
+    }
   }
-
-  private updateDots(): void {
-    if (!this.isSearching) return;
-    this.dotCount = (this.dotCount + 1) % 4;
-    this.dotsText.setText('.'.repeat(this.dotCount));
-  }
-
-  private updateSearchTimer(): void {
-    if (!this.isSearching) return;
-    this.searchTimer++;
-    
-    const minutes = Math.floor(this.searchTimer / 60);
-    const seconds = this.searchTimer % 60;
-    const timeStr = minutes > 0 
-      ? `${minutes}:${seconds.toString().padStart(2, '0')}`
-      : `${seconds}s`;
-    
-    this.statusText.setText(`Searching for opponent... (${timeStr})`);
-  }
-
+  
   shutdown(): void {
-    this.mp.off('waiting');
-    this.mp.off('game_start');
-    this.mp.off('search_cancelled');
-    this.mp.off('disconnected');
+    this.cleanup();
   }
 }

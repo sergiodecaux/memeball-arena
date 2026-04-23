@@ -15,7 +15,8 @@
     "strictNullChecks": false,
     "strictPropertyInitialization": false,
     "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "noUnusedParameters": false,
+    "types": ["vite/client"]
   },
-  "include": ["src"]
+  "include": ["src", "src/**/*.d.ts"]
 }

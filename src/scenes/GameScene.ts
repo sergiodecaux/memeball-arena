@@ -1,82 +1,119 @@
-// src/scenes/GameScene.ts
-// ФИНАЛЬНАЯ ВЕРСИЯ — ИДЕАЛЬНАЯ ФИЗИКА + БАЛАНС
+﻿// src/scenes/GameScene.ts
+// вњ… РР—РњР•РќР•РќРћ: РСЃРїСЂР°РІР»РµРЅ Р±Р°Рі СЃ С‚Р°Р№РјРµСЂРѕРј - РґРѕР±Р°РІР»РµРЅРѕ РїРѕР»Рµ matchDuration, РёСЃРїСЂР°РІР»РµРЅ getState()
 
 import Phaser from 'phaser';
-import {
-  FIELD,
-  GOAL,
-  COLLISION_CATEGORIES,
-  GAME,
-  FACTIONS,
-  FactionId,
-  getFactionArena,
-  FactionArena,
-} from '../constants/gameConstants';
-import { FieldBounds, PlayerNumber, AIDifficulty } from '../types';
+import { GAME, GOAL, FactionId } from '../constants/gameConstants';
+import { FieldBounds, PlayerNumber } from '../types';
+import { Unit } from '../entities/Unit';
 import { Ball } from '../entities/Ball';
-import { ShootingController, ShootEventData, ShootableUnit } from '../controllers/ShootingController';
-import { GameStateManager } from '../controllers/GameStateManager';
-import { GoalDetector } from '../controllers/GoalDetector';
-import { ScoreManager } from '../controllers/ScoreManager';
 import { FieldRenderer } from '../renderers/FieldRenderer';
+import { VFXManager } from '../managers/VFXManager';
+import { AudioManager } from '../managers/AudioManager';
+import { AnnouncerManager } from '../managers/AnnouncerManager';
+import { MultiplayerManager } from '../managers/MultiplayerManager';
+import { PvPIntegrationHelper } from '../managers/PvPIntegrationHelper';
+import { DEFAULT_PVP_CONFIG } from '../types/pvp';
+import { playerData } from '../data/PlayerData';
+import { dailyTasksManager } from '../data/DailyTasks';
+import { createText } from '../utils/TextFactory';
+
+// Core
+import { eventBus, GameEvents, HapticFeedbackPayload } from '../core/EventBus';
+import { MatchStateMachine, MatchPhase } from '../core/MatchStateMachine';
+
+// Controllers
+import { MatchDirector } from '../controllers/match/MatchDirector';
+import { ShootingController, ShootEventData } from '../controllers/ShootingController';
 import { AIController } from '../ai/AIController';
-import { MatchController } from '../controllers/match/MatchController';
+
+// Game modules
+import { GameSceneSetup, GameSceneSetupResult } from './game/GameSceneSetup';
+import { GameSceneData, GameUnit, StartPositions } from './game/types';
+import { AbilityManager } from './game/AbilityManager';
+import { CelebrationManager } from './game/CelebrationManager';
+import { CollisionHandler } from './game/CollisionHandler';
+import { HapticManager } from './game/HapticManager';
+import { PassiveManager } from '../systems/PassiveManager';
+import { LevelConfig, ChapterConfig } from '../types/CampaignTypes';
+import { CampaignDialogueSystem } from '../managers/CampaignDialogueSystem';
+import { CARD_TEXT_RU, UI_RU, getTargetHintRU } from '../localization/cardTexts';
+import { getCard, CardDefinition, CardTargetType } from '../data/CardsCatalog';
+
+// UI
 import { GameHUD } from '../ui/game/GameHUD';
+import { NetworkStatusIndicator } from '../ui/game/NetworkStatusIndicator';
+import { ReconnectionOverlay } from '../ui/game/ReconnectionOverlay';
 import { PauseMenu } from '../ui/game/PauseMenu';
 import { FormationMenu } from '../ui/game/FormationMenu';
 import { ResultScreen } from '../ui/game/ResultScreen';
+import { SessionPersistence } from '../utils/SessionPersistence';
 import { InGameSettings } from '../ui/game/InGameSettings';
-import { playerData, Formation } from '../data/PlayerData';
-import { AudioManager } from '../managers/AudioManager';
-import { MultiplayerManager, FinalPositions, ShootData } from '../managers/MultiplayerManager';
+import { MatchIntroOverlay } from '../ui/game/MatchIntroOverlay';
+import { AbilityButton } from '../ui/game/AbilityButton';
+import { TutorialOverlay } from '../ui/game/TutorialOverlay';
+import { LeagueManager } from '../managers/LeagueManager';
+import { LeagueTier } from '../types/league';
+import { battlePassManager } from '../managers/BattlePassManager';
+import { TournamentManager } from '../managers/TournamentManager';
+import { MatchContext } from './game/types';
+import { FallbackManager } from '../assets/fallback/FallbackManager';
 
-// Game module imports
-import {
-  GameSceneData,
-  GameUnit,
-  StartPositions,
-  Snapshot,
-  hasPlayHitEffect,
-  createInitialState,
-  GameSceneState,
-} from './game/types';
-import { PvPDebugLogger } from './game/PvPDebugLogger';
-import { MatchTimerManager } from './game/MatchTimerManager';
-import { CelebrationManager } from './game/CelebrationManager';
-import { EntityFactory } from './game/EntityFactory';
-import { CollisionHandler } from './game/CollisionHandler';
-import { PvPSyncManager } from './game/PvPSyncManager';
-import { HapticManager } from './game/HapticManager';
-import { ResultHelper, MatchResult } from './game/ResultHelper';
+import { MatchResult } from '../types/MatchResult';
+import { logInfo, logWarn, logError } from '../utils/ProductionLogger';
+import { safeSceneStart } from '../utils/SceneHelpers';
+import { TutorialManager } from '../tutorial/TutorialManager';
+import { TutorialStep } from '../tutorial/TutorialSteps';
+import { AppLifecycle } from '../utils/AppLifecycle';
 
 export class GameScene extends Phaser.Scene {
-  // === Core State ===
-  private state!: GameSceneState;
+  // === РЎРѕСЃС‚РѕСЏРЅРёРµ (РјРёРЅРёРјР°Р»СЊРЅРѕРµ) ===
+  private isInitialized = false;
+  private fieldBounds!: FieldBounds;
+  private startPositions!: StartPositions;
 
-  // === Entities ===
+  // === РЎРѕС…СЂР°РЅС‘РЅРЅС‹Рµ С„СЂР°РєС†РёРё ===
+  private storedPlayerFaction?: FactionId;
+  private storedOpponentFaction?: FactionId;
+  
+  // ✅ NEW: Флаг пропуска интро (если пришли из MatchVSScene)
+  private skipIntro: boolean = false;
+
+  // вњ… Р"РћР'РђР'Р›Р•РќРћ: РЎРѕС…СЂР°РЅС'РЅРЅР°СЏ РґР»РёС‚РµР»СЊРЅРѕСЃС‚СЊ РјР°С‚С‡Р° (РЅРµ Р·Р°РІРёСЃРёС‚ РѕС‚ РѕСЃС‚Р°С‚РєР° РІСЂРµРјРµРЅРё)
+  private matchDuration: number = GAME.DEFAULT_MATCH_DURATION;
+  
+  // ✅ NEW PVP: Новая система реального PVP (через PvPManager)
+  private pvpHelper?: PvPIntegrationHelper;
+  private isRealtimePvP: boolean = false; // Новая система (отличается от старой isPvPMode)
+  
+  // ✅ FIX: Флаг для защиты от повторной обработки гола
+  private isProcessingGoal: boolean = false;
+
+  // === РЎСѓС‰РЅРѕСЃС‚Рё ===
   private ball!: Ball;
   private caps: GameUnit[] = [];
-  private startPositions!: StartPositions;
-  private fieldBounds!: FieldBounds;
 
-  // === Controllers ===
+  // === Р“Р»Р°РІРЅС‹Р№ РѕСЂРєРµСЃС‚СЂР°С‚РѕСЂ РјР°С‚С‡Р° ===
+  private matchDirector!: MatchDirector;
+
+  // === РљРѕРЅС‚СЂРѕР»Р»РµСЂС‹ ===
   private shootingController!: ShootingController;
-  private gameStateManager!: GameStateManager;
-  private goalDetector!: GoalDetector;
-  private scoreManager!: ScoreManager;
-  private matchController!: MatchController;
   private aiController?: AIController;
 
-  // === Renderers ===
-  private fieldRenderer!: FieldRenderer;
-
-  // === Managers ===
-  private matchTimer!: MatchTimerManager;
+  // === РњРµРЅРµРґР¶РµСЂС‹ ===
+  private vfxManager!: VFXManager;
+  private abilityManager!: AbilityManager;
+  private player2AbilityManager?: AbilityManager;
   private celebrationManager!: CelebrationManager;
   private collisionHandler!: CollisionHandler;
-  private pvpSyncManager?: PvPSyncManager;
-  private mp!: MultiplayerManager;
-  private debug = new PvPDebugLogger();
+  private announcer!: AnnouncerManager;
+  private campaignDialogue?: CampaignDialogueSystem;
+  private fieldRenderer!: FieldRenderer;
+  private passiveManager!: PassiveManager;
+  private achievementManager?: any; // AchievementManager
+  // OLD: private pvpSync - removed, using PvPSyncManager inside pvpHelper
+  // OLD: private networkIndicator - removed
+  // OLD: private reconnectionOverlay - removed
+  // OLD: private isPausedForReconnect - removed
 
   // === UI ===
   private gameHUD!: GameHUD;
@@ -84,404 +121,1065 @@ export class GameScene extends Phaser.Scene {
   private formationMenu?: FormationMenu;
   private resultScreen?: ResultScreen;
   private inGameSettings?: InGameSettings;
-  private debugOverlay?: Phaser.GameObjects.Text;
+  private matchIntroOverlay?: MatchIntroOverlay;
+  private abilityButton!: AbilityButton;
+  private tutorialOverlay!: TutorialOverlay;
+  private devOverlay?: import('../ui/DevStabilityOverlay').DevStabilityOverlay;
+  
+  // вњ… Р"РћР'РђР'Р›Р•РќРћ: Р¤Р»Р°Рі РґР»СЏ РїСЂРµРґРѕС‚РІСЂР°С‰РµРЅРёСЏ РјРЅРѕР¶РµСЃС‚РІРµРЅРЅРѕРіРѕ СЃРѕР·РґР°РЅРёСЏ ResultScreen
+  private isResultShown: boolean = false;
+  
+  // === Card UI ===
+  private cardPanel?: Phaser.GameObjects.Container;
+  private cooldownText?: Phaser.GameObjects.Text;
+  private cooldownTimer?: Phaser.Time.TimerEvent;
+  private selectedCardSlotIndex: number | null = null;
+  private cardInfoPopup?: Phaser.GameObjects.Container;
+  private isCardTooltipOpen: boolean = false; // вњ… Task C: Track if tooltip/long-press is active
 
-  // === Tracking ===
+  // ===== CARD PANEL CONSTANTS =====
+  private readonly CARD_SLOT_WIDTH = 70;
+  private readonly CARD_SLOT_HEIGHT = 105; // Пропорции 600:900 = 2:3
+  private readonly CARD_SPACING = 12;
+  private readonly CARD_PANEL_Y_OFFSET = 90; // Отступ от нижнего края экрана
+  private readonly LONG_PRESS_DELAY = 400; // Миллисекунды для долгого нажатия
+  private readonly ENLARGED_CARD_SCALE = 0.85; // Увеличенная карта занимает 85% высоты экрана
+
+  // ===== CARD PANEL STATE =====
+  private enlargedCardContainer?: Phaser.GameObjects.Container;
+  private isCardEnlarged: boolean = false;
+  private longPressTimers: Map<number, Phaser.Time.TimerEvent> = new Map();
+  
+  // === Event Handlers ===
+  private eventHandlers: Map<string, Function> = new Map();
+
+  // === Р РµР¶РёРј ===
+  private isCampaignMode = false;
+  private campaignLevelConfig?: LevelConfig;
+  private campaignChapterConfig?: ChapterConfig;
+
+  // === PvP (OLD - will be removed) ===
+  // Старые переменные оставлены для обратной совместимости, но не используются
+  private isHost = false;
+  private myPlayerIndex: number = 0;
+
+  // === League & Tournament ===
+  private matchContext: MatchContext = 'casual';
+  private tournamentId?: string;
+  private seriesId?: string;
+  private round?: string;
+  private majorAbilityBonus = false;
+  private aimAssistDisabled = false;
+  
+  // ✅ Данные для передачи в LeagueScene после матча
+  private leagueResultData?: {
+    oldStars: number;
+    oldTier: LeagueTier;
+    oldDivision: number;
+    matchResult: 'win' | 'loss' | 'draw';
+    showOrbitDecay: boolean;
+  };
+  private opponentName?: string; // РРјСЏ СЃРѕРїРµСЂРЅРёРєР° (РґР»СЏ РјР°СЃРєРёСЂРѕРІРєРё Р±РѕС‚РѕРІ РІ Р»РёРіРµ)
+  private opponentAvatarId?: string; // вњ… РќРћР’РћР•: РђРІР°С‚Р°СЂ СЃРѕРїРµСЂРЅРёРєР° (РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё)
+
+  // === AI ===
+  private isAIEnabled = false;
+  private aiTurnScheduled = false;
+
+  // === Р’РЅСѓС‚СЂРµРЅРЅРёРµ С„Р»Р°РіРё ===
   private lastShootingCap?: GameUnit;
+  private selectedCapId?: string;
+  
+  // вњ… Р"РћР'РђР'Р›Р•РќРћ: Р¤Р»Р°Рі Р±Р»РѕРєРёСЂРѕРІРєРё РІРІРѕРґР° РІРѕ РІСЂРµРјСЏ СЃРїРѕСЃРѕР±РЅРѕСЃС‚Рё
+  private isAbilityInputActive = false;
+
+  // Tutorial system
+  private isTutorialMode: boolean = false;
+  private tutorialStep?: TutorialStep;
+  private tutorialManager?: TutorialManager;
+
+  // === Lifecycle handlers ===
+  private wasBackgrounded: boolean = false;
+  private backgroundedAt: number = 0;
+  private lifecyclePauseCallback?: () => void;
+  private lifecycleResumeCallback?: () => void;
 
   constructor() {
     super({ key: 'GameScene' });
   }
 
-  init(data?: GameSceneData): void {
-    this.state = createInitialState();
-    this.initializeMode(data);
-    this.startPositions = { ball: { x: 0, y: 0 }, caps: [] };
-    this.caps = [];
-    this.lastShootingCap = undefined;
+  // ============================================================
+  // LIFECYCLE
+  // ============================================================
 
-    // Reset UI references
+  /**
+   * Настройка обработчиков lifecycle для корректной работы при сворачивании/разворачивании
+   */
+  private setupLifecycleHandlers(): void {
+    const lifecycle = AppLifecycle.getInstance();
+    
+    // ✅ Сохраняем ссылки для корректной отписки
+    this.lifecyclePauseCallback = () => {
+      // ✅ Проверяем что сцена активна и не была уже приостановлена
+      if (!this.isInitialized || this.wasBackgrounded) return;
+      
+      this.wasBackgrounded = true;
+      this.backgroundedAt = Date.now();
+      console.log('[GameScene] App backgrounded - pausing game');
+      
+      // Ставим игру на паузу (pause() безопасен для повторных вызовов)
+      if (this.matchDirector) {
+        this.matchDirector.pause();
+      }
+      
+      // ✅ Используем встроенный Phaser API для паузы звуков
+      if (this.sound && typeof this.sound.pauseAll === 'function') {
+        this.sound.pauseAll();
+      }
+    };
+    
+    this.lifecycleResumeCallback = () => {
+      if (!this.wasBackgrounded) return;
+      
+      const backgroundDuration = Date.now() - this.backgroundedAt;
+      console.log('[GameScene] App resumed after', backgroundDuration, 'ms');
+      
+      this.wasBackgrounded = false;
+      
+      // Если был в фоне больше 30 секунд - возвращаемся в меню
+      if (backgroundDuration > 30000) {
+        console.log('[GameScene] Too long in background, returning to menu');
+        this.handleMatchInterruption('Матч был прерван из-за длительного бездействия');
+        return;
+      }
+      
+      // ✅ Используем встроенный Phaser API для возобновления звуков
+      if (this.sound && typeof this.sound.resumeAll === 'function') {
+        this.sound.resumeAll();
+      }
+      
+      // Показываем меню паузы только если его ещё нет
+      if (!this.pauseMenu && this.isInitialized) {
+        this.showPauseMenu();
+      }
+    };
+    
+    lifecycle.onPause(this.lifecyclePauseCallback);
+    lifecycle.onResume(this.lifecycleResumeCallback);
+  }
+
+  /**
+   * Обработка прерывания матча (возврат в меню)
+   */
+  private handleMatchInterruption(message: string): void {
+    console.log('[GameScene] Match interrupted:', message);
+    
+    // Останавливаем матч
+    if (this.matchDirector) {
+      this.matchDirector.pause();
+    }
+    
+    // Возвращаемся в меню
+    this.scene.start('MainMenuScene', {
+      showMessage: message,
+    });
+  }
+
+  init(data?: GameSceneData): void {
+    // #region agent log
+    logInfo('GameScene', 'GameScene.init ENTRY',{hasData:!!data,matchContext:data?.matchContext,isAI:data?.isAI,playerFaction:data?.playerFaction,opponentFaction:data?.opponentFaction,teamSize:data?.teamSize,isPvP:data?.isPvP,hasPvpData:!!data?.pvpData,skipIntro:data?.skipIntro});
+    // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+    // #endregion
+    this.isInitialized = false;
+    this.lastShootingCap = undefined;
+    this.selectedCapId = undefined;
+    this.aiTurnScheduled = false;
+    this.isAbilityInputActive = false;
+    
+    // ✅ NEW: Поддержка skipIntro (если пришли из MatchVSScene)
+    this.skipIntro = (data as any)?.skipIntro || false;
+
+    // ✅ NEW PVP: Определяем режим PVP
+    // Поддерживаем оба варианта входа: data.isPvP (старый) и data.mode === 'pvp' (новый)
+    if (data?.isPvP === true || data?.mode === 'pvp') {
+      this.isRealtimePvP = true;
+      console.log(`[GameScene] init(): PVP mode activated`);
+      
+      // Создаём PVP helper
+      this.pvpHelper = new PvPIntegrationHelper(this, {
+        serverUrl: DEFAULT_PVP_CONFIG.serverUrl,
+        isEnabled: true,
+      });
+    }
+    if (data?.matchContext) {
+      this.matchContext = data.matchContext;
+      console.log(`[GameScene] init(): matchContext set to ${this.matchContext}`);
+    }
+
+    // вњ… Р”РћР‘РђР’Р›Р•РќРћ: РЎР±СЂРѕСЃ matchDuration РїСЂРё РЅРѕРІРѕР№ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё СЃС†РµРЅС‹
+    this.matchDuration = GAME.DEFAULT_MATCH_DURATION;
+
+    // вњ… Р”РћР‘РђР’Р›Р•РќРћ: РЎРѕС…СЂР°РЅСЏРµРј opponentName Рё opponentAvatarId РёР· data
+    if (data?.opponentName) {
+      this.opponentName = data.opponentName;
+      console.log(`[GameScene] init(): opponentName set to "${this.opponentName}"`);
+    }
+    if (data?.opponentAvatarId) {
+      this.opponentAvatarId = data.opponentAvatarId;
+      console.log(`[GameScene] init(): opponentAvatarId set to "${this.opponentAvatarId}"`);
+    }
+
     this.pauseMenu = undefined;
     this.formationMenu = undefined;
     this.resultScreen = undefined;
     this.inGameSettings = undefined;
+    this.matchIntroOverlay = undefined;
+    this.cardPanel = undefined;
+    this.cooldownText = undefined;
+    this.cooldownTimer = undefined;
+
+    // Tutorial mode
+    if (data?.isTutorialMode) {
+      this.isTutorialMode = true;
+      this.tutorialStep = data.tutorialStep as TutorialStep || TutorialStep.INTRO;
+      console.log(`[GameScene] init(): Tutorial mode, step: ${this.tutorialStep}`);
+    }
   }
 
-  private initializeMode(data?: GameSceneData): void {
-    this.state.isPvPMode = data?.isPvP ?? false;
-    this.state.pvpData = data?.pvpData;
+  preload(): void {
+    // Assets already loaded in Boot, nothing to do
+  }
 
-    // Faction setup
-    const playerHasFaction = !!playerData.getFaction();
-    this.state.useFactions = data?.useFactions ?? playerHasFaction;
+  create(data?: GameSceneData): void {
+    // Сохраняем data для использования в onSetupComplete
+    (this as any).__setupData = data;
+    // #region agent log
+    logInfo('GameScene', 'GameScene.create ENTRY',{hasData:!!data,matchContext:data?.matchContext,playerFaction:data?.playerFaction,opponentFaction:data?.opponentFaction});
+    // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+    // #endregion
+    // вњ… Р”РћР‘РђР’Р›Р•РќРћ: РЎР±СЂРѕСЃ С„Р»Р°РіР° РґР»СЏ ResultScreen РїСЂРё СЃРѕР·РґР°РЅРёРё РЅРѕРІРѕР№ СЃС†РµРЅС‹
+    this.isResultShown = false;
 
-    if (this.state.useFactions) {
-      this.state.playerFaction = data?.playerFaction || playerData.getFaction() || 'cyborg';
-      this.state.opponentFaction = data?.opponentFaction || this.getRandomOpponentFaction();
-
-      const useArena = data?.useArena ?? true;
-      if (useArena) {
-        this.state.currentArena = getFactionArena(this.state.playerFaction);
-        console.log(`[GameScene] Arena selected: ${this.state.currentArena.name}`);
+    // ✅ Инициализируем менеджеры событий ДО начала матча
+    // (важно для real-time прогресса daily/weekly и Battle Pass XP)
+    // (moved ниже: после GameSceneSetup.initialize(), т.к. внутри него вызывается eventBus.clear())
+    
+    // вњ… FIX 2026-01-23: РЈР±СЂР°РЅР° РґРёРЅР°РјРёС‡РµСЃРєР°СЏ Р·Р°РіСЂСѓР·РєР° С‚РµРєСЃС‚СѓСЂ
+    // Р’СЃРµ С‚РµРєСЃС‚СѓСЂС‹ СѓР¶Рµ Р·Р°РіСЂСѓР¶РµРЅС‹ РІ BootScene Рё РѕСЃС‚Р°СЋС‚СЃСЏ РІ РїР°РјСЏС‚Рё
+    // Р­С‚Рѕ СЃС‚Р°Р±РёР»СЊРЅР°СЏ СЃС‚СЂР°С‚РµРіРёСЏ РёР· СЃС‚Р°СЂРѕР№ РІРµСЂСЃРёРё Р±РµР· РІС‹Р»РµС‚РѕРІ
+    
+    // вњ… FIX: Р“РµРЅРµСЂРёСЂСѓРµРј fallback РґР»СЏ СЋРЅРёС‚РѕРІ РёР· UNITS_REPOSITORY РїРµСЂРµРґ РЅР°С‡Р°Р»РѕРј РјР°С‚С‡Р°
+    // Р­С‚Рѕ РєСЂРёС‚РёС‡РЅРѕ РґР»СЏ РјР°С‚С‡РµР№ СЃ Р±РѕС‚Р°РјРё РІ Р»РёРіРµ/С‚СѓСЂРЅРёСЂР°С…, РєРѕС‚РѕСЂС‹Рµ РёСЃРїРѕР»СЊР·СѓСЋС‚ СЋРЅРёС‚С‹ РёР· СЂРµРїРѕР·РёС‚РѕСЂРёСЏ
+    const fallbackManager = new FallbackManager(this);
+    fallbackManager.ensureUnitsRepositoryFallbacks();
+    fallbackManager.ensureFactionFallbacks();
+    
+    // рџ”Ґ TUTORIAL OVERHAUL: Dynamic Faction Logic
+    // This must happen BEFORE GameSceneSetup is called
+    if (this.isLevel1_1(data)) {
+      const playerFaction = playerData.getFaction() || 'magma';
+      // Counter-faction logic
+      const opponentFaction = playerFaction === 'magma' ? 'cyborg' : 'magma';
+      
+      console.log(`[GameScene] рџЋ“ Tutorial Setup: Player(${playerFaction}) vs CPU(${opponentFaction})`);
+      
+      // Mutate data to force this setup
+      if (!data) data = {};
+      data.opponentFaction = opponentFaction;
+      
+      // Also ensure campaign config matches
+      const campaignData = data as any;
+      if (campaignData?.levelConfig) {
+        campaignData.levelConfig.enemyFaction = opponentFaction;
       }
+    }
+    
+    const setup = new GameSceneSetup(this);
+    
+    // Асинхронная инициализация с проверкой загрузки ассетов
+    setup.initialize(data).then(result => {
+      this.onSetupComplete(result);
+    }).catch(error => {
+      console.error('[GameScene] Setup failed:', error);
+      // Продолжаем даже при ошибке
+      this.onSetupComplete(null as any);
+    });
+  }
 
-      console.log(`[GameScene] Faction mode: player=${this.state.playerFaction}, opponent=${this.state.opponentFaction}`);
+  private onSetupComplete(result: GameSceneSetupResult): void {
+    const data = (this as any).__setupData as GameSceneData | undefined;
+
+    // ✅ ИСПРАВЛЕНО: Инициализируем менеджеры событий ПОСЛЕ eventBus.clear()
+    // (GameSceneSetup.initialize() очищает EventBus, поэтому подписки должны создаваться после этого)
+    this.initializeEventListeners();
+
+    this.applySetupResult(result, data);
+
+    // ✅ SessionPersistence: сохраняем, что мы в игре (для восстановления/диагностики)
+    try {
+      const state = this.getState();
+      SessionPersistence.saveCurrentScene('GameScene', {
+        matchContext: this.matchContext,
+        difficulty: state?.aiDifficulty,
+      });
+    } catch (e) {
+      // ignore
     }
 
-    // PvP setup
-    if (this.state.isPvPMode && this.state.pvpData) {
-      this.state.isAIEnabled = false;
-      this.mp = MultiplayerManager.getInstance();
-      this.state.isHost = this.mp.isHost();
-      this.state.myPlayerIndex = this.mp.getMyPlayerIndex();
-      this.state.currentTurnId = this.state.pvpData.currentTurn;
-      this.state.myPlayer = this.mp.getMe() || undefined;
-      this.state.opponentPlayer = this.mp.getOpponent() || undefined;
-
-      if ((this.state.pvpData as any).serverTime) {
-        const serverTime = Number((this.state.pvpData as any).serverTime);
-        this.state.serverTimeOffset = serverTime - Date.now();
-      }
-
-      this.state.matchDuration = this.state.pvpData.config.MATCH_DURATION || 300;
-    } else {
-      this.state.isAIEnabled = data?.vsAI ?? true;
-      this.state.aiDifficulty = data?.difficulty ?? 'medium';
-      this.state.matchDuration = data?.matchDuration ?? 300;
-    }
-
-    this.state.matchRemainingTime = this.state.matchDuration;
-
-    // Field skin
-    this.state.fieldSkinId = this.state.isPvPMode
-      ? this.state.pvpData?.fieldSkin || playerData.get().equippedFieldSkin || 'field_default'
-      : playerData.get().equippedFieldSkin || 'field_default';
-  }
-
-  private getRandomOpponentFaction(): FactionId {
-    const allFactions: FactionId[] = ['magma', 'cyborg', 'void', 'insect'];
-    const available = allFactions.filter((f) => f !== this.state.playerFaction);
-    return Phaser.Math.RND.pick(available);
-  }
-
-  create(): void {
-    this.setupAudio();
-    this.setupPhysics();
-    this.calculateFieldBounds();
-    this.createField();
-    this.createEntities();
-    this.createWalls();
-    this.setupManagers();
-    this.setupControllers();
+    HapticManager.init();
+    this.createMatchDirector();
+    this.createControllers();
+    this.createManagers();
     this.createUI();
+    this.subscribeToEvents();
+    
+    // вњ… РЈР›РЈР§РЁР•РќРћ: Р“Р»РѕР±Р°Р»СЊРЅС‹Р№ СЃР»СѓС€Р°С‚РµР»СЊ РІРІРѕРґР° СЃ РїСЂРёРѕСЂРёС‚РµС‚РѕРј СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
+    this.setupGlobalInput();
 
-    if (this.state.isPvPMode) {
-      this.setupPvP();
+    // ✅ Настройка lifecycle handlers для корректной работы при сворачивании/разворачивании
+    this.setupLifecycleHandlers();
+
+    this.cameras.main.centerOn(this.fieldBounds.centerX, this.fieldBounds.centerY);
+    this.scale.on('resize', this.handleResize, this);
+
+    this.announcer = AnnouncerManager.getInstance();
+    this.announcer.init(this);
+    
+    // вњ… LOGIC CHANGE: Immediate start for Campaign / Tutorial
+    console.log(`[GameScene] create(): matchContext="${this.matchContext}", isPvP=${this.isRealtimePvP}, isCampaign=${this.isCampaignMode}, isAI=${this.isAIEnabled}, isTutorial=${this.isTutorialMode}`);
+    
+    // #region agent log
+    // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+    // #endregion
+    
+    // ✅ NEW: Если пришли из MatchVSScene — пропускаем интро
+    if (this.skipIntro) {
+      console.log('[GameScene] Skipping intro (came from MatchVSScene)');
+      this.onMatchIntroComplete();
+      this.isInitialized = true;
+      return;
+    }
+    
+    // ✅ TUTORIAL MODE: Особая обработка
+    if (this.isTutorialMode) {
+      console.log('[GameScene] Tutorial Mode: Setting up tutorial environment');
+      
+      // Пропускаем VS-экран
+      this.onMatchIntroComplete();
+      
+      // Помечаем как инициализированную
+      this.isInitialized = true;
+      
+      // Инициализируем систему обучения
+      // Важно: это должно происходить ПОСЛЕ создания всех игровых объектов
+      this.time.delayedCall(100, () => {
+        this.initializeTutorial();
+      });
+      
+      // Не продолжаем обычную ветку
+      return;
+    }
+    
+    if (this.isRealtimePvP) {
+      // NEW PVP: Показываем интро и начинаем матч
+      this.showMatchIntro();
+    } else if (this.isCampaignMode) {
+      // Skip the "VS" screen animation for campaign
+      console.log('[GameScene] Campaign mode: Skipping Intro');
+      this.onMatchIntroComplete();
     } else {
-      this.startOfflineMatch();
+      // Standard VS animation for Quick Play / Local / League / Tournament
+      console.log(`[GameScene] Showing Match Intro for mode: ${this.matchContext}`);
+      // #region agent log
+      // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+      // #endregion
+      this.showMatchIntro();
     }
 
-    this.updateCapsAuraState();
-  }
-
-  private setupAudio(): void {
-    const audio = AudioManager.getInstance();
-    audio.init(this);
-    audio.stopMusic();
-    audio.playAmbience('bgm_match');
-    audio.playSFX('sfx_whistle');
-  }
-
-  // === ⭐ УЛУЧШЕННАЯ НАСТРОЙКА ФИЗИКИ ===
-  private setupPhysics(): void {
-    if (this.matter.world.runner) {
-      (this.matter.world.runner as any).isFixed = true;
-      (this.matter.world.runner as any).delta = 1000 / 60;
-    }
-
-    const engine = (this.matter.world as any).engine;
-    if (engine) {
-      engine.positionIterations = 14;      // было 10 → больше точности
-      engine.velocityIterations = 14;      // было 10 → больше точности
-      engine.constraintIterations = 4;     // ⭐ НОВОЕ — убивает phantom collisions
-    }
+    this.isInitialized = true;
+    console.log('[GameScene] Initialization complete');
     
-    console.log('[GameScene] ⚙️ Physics engine optimized for high-speed collisions');
+    // #region agent log
+    // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+    // #endregion
   }
 
-  private calculateFieldBounds(): void {
-    const { centerX, centerY, width, height } = this.cameras.main;
-
-    this.state.fieldScale = Math.min(
-      (width - FIELD.PADDING * 2) / FIELD.WIDTH,
-      (height - FIELD.PADDING * 2) / FIELD.HEIGHT
-    );
-
-    const w = FIELD.WIDTH * this.state.fieldScale;
-    const h = FIELD.HEIGHT * this.state.fieldScale;
-
-    this.fieldBounds = {
-      left: centerX - w / 2,
-      right: centerX + w / 2,
-      top: centerY - h / 2,
-      bottom: centerY + h / 2,
-      centerX,
-      centerY,
-      width: w,
-      height: h,
-    };
-  }
-
-  private createField(): void {
-    this.fieldRenderer = new FieldRenderer(
-      this,
-      this.fieldBounds,
-      this.state.fieldScale,
-      this.state.fieldSkinId,
-      this.state.currentArena
-    );
-    this.fieldRenderer.render();
-  }
-
-  private createEntities(): void {
-    this.matchController = new MatchController();
-
-    if (!this.state.isPvPMode) {
-      this.matchController.startMatch(this);
+  private isLevel1_1(data?: GameSceneData): boolean {
+    // Helper to check if we are in the first tutorial level
+    const campaignData = data as any;
+    if (campaignData?.isCampaign && campaignData.levelConfig?.id === '1-1') {
+      return true;
     }
+    // Fallback check for first tutorial match
+    const progress = playerData.getCampaignProgress();
+    if (progress.currentChapterId === 'chapter_1' && !playerData.hasCompletedFirstMatchTutorial()) {
+      return true;
+    }
+    return false;
+  }
 
-    const factory = new EntityFactory({
-      scene: this,
-      fieldBounds: this.fieldBounds,
-      fieldScale: this.state.fieldScale,
-      isPvPMode: this.state.isPvPMode,
-      pvpData: this.state.pvpData,
-      isHost: this.state.isHost,
-      useFactions: this.state.useFactions,
-      playerFaction: this.state.playerFaction,
-      opponentFaction: this.state.opponentFaction,
-      formation: this.matchController.getCurrentFormation(),
-    });
+  // ============================================================
+  // вњ… РџР•Р Р•Р РђР‘РћРўРђРќРћ: Р“Р›РћР‘РђР›Р¬РќР«Р™ Р’Р’РћР” РЎ РџР РРћР РРўР•РўРћРњ РЎРџРћРЎРћР‘РќРћРЎРўР•Р™
+  // ============================================================
 
-    // Create ball
-    const ballResult = factory.createBall();
-    this.ball = ballResult.ball;
-    this.startPositions.ball = ballResult.startPosition;
-
-    // Create caps
-    const capsResult = factory.createCaps();
-    this.caps = capsResult.caps;
-    this.startPositions.caps = capsResult.startPositions;
-
-    // Set pixel-perfect mode
-    this.caps.forEach((cap) => {
-      const unitSprite = (cap as any).unitSprite;
-      if (unitSprite?.texture) {
-        unitSprite.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+  private setupGlobalInput(): void {
+    // вњ… РџСЂРёРѕСЂРёС‚РµС‚ 1: РћР±СЂР°Р±РѕС‚РєР° ESC/Back РґР»СЏ РѕС‚РјРµРЅС‹ СЃРїРѕСЃРѕР±РЅРѕСЃС‚Рё
+    this.input.keyboard?.on('keydown-ESC', () => {
+      if (this.abilityManager?.isActivating()) {
+        console.log('[GameScene] ESC pressed - cancelling ability');
+        this.abilityManager.cancelActivation();
       }
     });
-    console.log('%c[GameScene] ✨ All units set to PIXEL-PERFECT mode', 'color: #00ff00; font-weight: bold;');
-  }
 
-  // === ⭐ СТОЙКИ ВОРОТ УПРУГИЕ ===
-  private createWalls(): void {
-    const { left, right, top, bottom, centerX } = this.fieldBounds;
-    const goalWidth = GOAL.WIDTH * this.state.fieldScale;
-    const goalDepth = GOAL.DEPTH * this.state.fieldScale;
-    const postThickness = GOAL.POST_THICKNESS * this.state.fieldScale;
-    const thickness = FIELD.BORDER_THICKNESS * 2;
-    const sideWidth = (right - left - goalWidth) / 2;
-
-    const wallOpts: Phaser.Types.Physics.Matter.MatterBodyConfig = {
-      isStatic: true,
-      restitution: 0.7,
-      friction: 0.05,
-      label: 'wall',
-      collisionFilter: { category: COLLISION_CATEGORIES.WALL },
-    };
-
-    const postOpts: Phaser.Types.Physics.Matter.MatterBodyConfig = {
-      ...wallOpts,
-      restitution: 0.92,         // было 0.85 → стойки упругие!
-      friction: 0.02,
-      label: 'post',
-    };
-
-    // Side walls
-    this.matter.add.rectangle(left - thickness / 2, (top + bottom) / 2, thickness, bottom - top, wallOpts);
-    this.matter.add.rectangle(right + thickness / 2, (top + bottom) / 2, thickness, bottom - top, wallOpts);
-
-    // Top walls (with goal gap)
-    this.matter.add.rectangle(left + sideWidth / 2, top - thickness / 2, sideWidth, thickness, wallOpts);
-    this.matter.add.rectangle(right - sideWidth / 2, top - thickness / 2, sideWidth, thickness, wallOpts);
-
-    // Bottom walls (with goal gap)
-    this.matter.add.rectangle(left + sideWidth / 2, bottom + thickness / 2, sideWidth, thickness, wallOpts);
-    this.matter.add.rectangle(right - sideWidth / 2, bottom + thickness / 2, sideWidth, thickness, wallOpts);
-
-    // Goals
-    [{ y: top, dir: -1 }, { y: bottom, dir: 1 }].forEach(({ y, dir }) => {
-      // Back wall of goal
-      this.matter.add.rectangle(centerX, y + dir * (goalDepth + thickness / 2), goalWidth, thickness, wallOpts);
-      // Goal posts ⭐
-      this.matter.add.rectangle(centerX - goalWidth / 2 - postThickness / 2, y + dir * goalDepth / 2, postThickness, goalDepth, postOpts);
-      this.matter.add.rectangle(centerX + goalWidth / 2 + postThickness / 2, y + dir * goalDepth / 2, postThickness, goalDepth, postOpts);
-    });
-    
-    console.log('[GameScene] 🥅 Goal posts configured with high restitution (0.92)');
-  }
-
-  private setupManagers(): void {
-    // Celebration manager
-    this.celebrationManager = new CelebrationManager(this, {
-      useFactions: this.state.useFactions,
-      playerFaction: this.state.playerFaction,
-      currentArena: this.state.currentArena,
-    });
-
-    // Match timer
-    this.matchTimer = new MatchTimerManager(this, this.state.matchDuration, {
-      onTick: (remaining, total) => {
-        this.state.matchRemainingTime = remaining;
-        this.gameHUD?.updateMatchTimer(remaining, total);
-      },
-      onTimeUp: () => this.handleMatchTimeUp(),
-      onWarning30: () => AudioManager.getInstance().playSFX('sfx_whistle', { volume: 0.5 }),
-      onWarning10: () => HapticManager.trigger('light'),
-    });
-
-    // Collision handler
-    this.collisionHandler = new CollisionHandler(
-      {
-        scene: this,
-        fieldBounds: this.fieldBounds,
-        fieldScale: this.state.fieldScale,
-        isPvPMode: this.state.isPvPMode,
-        isHost: this.state.isHost,
-        useFactions: this.state.useFactions,
-        playerFaction: this.state.playerFaction,
-      },
-      {
-        getBall: () => this.ball,
-        getCaps: () => this.caps,
-        getLastShootingCap: () => this.lastShootingCap,
-        getLastShootingCapId: () => this.state.lastShootingCapId,
-        getBallSpeedBeforeCollision: () => this.state.ballSpeedBeforeCollision,
-        setBallSpeedBeforeCollision: (speed) => { this.state.ballSpeedBeforeCollision = speed; },
-        getGuestLocalPhysicsUntil: () => this.state.guestLocalPhysicsUntil,
-        setGuestLocalPhysicsUntil: (time) => { this.state.guestLocalPhysicsUntil = time; },
-        clearSnapshotBuffer: () => {
-          this.state.snapshotBuffer = [];
-          this.pvpSyncManager?.clearState();
-        },
-        getFieldRenderer: () => this.fieldRenderer,
-        debug: this.debug,
-        triggerHaptic: HapticManager.trigger,
-      }
-    );
-    this.collisionHandler.setup();
-  }
-
-  private setupControllers(): void {
-    // Goal detector
-    this.goalDetector = new GoalDetector(this, this.ball, this.fieldBounds, this.state.fieldScale);
-    this.goalDetector.setCaps(this.caps as any, this.startPositions.caps);
-    this.goalDetector.onGoal((player) => this.onGoalDetected(player));
-
-    // Score manager
-    this.scoreManager = new ScoreManager(this);
-
-    // Game state manager
-    this.gameStateManager = new GameStateManager(this.ball, this.caps as any);
-    this.gameStateManager.setPvPMode(this.state.isPvPMode);
-    this.gameStateManager.setIsHost(this.state.isHost);
-
-    this.gameStateManager.onAllObjectsStopped(() => {
-      if (this.state.isPvPMode && this.state.isHost) {
-        if (this.gameStateManager.getState() === 'moving' && 
-            this.time.now - this.state.lastShootTime > 500) {
-          this.debug.log('STATE', 'All stopped - notifying server');
-          this.mp.sendObjectsStopped();
+    // вњ… РџСЂРёРѕСЂРёС‚РµС‚ 2: РћР±СЂР°Р±РѕС‚РєР° РєР»РёРєР° РїРѕ РѕР±СЉРµРєС‚Р°Рј (Р®РЅРёС‚С‹) РґР»СЏ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
+    this.input.on('gameobjectdown', (pointer: Phaser.Input.Pointer, gameObject: any) => {
+      // РџСЂРѕРІРµСЂСЏРµРј РїСЂРёРѕСЂРёС‚РµС‚ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
+      if (this.shouldAbilityHandleInput()) {
+        const tappedUnit = this.findTappedUnit(gameObject);
+        
+        if (tappedUnit) {
+          console.log('[GameScene] Global input: Unit tapped for ability', tappedUnit.id);
+          const processed = this.abilityManager.onUnitTapped(tappedUnit);
+          
+          if (processed) {
+            // РћСЃС‚Р°РЅР°РІР»РёРІР°РµРј РІСЃРїР»С‹С‚РёРµ СЃРѕР±С‹С‚РёСЏ
+            pointer.event.stopPropagation();
+            return;
+          }
         }
       }
     });
 
-    if (!this.state.isPvPMode) {
-      this.gameStateManager.onTurnChange((player) => this.onLocalTurnChange(player));
+    // вњ… РџСЂРёРѕСЂРёС‚РµС‚ 3: РћР±СЂР°Р±РѕС‚РєР° РєР»РёРєР° РїРѕ РїРѕР»СЋ РґР»СЏ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№ (С‚РѕС‡РєРё СЂР°Р·РјРµС‰РµРЅРёСЏ)
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      // вњ… 2.C. Close card info popup if clicking outside card panel
+      if (this.cardInfoPopup && this.cardPanel) {
+        const panelWorldX = this.cardPanel.x;
+        const panelWorldY = this.cardPanel.y;
+        const panelWidth = 300; // Approximate width
+        const panelHeight = 250; // Include popup area
+        
+        if (pointer.x < panelWorldX - panelWidth / 2 || pointer.x > panelWorldX + panelWidth / 2 ||
+            pointer.y < panelWorldY - panelHeight || pointer.y > panelWorldY + 80) {
+          this.hideCardInfo();
+        }
+      }
+      
+      // РџСЂРѕРІРµСЂСЏРµРј РїСЂРёРѕСЂРёС‚РµС‚ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
+      if (this.shouldAbilityHandleInput()) {
+        const state = this.abilityManager.getState();
+        
+        if (state === 'SELECTING_POINT') {
+          console.log('[GameScene] Global input: Field tapped for ability at', pointer.worldX, pointer.worldY);
+          const processed = this.abilityManager.onFieldTapped(pointer.worldX, pointer.worldY);
+          
+          if (processed) {
+            pointer.event.stopPropagation();
+          }
+        }
+      }
+    });
+
+    // вњ… РџСЂРёРѕСЂРёС‚РµС‚ 4: РџСЂР°РІС‹Р№ РєР»РёРє / РґРІРѕР№РЅРѕР№ С‚Р°Рї РґР»СЏ РѕС‚РјРµРЅС‹
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.rightButtonDown() && this.abilityManager?.isActivating()) {
+        console.log('[GameScene] Right click - cancelling ability');
+        this.abilityManager.cancelActivation();
+      }
+    });
+
+    console.log('[GameScene] Global input handlers set up with ability priority');
+  }
+
+  /**
+   * вњ… Р”РћР‘РђР’Р›Р•РќРћ: РџСЂРѕРІРµСЂРєР°, РґРѕР»Р¶РЅР° Р»Рё СЃРёСЃС‚РµРјР° СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№ РѕР±СЂР°Р±Р°С‚С‹РІР°С‚СЊ РІРІРѕРґ
+   * РЎРѕРіР»Р°СЃРЅРѕ РўР—: РµСЃР»Рё AbilityManager.isActivating() === true, РІРІРѕРґ РёРґС‘С‚ С‚СѓРґР°
+   */
+  private shouldAbilityHandleInput(): boolean {
+    if (!this.abilityManager) return false;
+    return this.abilityManager.isActivating();
+  }
+
+  /**
+   * вњ… Р”РћР‘РђР’Р›Р•РќРћ: РџРѕРёСЃРє СЋРЅРёС‚Р° РїРѕ gameObject
+   */
+  private findTappedUnit(gameObject: any): GameUnit | undefined {
+    return this.caps.find(cap => {
+      // РџСЂРѕРІРµСЂСЏРµРј СЂР°Р·Р»РёС‡РЅС‹Рµ РІР°СЂРёР°РЅС‚С‹ РѕР±СЉРµРєС‚РѕРІ
+      if (cap === gameObject) return true;
+      if ((cap as any).sprite === gameObject) return true;
+      if ((cap as any).container === gameObject) return true;
+      
+      // РџСЂРѕРІРµСЂСЏРµРј children РєРѕРЅС‚РµР№РЅРµСЂР°
+      if ((cap as any).sprite?.list) {
+        return (cap as any).sprite.list.includes(gameObject);
+      }
+      
+      return false;
+    });
+  }
+
+  private applySetupResult(result: GameSceneSetupResult, data?: GameSceneData): void {
+    // рџ”Ґ FIX: Force Opponent Faction for Level 1-1
+    // If player picks Magma, they should fight Cyborgs, not Magma.
+    if (result.isCampaignMode && result.campaignLevelConfig?.id === '1-1') {
+      if (result.state.playerFaction === 'magma') {
+        console.log('[GameScene] Tutorial Override: Setting opponent to Cyborg');
+        result.state.opponentFaction = 'cyborg';
+        this.storedOpponentFaction = 'cyborg';
+      }
     }
 
-    this.gameStateManager.onStateChange((state) => this.onStateChange(state));
+    // Apply state
+    this.fieldBounds = result.fieldBounds;
+    this.ball = result.ball;
+    this.caps = result.caps;
+    this.startPositions = result.startPositions;
+    this.fieldRenderer = result.fieldRenderer;
+    this.vfxManager = result.vfxManager;
+    this.isCampaignMode = result.isCampaignMode;
+    this.campaignLevelConfig = result.campaignLevelConfig;
+    this.campaignChapterConfig = result.campaignChapterConfig;
 
-    // Shooting controller
+    // OLD PVP system removed
+    this.isHost = result.state.isHost;
+    this.myPlayerIndex = result.state.myPlayerIndex;
+    this.isAIEnabled = result.state.isAIEnabled;
+    this.storedPlayerFaction = result.state.playerFaction as FactionId;
+    this.storedOpponentFaction = result.state.opponentFaction as FactionId;
+    
+    // ✅ NEW PVP: Регистрируем сущности в PvPHelper
+    if (this.isRealtimePvP && this.pvpHelper) {
+      // Регистрируем мяч
+      this.pvpHelper.registerBall(this.ball);
+      
+      // Регистрируем все юниты
+      this.caps.forEach((cap, index) => {
+        const team = cap.owner; // 1 or 2
+        const unitId = `team${team}_unit${index}`;
+        
+        // Проверяем что cap это Unit (а не Cap)
+        if (cap instanceof Unit) {
+          this.pvpHelper!.registerUnit(unitId, cap);
+        }
+      });
+      
+      // Подключаемся к серверу и отправляем готовность
+      this.pvpHelper.connect().then(() => {
+        this.pvpHelper!.sendReady();
+        console.log('[GameScene] PVP entities registered and ready signal sent');
+      }).catch((error) => {
+        console.error('[GameScene] PVP connection failed:', error);
+      });
+    }
+    
+    // OLD: Removed MultiplayerManager initialization
+    this.matchDuration = result.state.matchDuration;
+    
+    // вњ… Apply matchContext from data
+    if (data?.matchContext) {
+      this.matchContext = data.matchContext;
+      console.log(`[GameScene] Match context set to: ${this.matchContext}`);
+    } else if (this.isCampaignMode) {
+      this.matchContext = 'campaign';
+    } else {
+      this.matchContext = 'casual';
+    }
+    
+    // вњ… Apply tournament/league specific data
+    if (data?.tournamentId) {
+      this.tournamentId = data.tournamentId;
+      this.seriesId = data.seriesId;
+      this.round = data.round;
+    }
+    
+    if (data?.majorAbilityBonus) {
+      this.majorAbilityBonus = data.majorAbilityBonus;
+    }
+    
+    if (data?.aimAssistDisabled) {
+      this.aimAssistDisabled = data.aimAssistDisabled;
+    }
+  }
+
+  // ============================================================
+  // РЎРћР—Р”РђРќРР• РљРћРњРџРћРќР•РќРўРћР’
+  // ============================================================
+
+  private createMatchDirector(): void {
+    const state = this.getState();
+    
+    // рџ”Ґ FIX: Force Cyborg opponent for Level 1-1
+    let opponentFaction = state.opponentFaction;
+    if (this.isCampaignMode && this.campaignLevelConfig?.id === '1-1') {
+      console.log('[GameScene] OVERRIDE: Level 1-1 opponent set to CYBORG');
+      opponentFaction = 'cyborg';
+    }
+
+    // РћРїСЂРµРґРµР»СЏРµРј СЂРµР¶РёРј РґР»СЏ MatchDirector
+    let matchDirectorMode: 'standard' | 'campaign' | 'pvp' | 'tournament' | 'league' | 'custom';
+    if (this.isCampaignMode) {
+      matchDirectorMode = 'campaign';
+    } else if (this.isRealtimePvP) {
+      matchDirectorMode = 'pvp';
+    } else if (this.matchContext === 'tournament') {
+      matchDirectorMode = 'tournament';
+    } else if (this.matchContext === 'league') {
+      matchDirectorMode = 'league';
+    } else if (this.matchContext === 'casual' && this.isAIEnabled && playerData.get().currentMatchMode === 'custom') {
+      matchDirectorMode = 'custom'; // РўСЂРµРЅРёСЂРѕРІРѕС‡РЅС‹Р№ СЂРµР¶РёРј
+    } else {
+      matchDirectorMode = 'standard';
+    }
+    
+    console.log(`[GameScene] MatchDirector mode: ${matchDirectorMode}`);
+
+    this.matchDirector = new MatchDirector({
+      scene: this,
+      mode: matchDirectorMode,
+      ball: this.ball,
+      caps: this.caps as Unit[],
+      fieldBounds: this.fieldBounds,
+      matchDuration: state.matchDuration,
+      isAIMode: this.isAIEnabled,
+      playerFaction: state.playerFaction,
+      opponentFaction: opponentFaction, // Use override
+      campaignConfig: this.isCampaignMode && this.campaignLevelConfig ? {
+        levelConfig: this.campaignLevelConfig,
+        winCondition: this.campaignLevelConfig.winCondition,
+      } : undefined,
+      pvpConfig: this.isRealtimePvP ? {
+        isHost: this.isHost,
+        roomId: this.pvpHelper?.getCurrentRoomId() || '',
+      } : undefined,
+    });
+
+    this.matchDirector.on('goal', this.onGoal, this);
+    this.matchDirector.on('matchEnd', this.onMatchEnd, this);
+    this.matchDirector.on('turnChange', this.onTurnChange, this);
+    this.matchDirector.on('timerWarning', this.onTimerWarning, this);
+  }
+
+  private createControllers(): void {
     this.shootingController = new ShootingController(this);
+    
+    // вњ… Task 1: Disable legacy Void swap-by-tap (swap should only happen via AbilityManager card ability)
+    this.shootingController.setLegacyVoidSwapEnabled(false);
 
-    if (this.state.isPvPMode) {
-      this.shootingController.setPvPMode(true, this.state.isHost);
+    // вњ… Tournament: РћС‚РєР»СЋС‡Р°РµРј aim assist РґР»СЏ Galactic Apex
+    if (this.aimAssistDisabled) {
+      // ShootingController РЅРµ РёРјРµРµС‚ РјРµС‚РѕРґР° setAimAssistEnabled, РЅРѕ РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ С„Р»Р°Рі
+      // РџРѕРєР° РѕСЃС‚Р°РІР»СЏРµРј РєР°Рє РµСЃС‚СЊ, РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РїРѕР·Р¶Рµ
+      console.log('[GameScene] Aim assist disabled for Galactic Apex');
+    }
+    
+    // ✅ NEW PVP: Подключаем callback для отправки ударов на сервер
+    if (this.isRealtimePvP && this.pvpHelper) {
+      this.shootingController.onPvPShot((unitId, velocity) => {
+        this.pvpHelper!.sendShot(unitId, velocity);
+      });
+      
+      // Устанавливаем PVP режим
+      const myTeam = this.pvpHelper.getMyTeam();
+      this.shootingController.setPvPMode(true, myTeam === 1);
+      
+      console.log('[GameScene] PVP ShootingController configured');
     }
 
-    const myOwner = this.state.isPvPMode ? this.getMyOwner() : 1;
+    // OLD: Removed setPvPMode call (already done in createControllers)
+
+    const myOwner: PlayerNumber = this.isRealtimePvP ? this.getMyOwner() : 1;
     let localCapIndex = 0;
 
-    this.caps.forEach((cap) => {
+    this.caps.forEach(cap => {
       if (cap.owner === myOwner) {
         this.shootingController.registerCap(cap as any, localCapIndex);
         localCapIndex++;
       }
     });
 
-    if (this.state.isPvPMode) {
-      const isMyTurn = this.state.currentTurnId === this.mp.getMyId();
-      const activeOwner: PlayerNumber = isMyTurn ? myOwner : (myOwner === 1 ? 2 : 1);
+    this.shootingController.onCapSelected(this.onCapSelected.bind(this));
+    this.shootingController.onShoot(this.onShoot.bind(this));
+    this.shootingController.onSwap(this.onSwap.bind(this));
 
-      this.shootingController.setCurrentPlayer(activeOwner);
-      this.gameStateManager.setCurrentPlayer(activeOwner);
-      this.shootingController.setEnabled(isMyTurn);
-    } else {
-      this.shootingController.setCurrentPlayer(1);
-      this.gameStateManager.setCurrentPlayer(1);
-      this.shootingController.setEnabled(true);
-    }
+    if (this.isAIEnabled && !this.isRealtimePvP) {
+      const state = this.getState();
+      this.aiController = new AIController(this, state.aiDifficulty);
 
-    this.shootingController.onCapSelected((cap: ShootableUnit | null) => {
-      this.state.selectedCapId = cap?.id;
-      this.updateCapsAuraState();
-    });
+      const aiUnits = this.caps.filter(c => c.owner === 2);
+      const playerUnits = this.caps.filter(c => c.owner === 1);
 
-    this.shootingController.onShoot((data: ShootEventData) => this.handleShoot(data));
-
-    this.highlightCurrentPlayerCaps();
-
-    // === AI Controller (ОБНОВЛЁННАЯ ВЕРСИЯ) ===
-    if (this.state.isAIEnabled && !this.state.isPvPMode) {
-      this.aiController = new AIController(this, this.state.aiDifficulty);
-      
-      // Юниты AI (player 2)
-      const aiUnits = this.caps.filter((c) => c.owner === 2);
-      
-      // Юниты игрока (player 1) - для полной симуляции
-      const playerUnits = this.caps.filter((c) => c.owner === 1);
-      
-      // Инициализируем с обеими командами
       this.aiController.init(aiUnits as any[], this.ball, playerUnits as any[]);
-      
+
+      // вњ… NEW: Wire AI card callback to AbilityManager
+      this.aiController.setCardUsedCallback((cardId, targetData) => {
+        console.log(`[GameScene] AI using card: ${cardId}`, targetData);
+        if (this.player2AbilityManager) {
+          // Delegate to AbilityManager for actual effect
+          this.player2AbilityManager.handleAICardUsage(cardId, targetData);
+        }
+      });
+
       this.aiController.onMoveComplete(() => {
-        console.log('[GameScene] AI move complete');
-        this.gameStateManager.onShot();
+        this.aiTurnScheduled = false;
+        this.matchDirector.onShot('ai_unit');
       });
     }
   }
 
+  private createManagers(): void {
+    const state = this.getState();
+
+    this.celebrationManager = new CelebrationManager(this, {
+      useFactions: state.useFactions,
+      playerFaction: state.playerFaction,
+      currentArena: state.currentArena,
+    });
+
+    // вњ… РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ AchievementManager РґР»СЏ РјР°С‚С‡Р°
+    import('../managers/AchievementManager').then(({ AchievementManager }) => {
+      this.achievementManager = new AchievementManager(this);
+    });
+
+    this.collisionHandler = new CollisionHandler(
+      {
+        scene: this,
+        fieldBounds: this.fieldBounds,
+        fieldScale: this.fieldBounds.width / 600,
+        isPvPMode: this.isRealtimePvP,
+        isHost: this.isHost,
+        useFactions: state.useFactions,
+        playerFaction: state.playerFaction,
+      },
+      {
+        getBall: () => this.ball,
+        getCaps: () => this.caps,
+        getLastShootingCap: () => this.lastShootingCap,
+        getLastShootingCapId: () => this.lastShootingCap?.id,
+        getBallSpeedBeforeCollision: () => 0,
+        setBallSpeedBeforeCollision: () => {},
+        getGuestLocalPhysicsUntil: () => 0,
+        setGuestLocalPhysicsUntil: () => {},
+        clearSnapshotBuffer: () => {},
+        getFieldRenderer: () => this.fieldRenderer,
+        debug: { log: () => {}, error: () => {}, incrementFrame: () => {}, getFrameCount: () => 0 } as any,
+        triggerHaptic: HapticManager.trigger,
+      }
+    );
+    this.collisionHandler.setup();
+    
+    // ✅ ИСПРАВЛЕНО: Сначала создаём AbilityManager
+    this.createAbilityManagers();
+    
+    // ✅ PASSIVE SYSTEM: Создаём PassiveManager
+    this.passiveManager = new PassiveManager(this, 1);
+    
+    // Регистрируем все юниты и мяч
+    this.caps.forEach(cap => {
+      if (cap instanceof Unit) {
+        this.passiveManager.registerUnit(cap);
+        cap.setPassiveManager(this.passiveManager);
+      }
+    });
+    this.passiveManager.registerBall(this.ball);
+    
+    // Подключаем PassiveManager ко всем системам
+    this.shootingController.setPassiveManager(this.passiveManager);
+    this.abilityManager.setPassiveManager(this.passiveManager);
+    this.collisionHandler.setPassiveManager(this.passiveManager);
+    
+    // Подписываемся на события пассивок
+    this.setupPassiveEventListeners();
+    
+    // Initialize CampaignDialogueSystem for campaign mode
+    if (this.isCampaignMode && this.campaignLevelConfig) {
+      this.campaignDialogue = new CampaignDialogueSystem(this);
+      this.campaignDialogue.initForLevel(this.campaignLevelConfig);
+    }
+    
+    // OLD: Removed old pvpSync initialization (using pvpHelper now)
+  }
+  
+  // ============================================================
+  // TUTORIAL SYSTEM
+  // ============================================================
+
+  /**
+   * Инициализация системы обучения
+   */
+  private initializeTutorial(): void {
+    console.log('[GameScene] Initializing tutorial system');
+    
+    // Проверяем наличие необходимых компонентов
+    if (!this.shootingController) {
+      console.error('[GameScene] Cannot init tutorial: shootingController not found');
+      return;
+    }
+    
+    this.tutorialManager = new TutorialManager({
+      scene: this,
+      playerFaction: this.storedPlayerFaction || 'magma',
+      fieldBounds: this.fieldBounds,
+      shootingController: this.shootingController,
+      onComplete: () => this.onTutorialComplete(),
+      onSkip: () => this.onTutorialSkip()
+    });
+    
+    // Передаём игровые объекты
+    const playerUnits = this.caps.filter(c => c.owner === 1);
+    const aiUnits = this.caps.filter(c => c.owner === 2);
+    
+    console.log(`[GameScene] Tutorial units: ${playerUnits.length} player, ${aiUnits.length} AI`);
+    
+    // Логируем классы юнитов для отладки
+    playerUnits.forEach((u, i) => {
+      const capClass = u.getCapClass ? u.getCapClass() : 'unknown';
+      console.log(`[GameScene] Player unit ${i}: ${u.id}, class: ${capClass}`);
+    });
+    
+    this.tutorialManager.setGameObjects(playerUnits, aiUnits, this.ball);
+    
+    // Запускаем туториал
+    this.tutorialManager.start();
+    
+    console.log('[GameScene] Tutorial system initialized and started');
+  }
+
+  /**
+   * Обработка завершения обучения
+   */
+  private onTutorialComplete(): void {
+    console.log('[GameScene] Tutorial completed successfully');
+    
+    // Уничтожаем менеджер
+    if (this.tutorialManager) {
+      this.tutorialManager.destroy();
+      this.tutorialManager = undefined;
+    }
+    
+    this.isTutorialMode = false;
+    
+    // Показываем сообщение об успехе (опционально)
+    // this.showNotification('Обучение завершено!');
+    
+    // Переходим в главное меню
+    this.scene.stop('GameScene');
+    this.scene.start('MainMenuScene', { fromTutorial: true });
+  }
+
+  /**
+   * Обработка пропуска обучения
+   */
+  private onTutorialSkip(): void {
+    console.log('[GameScene] Tutorial skipped by user');
+    
+    // Уничтожаем менеджер
+    if (this.tutorialManager) {
+      this.tutorialManager.destroy();
+      this.tutorialManager = undefined;
+    }
+    
+    this.isTutorialMode = false;
+    
+    // Переходим в главное меню
+    this.scene.stop('GameScene');
+    this.scene.start('MainMenuScene', { fromTutorial: true, skipped: true });
+  }
+
+  private setupPassiveEventListeners(): void {
+    eventBus.on(GameEvents.PASSIVE_ACTIVATED, (data: any) => {
+      this.showPassiveText(data.x, data.y, data.text, data.color);
+    });
+    
+    eventBus.on(GameEvents.UNIT_TELEPORT, (data: any) => {
+      const unit = this.getUnitById(data.unitId);
+      if (unit && unit instanceof Unit) {
+        unit.teleportTo?.(data.x, data.y);
+        this.vfxManager?.playTeleportEffect?.(data.x, data.y, 0x6366f1);
+      }
+    });
+    
+    eventBus.on(GameEvents.PASSIVE_PUSH, (data: any) => {
+      const unit = this.getUnitById(data.targetUnitId);
+      if (unit) {
+        unit.applyForce(data.pushX * 0.01, data.pushY * 0.01);
+      }
+    });
+    
+    eventBus.on(GameEvents.BALL_PASS_THROUGH, (data: any) => {
+      this.ball.setPassThroughCount(data.count);
+    });
+    
+    eventBus.on(GameEvents.CREATE_LAVA_POOL, (data: any) => {
+      if (this.abilityManager) {
+        this.abilityManager.createLavaPoolAt(data.x, data.y);
+      }
+    });
+  }
+  
+  private getUnitById(unitId: string): GameUnit | undefined {
+    return this.caps.find(cap => {
+      if (cap instanceof Unit) {
+        return cap.getUnitId() === unitId;
+      }
+      return cap.id === unitId;
+    });
+  }
+  
+  private showPassiveText(x: number, y: number, text: string, color: number): void {
+    const textObj = this.add.text(x, y, text, {
+      fontSize: '14px',
+      fontStyle: 'bold',
+      color: '#' + color.toString(16).padStart(6, '0'),
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5);
+    
+    this.tweens.add({
+      targets: textObj,
+      y: y - 30,
+      alpha: 0,
+      duration: 1000,
+      ease: 'Power2',
+      onComplete: () => textObj.destroy(),
+    });
+  }
+
+  private createAbilityManagers(): void {
+    const state = this.getState();
+    const playerFaction = state.playerFaction || 'cyborg';
+    const opponentFaction = state.opponentFaction || 'magma';
+
+    this.abilityManager = new AbilityManager({
+      scene: this,
+      getCaps: () => this.caps,
+      getBall: () => this.ball,
+      getFieldBounds: () => this.fieldBounds,
+      isHost: this.isHost,
+      isPvPMode: this.isRealtimePvP,
+      playerFaction,
+      playerId: 1,
+      vfxManager: this.vfxManager,
+    });
+
+    this.player2AbilityManager = new AbilityManager({
+      scene: this,
+      getCaps: () => this.caps,
+      getBall: () => this.ball,
+      getFieldBounds: () => this.fieldBounds,
+      isHost: this.isHost,
+      isPvPMode: false, // OLD PVP system removed, always false
+      playerFaction: opponentFaction,
+      playerId: 2,
+      vfxManager: this.vfxManager,
+    });
+
+    this.setupAbilityManagerEvents();
+  }
+
+  // вњ… РЈР›РЈР§РЁР•РќРћ: РЎРѕР±С‹С‚РёСЏ AbilityManager СЃ РїСЂР°РІРёР»СЊРЅРѕР№ Р±Р»РѕРєРёСЂРѕРІРєРѕР№ РІРІРѕРґР°
+  private setupAbilityManagerEvents(): void {
+    this.abilityManager.on('card_activation_started', (data: any) => {
+      console.log('[GameScene] Card activation started:', data);
+      
+      // рџ”Ґ РљР РРўРР§РќРћ: Р‘Р»РѕРєРёСЂСѓРµРј СЃС‚СЂРµР»СЊР±Сѓ СЃРѕРіР»Р°СЃРЅРѕ РўР—
+      this.isAbilityInputActive = true;
+      this.shootingController.setEnabled(false);
+      
+      // Р’РёР·СѓР°Р»СЊРЅС‹Р№ С„РёРґР±РµРє - Р·Р°С‚РµРјРЅСЏРµРј РїР°РЅРµР»СЊ СЃС‚СЂРµР»СЊР±С‹
+      this.updateCardPanelUI();
+      
+      // Dispatch СЃРѕР±С‹С‚РёРµ РґР»СЏ UI
+      eventBus.dispatch(GameEvents.ABILITY_ACTIVATION_STARTED, {
+        playerId: 1,
+        abilityType: data.cardId,
+        targetType: data.targetType,
+      });
+    });
+
+    this.abilityManager.on('card_activation_cancelled', (data: any) => {
+      console.log('[GameScene] Card activation cancelled');
+      
+      // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј СЃС‚СЂРµР»СЊР±Сѓ
+      this.isAbilityInputActive = false;
+      
+      // Р’РєР»СЋС‡Р°РµРј СЃС‚СЂРµР»СЊР±Сѓ С‚РѕР»СЊРєРѕ РµСЃР»Рё СЃРµР№С‡Р°СЃ С…РѕРґ РёРіСЂРѕРєР°
+      if (this.matchDirector.getCurrentPlayer() === 1) {
+        this.shootingController.setEnabled(true);
+      }
+      
+      this.updateCardPanelUI();
+    });
+
+    this.abilityManager.on('card_activated', (data: any) => {
+      console.log('[GameScene] Card activated:', data);
+      
+      this.isAbilityInputActive = false;
+      
+      AudioManager.getInstance().playSFX('sfx_ability');
+      
+      // рџЋЇ РћР±РЅРѕРІР»СЏРµРј РµР¶РµРґРЅРµРІРЅРѕРµ Р·Р°РґР°РЅРёРµ РЅР° РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
+      try {
+        import('../data/DailyTasks').then(({ dailyTasksManager }) => {
+          dailyTasksManager.updateTaskProgress('use_abilities', 1);
+        });
+      } catch (error) {
+        console.warn('[GameScene] Failed to update daily tasks:', error);
+      }
+      HapticManager.trigger('medium');
+      this.updateCardPanelUI();
+      
+      // Р—Р°РїСѓСЃРєР°РµРј С‚Р°Р№РјРµСЂ РѕР±РЅРѕРІР»РµРЅРёСЏ РєСѓР»РґР°СѓРЅР°
+      this.startCooldownTimer();
+      
+      // РќРµР±РѕР»СЊС€Р°СЏ Р·Р°РґРµСЂР¶РєР° РїРµСЂРµРґ РІРєР»СЋС‡РµРЅРёРµРј СЃС‚СЂРµР»СЊР±С‹ РґР»СЏ РёР·Р±РµР¶Р°РЅРёСЏ СЃР»СѓС‡Р°Р№РЅС‹С… РєР»РёРєРѕРІ
+      this.time.delayedCall(300, () => {
+        if (this.matchDirector.getCurrentPlayer() === 1 && !this.abilityManager.isActivating()) {
+          this.shootingController.setEnabled(true);
+        }
+      });
+    });
+
+    this.abilityManager.on('unit_selected_for_pair', (data: any) => {
+      console.log('[GameScene] Unit selected for pair:', data);
+      // РњРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РІРёР·СѓР°Р»СЊРЅС‹Р№ С„РёРґР±РµРє
+      HapticManager.trigger('light');
+    });
+  }
+
   private createUI(): void {
+    const state = this.getState();
+
+    // вњ… League & Tournament: РњР°СЃРєРёСЂСѓРµРј Р±РѕС‚Р° РїРѕРґ СЂРµР°Р»СЊРЅРѕРіРѕ РёРіСЂРѕРєР°
+    let opponentName: string | undefined = undefined;
+    if ((this.matchContext === 'league' || this.matchContext === 'tournament') && this.isAIEnabled) {
+      // вњ… РРЎРџР РђР’Р›Р•РќРћ: РСЃРїРѕР»СЊР·СѓРµРј СѓР¶Рµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРЅРѕРµ РёРјСЏ, РµСЃР»Рё РѕРЅРѕ РµСЃС‚СЊ
+      if (this.opponentName) {
+        opponentName = this.opponentName;
+        console.log(`[GameScene] createUI(): Using existing opponentName: "${opponentName}"`);
+      } else {
+        // Р“РµРЅРµСЂРёСЂСѓРµРј СЃР»СѓС‡Р°Р№РЅРѕРµ РёРјСЏ С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРѕ РµС‰Рµ РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ
+        const names = ['NeonStrike', 'CyberBlade', 'VoidWalker', 'QuantumFlux', 'NovaPrime', 'AstroTitan', 'PlasmaEdge', 'ShadowPrime'];
+        const numbers = Math.floor(Math.random() * 999) + 1;
+        opponentName = `${names[Math.floor(Math.random() * names.length)]}${numbers}`;
+        // вњ… РЎРѕС…СЂР°РЅСЏРµРј РґР»СЏ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ РІ VS preview
+        this.opponentName = opponentName;
+        console.log(`[GameScene] createUI(): Generated new opponentName: "${opponentName}"`);
+      }
+    } else if (this.isRealtimePvP) {
+      opponentName = 'Opponent';
+    }
+
     this.gameHUD = new GameHUD(this, {
-      isAIMode: this.state.isAIEnabled,
-      aiDifficulty: this.state.aiDifficulty,
-      isPvP: this.state.isPvPMode,
-      opponentName: this.state.opponentPlayer?.name || 'Opponent',
-      matchDuration: this.state.matchDuration,
-      fieldSkinId: this.state.fieldSkinId,
-      arena: this.state.currentArena,
-      playerFaction: this.state.useFactions ? this.state.playerFaction : undefined,
-      opponentFaction: this.state.useFactions ? this.state.opponentFaction : undefined,
+      isAIMode: this.isAIEnabled,
+      aiDifficulty: state.aiDifficulty,
+      isPvP: this.isRealtimePvP,
+      opponentName: opponentName,
+      matchDuration: state.matchDuration,
+      fieldSkinId: state.fieldSkinId,
+      arena: state.currentArena,
+      playerFaction: state.useFactions ? state.playerFaction : undefined,
+      opponentFaction: state.useFactions ? state.opponentFaction : undefined,
     });
 
     this.gameHUD.onPause(() => {
@@ -489,746 +1187,1772 @@ export class GameScene extends Phaser.Scene {
       this.showPauseMenu();
     });
 
-    this.gameHUD.updateMatchTimer(this.state.matchRemainingTime, this.state.matchDuration);
-    this.updateHUD();
-  }
-
-  private setupPvP(): void {
-    this.pvpSyncManager = new PvPSyncManager(
-      this,
-      { isHost: this.state.isHost, myPlayerIndex: this.state.myPlayerIndex },
-      {
-        onShootExecuted: (data, isMyShoot) => this.handlePvPShootExecuted(data, isMyShoot),
-        onTurnChange: (data) => this.handlePvPTurnChange(data),
-        onGoalScored: (data) => this.handlePvPGoalScored(data),
-        onContinueGame: (data) => this.handlePvPContinueGame(data),
-        onMatchFinished: (data) => this.handlePvPMatchFinished(data),
-        onOpponentLeft: (reason, data) => this.handlePvPOpponentLeft(reason, data),
-        onTimerUpdate: (remaining, total) => {
-          this.state.matchRemainingTime = remaining;
-          this.gameHUD.updateMatchTimer(remaining, total);
-        },
-      },
-      this.debug
-    );
-
-    this.pvpSyncManager.setupListeners();
-    this.pvpSyncManager.startTimeSync();
-
-    if (this.state.isHost) {
-      this.pvpSyncManager.startSyncInterval(
-        () => this.ball,
-        () => this.caps
-      );
-    }
-
-    this.createDebugOverlay();
-    this.debug.log('INIT', 'Caps created:');
-    this.debug.logCapsState(this.caps);
-  }
-
-  private startOfflineMatch(): void {
-    this.matchTimer.start();
-  }
-
-  private createDebugOverlay(): void {
-    if (!this.state.isPvPMode) return;
-
-    this.debugOverlay = this.add
-      .text(10, 10, '', {
-        fontSize: '11px',
-        fontFamily: 'monospace',
-        color: this.state.isHost ? '#00ff00' : '#00aaff',
-        backgroundColor: 'rgba(0,0,0,0.8)',
-        padding: { x: 4, y: 4 },
-      })
-      .setDepth(9999)
-      .setScrollFactor(0);
-
-    this.time.addEvent({
-      delay: 100,
-      callback: () => this.updateDebugOverlay(),
-      loop: true,
+    // Ability Button (legacy - СЃРєСЂС‹С‚, РёСЃРїРѕР»СЊР·СѓРµРј РєР°СЂС‚С‹)
+    this.abilityButton = new AbilityButton(this, {
+      abilityManager: this.abilityManager as any,
+      factionId: state.playerFaction || 'cyborg',
     });
-  }
+    this.abilityButton.hide();
 
-  private updateDebugOverlay(): void {
-    if (!this.debugOverlay || !this.state.isPvPMode) return;
+    this.createCardPanel();
 
-    const role = this.state.isHost ? 'HOST' : 'GUEST';
-    const isMyTurn = this.state.currentTurnId === this.mp.getMyId();
-    const state = this.gameStateManager.getState();
-    const fps = Math.round(this.game.loop.actualFps);
-    const now = this.time.now;
-    const inLocal = this.state.guestLocalPhysicsUntil > 0 && now < this.state.guestLocalPhysicsUntil;
-    const phase = inLocal ? 'LOCAL' : 'SYNC';
-    const snapshotCount = this.pvpSyncManager?.getSnapshotBuffer().length || 0;
+    const isFirstTutorialMatch = this.isCampaignMode &&
+      this.campaignLevelConfig?.id === '1-1' &&
+      !playerData.hasCompletedFirstMatchTutorial();
 
-    const arenaInfo = this.state.currentArena ? `\nArena: ${this.state.currentArena.name}` : '';
-    const factionInfo = this.state.useFactions ? `\nFaction: ${this.state.playerFaction}${arenaInfo}` : '';
+    this.tutorialOverlay = new TutorialOverlay(this, isFirstTutorialMatch);
 
-    this.debugOverlay.setText([
-      `[${role}] FPS:${fps}`,
-      `State:${state} Turn:${isMyTurn ? 'ME' : 'OPP'}`,
-      `Phase:${phase} Snaps:${snapshotCount}${factionInfo}`,
-    ].join('\n'));
-  }
-
-  // === UPDATE LOOP ===
-
-  update(): void {
-    const state = this.gameStateManager.getState();
-    if (state === 'paused' || state === 'finished' || state === 'goal') return;
-    if (this.state.isGoalCelebrating) return;
-
-    if (this.state.isPvPMode) {
-      this.updatePvP();
-    } else {
-      this.updateOffline();
-    }
-
-    this.updateCrowdIntensity();
-  }
-
-  private updatePvP(): void {
-    this.debug.incrementFrame();
-
-    if (this.state.isHost) {
-      this.ball.update();
-      this.caps.forEach((cap) => cap.update());
-      this.gameStateManager.update();
-      this.goalDetector.update();
-      this.checkBoundaries();
-    } else {
-      const now = this.time.now;
-      const inLocalPhysics = this.state.guestLocalPhysicsUntil > 0 && now < this.state.guestLocalPhysicsUntil;
-
-      if (inLocalPhysics) {
-        this.ball.update();
-        this.caps.forEach((cap) => cap.update());
-        this.checkBoundaries();
-
-        if (this.debug.getFrameCount() % 60 === 0) {
-          this.debug.log('LOCAL_PHYSICS', 'Running local simulation');
-        }
-
-        // Drift correction
-        const lastSnapshot = this.pvpSyncManager?.getLastServerSnapshot();
-        if (lastSnapshot && now > this.state.syncGracePeriodUntil) {
-          const dist = Phaser.Math.Distance.Between(
-            this.ball.x,
-            this.ball.y,
-            lastSnapshot.ball.x,
-            lastSnapshot.ball.y
-          );
-
-          if (dist > 200) {
-            this.debug.log('SYNC', `Critical drift (${dist.toFixed(1)}px), hard reset`);
-            this.state.guestLocalPhysicsUntil = 0;
-            this.pvpSyncManager?.clearState();
-          } else if (dist > 10) {
-            const lerpFactor = 0.2;
-            const newBallX = Phaser.Math.Linear(this.ball.body.position.x, lastSnapshot.ball.x, lerpFactor);
-            const newBallY = Phaser.Math.Linear(this.ball.body.position.y, lastSnapshot.ball.y, lerpFactor);
-            const newBallVX = Phaser.Math.Linear(this.ball.body.velocity.x, lastSnapshot.ball.vx, lerpFactor);
-            const newBallVY = Phaser.Math.Linear(this.ball.body.velocity.y, lastSnapshot.ball.vy, lerpFactor);
-
-            this.matter.body.setPosition(this.ball.body, { x: newBallX, y: newBallY });
-            this.matter.body.setVelocity(this.ball.body, { x: newBallVX, y: newBallVY });
-          }
-        }
-      } else {
-        this.pvpSyncManager?.interpolateAndApply(this.ball, this.caps, this.fieldBounds);
-        this.ball.syncSpriteWithBody();
-        this.caps.forEach((cap) => cap.syncSpriteWithBody());
-      }
-    }
-  }
-
-  private updateOffline(): void {
-    this.ball.update();
-    this.caps.forEach((cap) => cap.update());
-    this.gameStateManager.update();
-    this.goalDetector.update();
-    this.checkBoundaries();
-  }
-
-  private updateCrowdIntensity(): void {
-    if (!this.ball || !this.fieldBounds) return;
-    const dist = (this.ball.y - this.fieldBounds.top) / this.fieldBounds.height;
-    const intensity = dist < 0.25 ? 0.7 : dist < 0.5 ? 0.4 : 0.2;
-    AudioManager.getInstance().setAmbienceVolume(intensity);
-  }
-
-  private checkBoundaries(): void {
-    const bounds = this.fieldBounds;
-    const goalHW = (GOAL.WIDTH * this.state.fieldScale) / 2;
-
-    this.constrainBody(this.ball, bounds, goalHW, 5);
-    this.caps.forEach((cap) => this.constrainBody(cap, bounds, 0, 5));
-  }
-
-  private constrainBody(
-    entity: Ball | GameUnit,
-    bounds: FieldBounds,
-    goalHW: number,
-    padding: number
-  ): void {
-    const pos = entity.body.position;
-    const vel = entity.body.velocity;
-    const r = entity.getRadius();
-    const inGoalX = goalHW > 0 && Math.abs(pos.x - bounds.centerX) < goalHW;
-
-    if (pos.x < bounds.left + r - padding) {
-      this.matter.body.setPosition(entity.body, { x: bounds.left + r, y: pos.y });
-      this.matter.body.setVelocity(entity.body, { x: Math.abs(vel.x) * 0.5, y: vel.y });
-    }
-    if (pos.x > bounds.right - r + padding) {
-      this.matter.body.setPosition(entity.body, { x: bounds.right - r, y: pos.y });
-      this.matter.body.setVelocity(entity.body, { x: -Math.abs(vel.x) * 0.5, y: vel.y });
-    }
-    if (pos.y < bounds.top + r - padding && !inGoalX) {
-      this.matter.body.setPosition(entity.body, { x: pos.x, y: bounds.top + r });
-      this.matter.body.setVelocity(entity.body, { x: vel.x, y: Math.abs(vel.y) * 0.5 });
-    }
-    if (pos.y > bounds.bottom - r + padding && !inGoalX) {
-      this.matter.body.setPosition(entity.body, { x: pos.x, y: bounds.bottom - r });
-      this.matter.body.setVelocity(entity.body, { x: vel.x, y: -Math.abs(vel.y) * 0.5 });
-    }
-  }
-
-  // === SHOOTING ===
-
-  private handleShoot(data: ShootEventData): void {
-    this.debug.log('SHOOT', 'Local shoot', {
-      capId: data.cap.id,
-      localCapIndex: data.localCapIndex,
-      velocity: data.velocity,
-      hitOffset: data.hitOffset,
-    });
-
-    this.state.isProcessingTurn = true;
-    this.state.lastShootTime = this.time.now;
-    this.shootingController.setEnabled(false);
-
-    this.state.selectedCapId = undefined;
-    this.updateCapsAuraState();
-
-    this.state.lastShootingCapId = data.cap.id;
-    this.lastShootingCap = data.cap as any;
-    this.state.syncGracePeriodUntil = this.time.now + 500;
-
-    const shootingCap = this.caps.find((c) => c.id === data.cap.id);
-    if (shootingCap && hasPlayHitEffect(shootingCap)) {
-      shootingCap.playHitEffect();
-    }
-
-    if (this.state.isPvPMode && !this.state.isHost) {
-      this.pvpSyncManager?.clearState();
-      this.state.guestLocalPhysicsUntil = this.time.now + 10000;
-
-      this.matter.body.setVelocity(data.cap.body, { x: 0, y: 0 });
-      this.matter.body.setVelocity(data.cap.body, { x: data.velocity.x, y: data.velocity.y });
-
-      const speed = Math.sqrt(data.velocity.x * data.velocity.x + data.velocity.y * data.velocity.y);
-      this.debug.log('PHYSICS', `Local physics started (speed: ${speed.toFixed(1)})`);
-    }
-
-    this.gameStateManager.onShot();
-
-    if (this.state.isPvPMode) {
-      const startIndex = this.mp.getMyCapStartIndex();
-      const serverCapId = startIndex + data.localCapIndex;
-
-      const shootData: any = {
-        capId: serverCapId,
-        force: data.velocity,
-        position: { x: data.cap.body.position.x, y: data.cap.body.position.y },
-      };
-
-      if (data.hitOffset !== undefined && Math.abs(data.hitOffset) > 0.1) {
-        shootData.hitOffset = data.hitOffset;
-      }
-
-      this.mp.sendShoot(serverCapId, data.velocity, shootData.position, shootData.hitOffset);
-    }
-  }
-
-  // === PVP HANDLERS ===
-
-  private handlePvPShootExecuted(data: ShootData, isMyShoot: boolean): void {
-    this.debug.log('SHOOT_RECV', `capId=${data.capId} isMyShoot=${isMyShoot}`, data.force);
-
-    if (isMyShoot) {
-      this.debug.log('SHOOT', 'Confirmed by server');
-      return;
-    }
-
-    this.state.isProcessingTurn = true;
-    this.shootingController.setEnabled(false);
-    this.gameStateManager.onShot();
-    this.state.lastShootTime = this.time.now;
-
-    this.state.selectedCapId = undefined;
-    this.updateCapsAuraState();
-
-    if (!this.state.isHost) {
-      this.state.guestLocalPhysicsUntil = 0;
-      this.pvpSyncManager?.clearState();
-    }
-
-    if (this.state.isHost) {
-      const cap = this.caps[data.capId];
-      if (!cap) {
-        this.debug.error('SHOOT', `Cap not found: ${data.capId}`);
-        return;
-      }
-
-      if (data.position) {
-        this.matter.body.setPosition(cap.body, data.position);
-      }
-
-      cap.highlight(true);
-      this.time.delayedCall(200, () => cap.highlight(false));
-
-      this.lastShootingCap = cap;
-
-      if ((data as any).hitOffset !== undefined) {
-        cap.setLastHitOffset((data as any).hitOffset);
-      }
-
-      this.matter.body.setVelocity(cap.body, { x: 0, y: 0 });
-      this.matter.body.setVelocity(cap.body, data.force);
-
-      if (hasPlayHitEffect(cap)) {
-        cap.playHitEffect();
-      }
-    } else {
-      const cap = this.caps[data.capId];
-      if (cap) {
-        cap.highlight(true);
-        this.time.delayedCall(200, () => cap.highlight(false));
-      }
-    }
-  }
-
-  private handlePvPTurnChange(data: { currentTurn: string; scores: Record<string, number> }): void {
-    const isMyTurn = data.currentTurn === this.mp.getMyId();
-    this.debug.log('TURN', isMyTurn ? '🎮 MY TURN' : '⏳ OPPONENT TURN');
-
-    const myOwner = this.getMyOwner();
-    const activeOwner: PlayerNumber = isMyTurn ? myOwner : (myOwner === 1 ? 2 : 1);
-
-    this.state.currentTurnId = data.currentTurn;
-    this.state.isProcessingTurn = false;
-    this.state.selectedCapId = undefined;
-    this.updateScoreFromPvP(data.scores);
-    this.gameStateManager.forceStop();
-
-    // Apply last snapshot on turn change (guest only)
-    if (!this.state.isHost) {
-      const lastSnapshot = this.pvpSyncManager?.getLastServerSnapshot();
-      if (lastSnapshot) {
-        this.debug.log('SYNC', 'Applying snapshot on turn change');
-        this.matter.body.setPosition(this.ball.body, { x: lastSnapshot.ball.x, y: lastSnapshot.ball.y });
-        this.matter.body.setVelocity(this.ball.body, { x: lastSnapshot.ball.vx, y: lastSnapshot.ball.vy });
-        this.ball.syncSpriteWithBody();
-
-        lastSnapshot.caps.forEach((capState, i) => {
-          const cap = this.caps[i];
-          if (cap) {
-            this.matter.body.setPosition(cap.body, { x: capState.x, y: capState.y });
-            this.matter.body.setVelocity(cap.body, { x: capState.vx, y: capState.vy });
-            cap.syncSpriteWithBody();
-          }
+    // ✅ NEW: Показываем введение в фишки для туториала
+    if (isFirstTutorialMatch && this.tutorialOverlay) {
+      this.time.delayedCall(1500, () => {
+        const playerCaps = this.caps
+          .filter(c => c.owner === 1)
+          .map(c => ({
+            x: c.x,
+            y: c.y,
+            capClass: c.getCapClass() || 'balanced',
+            unitId: c.id || '',
+          }));
+        
+        const enemyCaps = this.caps
+          .filter(c => c.owner === 2)
+          .map(c => ({
+            x: c.x,
+            y: c.y,
+            capClass: c.getCapClass() || 'balanced',
+            unitId: c.id || '',
+          }));
+        
+        this.tutorialOverlay?.showUnitsIntroduction(playerCaps, enemyCaps, () => {
+          console.log('[GameScene] Units introduction complete');
+          // Продолжаем обычный туториал
         });
-      }
-    }
-
-    this.state.guestLocalPhysicsUntil = 0;
-    this.pvpSyncManager?.clearState();
-    this.state.lastShootingCapId = undefined;
-    this.lastShootingCap = undefined;
-    this.state.syncGracePeriodUntil = 0;
-
-    this.shootingController.setCurrentPlayer(activeOwner);
-    this.gameStateManager.setCurrentPlayer(activeOwner);
-    this.shootingController.setEnabled(isMyTurn);
-
-    this.highlightCurrentPlayerCaps();
-    this.updateCapsAuraState();
-    this.updateHUD();
-  }
-
-  private handlePvPGoalScored(data: {
-    scorerId: string;
-    scores: Record<string, number>;
-    winner: string | null;
-    finalPositions?: FinalPositions;
-  }): void {
-    if (this.state.isGoalCelebrating) return;
-    this.state.isGoalCelebrating = true;
-
-    this.debug.log('GOAL', 'Scored!', data);
-
-    this.state.guestLocalPhysicsUntil = 0;
-    this.pvpSyncManager?.clearState();
-    this.state.lastShootingCapId = undefined;
-    this.lastShootingCap = undefined;
-    this.state.selectedCapId = undefined;
-
-    if (!this.state.isHost && data.finalPositions) {
-      this.pvpSyncManager?.applyFinalPositions(this.ball, this.caps, data.finalPositions);
-    }
-
-    this.freezeAllObjects();
-
-    const audio = AudioManager.getInstance();
-    audio.playSFX('sfx_net', { volume: 1.5 });
-    this.time.delayedCall(400, () => {
-      audio.playSFX('sfx_goal');
-      this.time.delayedCall(400, () => audio.playSFX('sfx_whistle', { volume: 0.8 }));
-    });
-
-    HapticManager.triggerNotification('success');
-    this.updateScoreFromPvP(data.scores);
-    this.state.isProcessingTurn = true;
-    this.shootingController.setEnabled(false);
-    this.gameStateManager.setGoalState();
-    this.updateHUD();
-
-    const isMyGoal = data.scorerId === this.mp.getMyId();
-    this.celebrationManager.showGoalCelebration(isMyGoal);
-    HapticManager.trigger(isMyGoal ? 'heavy' : 'medium');
-
-    if (this.state.isHost) {
-      this.time.delayedCall(3000, () => this.mp.sendReadyAfterGoal(data.scorerId));
-    }
-  }
-
-  private handlePvPContinueGame(data: { currentTurn: string }): void {
-    this.debug.log('GAME', 'Continue after goal');
-    this.celebrationManager.hide();
-    this.state.isGoalCelebrating = false;
-
-    this.state.guestLocalPhysicsUntil = 0;
-    this.pvpSyncManager?.clearState();
-    this.state.lastShootingCapId = undefined;
-    this.lastShootingCap = undefined;
-    this.state.selectedCapId = undefined;
-
-    this.state.currentTurnId = data.currentTurn;
-    this.resetPositions();
-    this.goalDetector.reset();
-    this.state.isProcessingTurn = false;
-    this.gameStateManager.forceStop();
-    this.gameStateManager.setPlayingState();
-
-    const isMyTurn = this.state.currentTurnId === this.mp.getMyId();
-    const myOwner = this.getMyOwner();
-    const activeOwner: PlayerNumber = isMyTurn ? myOwner : (myOwner === 1 ? 2 : 1);
-
-    this.shootingController.setCurrentPlayer(activeOwner);
-    this.gameStateManager.setCurrentPlayer(activeOwner);
-    this.shootingController.setEnabled(isMyTurn);
-
-    this.highlightCurrentPlayerCaps();
-    this.updateCapsAuraState();
-    this.updateHUD();
-    AudioManager.getInstance().playSFX('sfx_whistle', { volume: 0.5 });
-  }
-
-  private handlePvPMatchFinished(data: any): void {
-    this.debug.log('GAME', 'Match finished!', data);
-    const isMyWin = data.winner === this.mp.getMyId();
-    this.handlePvPMatchEnd(data.isDraw ? null : isMyWin, data.scores, data.reason, data.rewards);
-  }
-
-  private handlePvPOpponentLeft(reason: string, data: any): void {
-    this.debug.log('GAME', `Opponent left: ${reason}`);
-    AudioManager.getInstance().stopAmbience();
-    AudioManager.getInstance().playSFX('sfx_whistle');
-    AudioManager.getInstance().playSFX('sfx_win', { delay: 0.5 });
-    this.handlePvPMatchEnd(true, data.scores, reason, data.rewards);
-  }
-
-  private handlePvPMatchEnd(
-    isMyWin: boolean | null,
-    scores: Record<string, number>,
-    reason: string,
-    rewards?: Record<string, { coins: number; xp: number }>
-  ): void {
-    this.celebrationManager.hide();
-    this.state.isGoalCelebrating = false;
-    this.gameStateManager.finish();
-    this.shootingController.setEnabled(false);
-    this.state.isProcessingTurn = true;
-    this.gameHUD.setPauseEnabled(false);
-
-    const audio = AudioManager.getInstance();
-    audio.stopAmbience();
-    audio.playSFX('sfx_whistle');
-    audio.playSFX(isMyWin === null ? 'sfx_click' : isMyWin ? 'sfx_win' : 'sfx_lose', { delay: 0.5 });
-
-    const myId = this.mp.getMyId()!;
-    const myRewards = rewards?.[myId] || { coins: isMyWin ? 150 : 30, xp: isMyWin ? 50 : 15 };
-    const myScore = scores[myId] || 0;
-    const oppScore = scores[this.state.opponentPlayer?.id || ''] || 0;
-
-    const result = ResultHelper.createPvPResult(isMyWin, myScore, oppScore, reason, myRewards);
-    this.showResultScreen(result);
-  }
-
-  // === GOAL HANDLING ===
-
-  private onGoalDetected(player: PlayerNumber): void {
-    if (this.state.isPvPMode) {
-      if (this.state.isHost && this.time.now > 2000) {
-        const scorerId = player === 1 ? this.mp.getMyId()! : this.state.opponentPlayer!.id;
-        this.debug.log('GOAL', `Detected! Scorer: ${scorerId}`);
-        this.mp.sendGoal(scorerId, this.getCurrentPositions());
-      }
-    } else {
-      this.handleOfflineGoal(player);
-    }
-  }
-
-  private handleOfflineGoal(scoringPlayer: PlayerNumber): void {
-    const audio = AudioManager.getInstance();
-    audio.playSFX('sfx_net', { volume: 1.5 });
-    this.time.delayedCall(400, () => {
-      audio.playSFX('sfx_goal');
-      this.time.delayedCall(400, () => audio.playSFX('sfx_whistle', { volume: 0.8 }));
-    });
-
-    HapticManager.triggerNotification('success');
-
-    this.state.isProcessingTurn = true;
-    this.state.isGoalCelebrating = true;
-    this.state.selectedCapId = undefined;
-    this.gameStateManager.setGoalState();
-    this.shootingController.setEnabled(false);
-
-    if (this.aiController) {
-      this.aiController.stop();
-    }
-
-    this.matchTimer.pause();
-    this.matchController.addGoal(scoringPlayer);
-    this.scoreManager.addGoal(scoringPlayer);
-
-    // === ОБНОВЛЯЕМ СЧЁТ В AI ДЛЯ АДАПТИВНОЙ ИГРЫ ===
-    if (this.aiController) {
-      const scores = this.scoreManager.getScores();
-      this.aiController.updateScore(scores[1], scores[2]);
-      this.aiController.recordGoal(scoringPlayer === 1 ? 'player' : 'ai');
-    }
-
-    this.freezeAllObjects();
-    this.celebrationManager.showGoalCelebration(scoringPlayer === 1);
-    HapticManager.trigger(scoringPlayer === 1 ? 'heavy' : 'medium');
-
-    this.time.delayedCall(GAME.GOAL_DELAY, () => {
-      this.celebrationManager.hide();
-      this.state.isGoalCelebrating = false;
-      this.afterOfflineGoal(scoringPlayer);
-    });
-  }
-
-  private afterOfflineGoal(scoringPlayer: PlayerNumber): void {
-    if (this.matchController.applyPendingFormation()) {
-      this.applyFormationToField(this.matchController.getCurrentFormation());
-      this.gameHUD.hidePendingFormationBadge();
-      this.gameHUD.showFormationAppliedNotification();
-    }
-
-    this.resetPositions();
-
-    const nextPlayer: PlayerNumber = scoringPlayer === 1 ? 2 : 1;
-
-    if (this.aiController) {
-      this.aiController.stop();
-    }
-
-    this.gameStateManager.forceStop();
-    this.gameStateManager.setCurrentPlayer(nextPlayer);
-    this.shootingController.setCurrentPlayer(nextPlayer);
-    this.goalDetector.reset();
-    this.highlightCurrentPlayerCaps();
-    this.updateCapsAuraState();
-    this.updateHUD();
-    this.state.isProcessingTurn = false;
-    this.lastShootingCap = undefined;
-    this.state.selectedCapId = undefined;
-
-    this.matchTimer.resume();
-    AudioManager.getInstance().playSFX('sfx_whistle', { volume: 0.5 });
-
-    if (nextPlayer === 1) {
-      this.shootingController.setEnabled(true);
-    } else if (this.aiController) {
-      this.shootingController.setEnabled(false);
-      this.time.delayedCall(500, () => {
-        if (this.gameStateManager.getCurrentPlayer() === 2) {
-          this.aiController?.startTurn();
-        }
       });
     }
   }
 
-  private handleMatchTimeUp(): void {
-    console.log('[GameScene] Match time is up!');
+  // ============================================================
+  // вњ… РЈР›РЈР§РЁР•РќРћ: CARD PANEL UI РЎ РљРЈР›Р”РђРЈРќРћРњ
+  // ============================================================
 
-    this.matchTimer.stop();
+  private createCardPanel(): void {
+    const { width, height } = this.cameras.main;
 
-    if (this.aiController) {
-      this.aiController.stop();
+    // Создать контейнер панели карт внизу экрана
+    this.cardPanel = this.add.container(width / 2, height - this.CARD_PANEL_Y_OFFSET);
+    this.cardPanel.setDepth(150);
+
+    // Заполнить панель картами
+    this.updateCardPanelUI();
+  }
+
+  private updateCardPanelUI(): void {
+    if (!this.cardPanel) return;
+    
+    // Очистить старые элементы панели
+    this.cardPanel.removeAll(true);
+
+    // Получить слоты карт и кулдаун
+    const slots = this.abilityManager.getCardSlots();
+    const cooldownRemaining = this.abilityManager.getCooldownRemaining();
+
+    // Рассчитать позиции для центрирования
+    const totalWidth = slots.length * this.CARD_SLOT_WIDTH + (slots.length - 1) * this.CARD_SPACING;
+    const startX = -totalWidth / 2 + this.CARD_SLOT_WIDTH / 2;
+
+    // Создать UI для каждого слота
+    slots.forEach((slot, index) => {
+      const x = startX + index * (this.CARD_SLOT_WIDTH + this.CARD_SPACING);
+      const slotContainer = this.createCardSlotUI(x, 0, slot, index, cooldownRemaining);
+      this.cardPanel!.add(slotContainer);
+    });
+  }
+
+  private createCardSlotUI(
+    x: number,
+    y: number,
+    slot: { cardId: string | null; used: boolean },
+    slotIndex: number,
+    cooldownRemaining: number
+  ): Phaser.GameObjects.Container {
+    const container = this.add.container(x, y);
+
+    // ===== ПУСТОЙ ИЛИ ИСПОЛЬЗОВАННЫЙ СЛОТ =====
+    if (!slot.cardId || slot.used) {
+      const emptyBg = this.add.rectangle(
+        0, 0,
+        this.CARD_SLOT_WIDTH,
+        this.CARD_SLOT_HEIGHT,
+        0x1a1a2e,
+        0.6
+      );
+      emptyBg.setStrokeStyle(2, 0x333355);
+      container.add(emptyBg);
+      
+      if (slot.used) {
+        const usedText = this.add.text(0, 0, '✓', {
+          fontSize: '28px',
+          color: '#666666',
+        }).setOrigin(0.5);
+        container.add(usedText);
+      }
+      
+      return container;
     }
 
-    const scores = this.scoreManager.getScores();
-    let winner: PlayerNumber | null = null;
-
-    if (scores[1] > scores[2]) {
-      winner = 1;
-    } else if (scores[2] > scores[1]) {
-      winner = 2;
+    // ===== ПОЛУЧИТЬ ДАННЫЕ КАРТЫ =====
+    const card = getCard(slot.cardId);
+    if (!card) {
+      console.warn(`[GameScene] Card not found: ${slot.cardId}`);
+      return container;
     }
 
-    this.gameStateManager.finish();
+    // ===== ПРОВЕРКИ СОСТОЯНИЯ =====
+    const cardCount = playerData.getCardCount(slot.cardId);
+    const isOutOfStock = cardCount <= 0;
+    const isOnCooldown = cooldownRemaining > 0;
+    const isBlocked = isOutOfStock || isOnCooldown;
+
+    // ===== ИЗОБРАЖЕНИЕ КАРТЫ (масштабированное с 600x900) =====
+    const textureKey = `card_${card.id}`;
+    
+    // Проверить существование текстуры
+    if (!this.textures.exists(textureKey)) {
+      console.warn(`[GameScene] ⚠️ Texture not found: ${textureKey}`);
+      console.warn(`[GameScene] Available card textures:`, 
+        Object.keys(this.textures.list).filter(k => k.startsWith('card_'))
+      );
+      const placeholder = this.add.rectangle(0, 0, this.CARD_SLOT_WIDTH, this.CARD_SLOT_HEIGHT, 0x444444);
+      placeholder.setStrokeStyle(2, 0x666666);
+      container.add(placeholder);
+    } else {
+      const cardImage = this.add.image(0, 0, textureKey);
+      const scaleX = this.CARD_SLOT_WIDTH / 600;
+      const scaleY = this.CARD_SLOT_HEIGHT / 900;
+      const scale = Math.min(scaleX, scaleY);
+      cardImage.setScale(scale);
+      container.add(cardImage);
+    }
+
+    // ===== ЗАТЕМНЕНИЕ ЗАБЛОКИРОВАННОЙ КАРТЫ =====
+    if (isBlocked) {
+      const darkOverlay = this.add.rectangle(
+        0, 0,
+        this.CARD_SLOT_WIDTH,
+        this.CARD_SLOT_HEIGHT,
+        0x000000,
+        0.65
+      );
+      container.add(darkOverlay);
+
+      // Показать причину блокировки
+      if (isOnCooldown) {
+        // Таймер кулдауна
+        const cdText = this.add.text(0, 0, `${Math.ceil(cooldownRemaining)}s`, {
+          fontSize: '20px',
+          fontFamily: 'Orbitron, sans-serif',
+          color: '#ffffff',
+          stroke: '#000000',
+          strokeThickness: 4,
+        }).setOrigin(0.5);
+        container.add(cdText);
+      } else if (isOutOfStock) {
+        // Крестик "нет карт"
+        const noStockIcon = this.add.text(0, 0, '✕', {
+          fontSize: '32px',
+          color: '#ff4444',
+          stroke: '#000000',
+          strokeThickness: 4,
+        }).setOrigin(0.5);
+        container.add(noStockIcon);
+      }
+    }
+
+    // ===== СЧЁТЧИК КАРТ (x7) — правый верхний угол =====
+    const badgeOffsetX = this.CARD_SLOT_WIDTH / 2 - 14;
+    const badgeOffsetY = -this.CARD_SLOT_HEIGHT / 2 + 14;
+
+    const badgeCircle = this.add.circle(
+      badgeOffsetX,
+      badgeOffsetY,
+      13,
+      isOutOfStock ? 0x660000 : 0x006600
+    );
+    badgeCircle.setStrokeStyle(2, 0xffffff);
+    container.add(badgeCircle);
+
+    const countText = this.add.text(badgeOffsetX, badgeOffsetY, `x${cardCount}`, {
+      fontSize: '10px',
+      fontFamily: 'Orbitron, sans-serif',
+      color: '#ffffff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(countText);
+
+    // ===== ПОДСВЕТКА ВЫБРАННОЙ КАРТЫ =====
+    if (this.selectedCardSlotIndex === slotIndex && !isBlocked) {
+      const selectionGlow = this.add.rectangle(
+        0, 0,
+        this.CARD_SLOT_WIDTH + 8,
+        this.CARD_SLOT_HEIGHT + 8
+      );
+      selectionGlow.setStrokeStyle(3, 0x00ffff);
+      selectionGlow.setFillStyle(0x00ffff, 0.12);
+      container.addAt(selectionGlow, 0); // Добавить под карту
+    }
+
+    // ===== ИНТЕРАКТИВНАЯ ОБЛАСТЬ =====
+    const hitArea = this.add.rectangle(
+      0, 0,
+      this.CARD_SLOT_WIDTH,
+      this.CARD_SLOT_HEIGHT,
+      0x000000,
+      0 // Полностью прозрачная
+    );
+    hitArea.setInteractive({ useHandCursor: !isBlocked });
+    container.add(hitArea);
+
+    // ===== ОБРАБОТЧИКИ ВВОДА =====
+    let longPressTriggered = false;
+
+    hitArea.on('pointerdown', () => {
+      longPressTriggered = false;
+
+      // Удалить предыдущий таймер для этого слота
+      const existingTimer = this.longPressTimers.get(slotIndex);
+      if (existingTimer) {
+        existingTimer.remove();
+      }
+
+      // Создать таймер долгого нажатия
+      const longPressTimer = this.time.addEvent({
+        delay: this.LONG_PRESS_DELAY,
+        callback: () => {
+          longPressTriggered = true;
+          this.showEnlargedCard(card, cardCount, isBlocked);
+          
+          // Тактильный отклик
+          if (typeof HapticManager !== 'undefined') {
+            HapticManager.trigger('medium');
+          }
+        },
+      });
+      this.longPressTimers.set(slotIndex, longPressTimer);
+
+      // Визуальный отклик нажатия (уменьшение)
+      this.tweens.add({
+        targets: container,
+        scaleX: 0.92,
+        scaleY: 0.92,
+        duration: 100,
+        ease: 'Power2',
+      });
+    });
+
+    hitArea.on('pointerup', () => {
+      // Очистить таймер долгого нажатия
+      const timer = this.longPressTimers.get(slotIndex);
+      if (timer) {
+        timer.remove();
+        this.longPressTimers.delete(slotIndex);
+      }
+
+      // Вернуть масштаб
+      this.tweens.add({
+        targets: container,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 100,
+        ease: 'Power2',
+      });
+
+      // Если долгое нажатие НЕ сработало и карта НЕ увеличена — это короткий тап
+      if (!longPressTriggered && !this.isCardEnlarged) {
+        this.handleCardTap(slotIndex, isBlocked, cardCount);
+      }
+    });
+
+    hitArea.on('pointerout', () => {
+      // Очистить таймер при уходе пальца за пределы карты
+      const timer = this.longPressTimers.get(slotIndex);
+      if (timer) {
+        timer.remove();
+        this.longPressTimers.delete(slotIndex);
+      }
+
+      // Вернуть масштаб
+      this.tweens.add({
+        targets: container,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 100,
+        ease: 'Power2',
+      });
+    });
+
+    return container;
+  }
+
+  /**
+   * Обработка короткого тапа по карте — выбор для активации
+   */
+  private handleCardTap(slotIndex: number, isBlocked: boolean, cardCount: number): void {
+    // Если карта заблокирована — показать ошибку
+    if (isBlocked) {
+      // Тактильный отклик ошибки
+      if (typeof HapticManager !== 'undefined') {
+        HapticManager.trigger('error');
+      }
+
+      // Показать сообщение о причине
+      if (cardCount <= 0) {
+        this.showTemporaryMessage('Нет карт на складе!');
+      } else {
+        this.showTemporaryMessage('Карта на перезарядке!');
+      }
+      return;
+    }
+
+    // Если уже активируется другая карта — отменить
+    if (this.abilityManager.isActivating()) {
+      this.abilityManager.cancelActivation();
+      this.selectedCardSlotIndex = null;
+    } else if (this.abilityManager.canActivateCard(slotIndex)) {
+      // Активировать выбор карты
+      try {
+        AudioManager.getInstance().playSFX('sfx_click');
+      } catch (e) {
+        // AudioManager может быть недоступен
+      }
+
+      if (typeof HapticManager !== 'undefined') {
+        HapticManager.trigger('light');
+      }
+
+      this.selectedCardSlotIndex = slotIndex;
+      this.abilityManager.startCardActivation(slotIndex);
+    }
+
+    // Обновить UI панели карт
+    this.updateCardPanelUI();
+  }
+
+  /**
+   * Показать увеличенную карту на весь экран для чтения описания
+   */
+  private showEnlargedCard(card: CardDefinition, cardCount: number, isBlocked: boolean): void {
+    // Предотвратить повторное открытие
+    if (this.isCardEnlarged) return;
+    this.isCardEnlarged = true;
+
+    const { width, height } = this.cameras.main;
+
+    // Создать контейнер для увеличенной карты
+    this.enlargedCardContainer = this.add.container(width / 2, height / 2);
+    this.enlargedCardContainer.setDepth(500); // Поверх всего UI
+
+    // ===== ЗАТЕМНЁННЫЙ ФОН =====
+    const dimBackground = this.add.rectangle(
+      0, 0,
+      width * 2, // С запасом
+      height * 2,
+      0x000000,
+      0.75
+    );
+    dimBackground.setInteractive(); // Блокирует клики под собой
+    this.enlargedCardContainer.add(dimBackground);
+
+    // ===== УВЕЛИЧЕННАЯ КАРТА =====
+    const textureKey = `card_${card.id}`;
+    
+    // Рассчитать масштаб: карта занимает 85% высоты экрана
+    const targetHeight = height * this.ENLARGED_CARD_SCALE;
+    const cardScale = targetHeight / 900;
+
+    let cardImage: Phaser.GameObjects.Image;
+    
+    if (this.textures.exists(textureKey)) {
+      cardImage = this.add.image(0, 0, textureKey);
+    } else {
+      // Fallback если текстура не найдена
+      cardImage = this.add.image(0, 0, 'card_back');
+    }
+    
+    // Начальный масштаб для анимации (80% от целевого)
+    cardImage.setScale(cardScale * 0.8);
+    cardImage.setInteractive();
+    this.enlargedCardContainer.add(cardImage);
+
+    // ===== СЧЁТЧИК КАРТ НА УВЕЛИЧЕННОЙ КАРТЕ =====
+    const scaledWidth = 600 * cardScale;
+    const scaledHeight = 900 * cardScale;
+
+    const badgeContainer = this.add.container(
+      scaledWidth / 2 - 30,
+      -scaledHeight / 2 + 30
+    );
+
+    const badgeBg = this.add.circle(0, 0, 24, isBlocked ? 0x880000 : 0x008800);
+    badgeBg.setStrokeStyle(3, 0xffffff);
+    badgeContainer.add(badgeBg);
+
+    const badgeText = this.add.text(0, 0, `x${cardCount}`, {
+      fontSize: '16px',
+      fontFamily: 'Orbitron, sans-serif',
+      color: '#ffffff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    badgeContainer.add(badgeText);
+
+    this.enlargedCardContainer.add(badgeContainer);
+
+    // ===== ПОДСКАЗКА ЗАКРЫТИЯ =====
+    const hintText = this.add.text(0, scaledHeight / 2 + 50, 'Нажмите, чтобы закрыть', {
+      fontSize: '16px',
+      fontFamily: 'Orbitron, sans-serif',
+      color: '#888888',
+    }).setOrigin(0.5);
+    this.enlargedCardContainer.add(hintText);
+
+    // ===== АНИМАЦИЯ ПОЯВЛЕНИЯ =====
+    this.enlargedCardContainer.setAlpha(0);
+
+    // Плавное появление фона
+    this.tweens.add({
+      targets: this.enlargedCardContainer,
+      alpha: 1,
+      duration: 150,
+      ease: 'Power2',
+    });
+
+    // Эффект "выпрыгивания" карты
+    this.tweens.add({
+      targets: cardImage,
+      scale: cardScale,
+      duration: 250,
+      ease: 'Back.easeOut',
+    });
+
+    // ===== ОБРАБОТЧИКИ ЗАКРЫТИЯ =====
+    const closeEnlargedCard = () => {
+      this.hideEnlargedCard();
+    };
+
+    dimBackground.on('pointerdown', closeEnlargedCard);
+    cardImage.on('pointerdown', closeEnlargedCard);
+  }
+
+  /**
+   * Скрыть увеличенную карту с анимацией
+   */
+  private hideEnlargedCard(): void {
+    if (!this.isCardEnlarged || !this.enlargedCardContainer) return;
+
+    // Анимация исчезновения
+    this.tweens.add({
+      targets: this.enlargedCardContainer,
+      alpha: 0,
+      duration: 120,
+      ease: 'Power2',
+      onComplete: () => {
+        if (this.enlargedCardContainer) {
+          this.enlargedCardContainer.destroy();
+          this.enlargedCardContainer = undefined;
+        }
+        this.isCardEnlarged = false;
+      },
+    });
+  }
+
+  /**
+   * Показать временное сообщение на экране (исчезает через 1.5 секунды)
+   */
+  private showTemporaryMessage(message: string): void {
+    const { width, height } = this.cameras.main;
+
+    const messageText = this.add.text(width / 2, height - 160, message, {
+      fontSize: '20px',
+      fontFamily: 'Orbitron, sans-serif',
+      color: '#ff5555',
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(200);
+
+    // Анимация: всплытие вверх + исчезновение
+    this.tweens.add({
+      targets: messageText,
+      alpha: 0,
+      y: height - 200,
+      duration: 1500,
+      ease: 'Power2',
+      onComplete: () => {
+        messageText.destroy();
+      },
+    });
+  }
+
+  /**
+   * вњ… Р"РћР'РђР'Р›Р•РќРћ: Р'РёР·СѓР°Р»СЊРЅС‹Р№ С„РёРґР±РµРє РїСЂРё РїРѕРїС‹С‚РєРµ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РєР°СЂС‚Сѓ РЅР° РєСѓР»РґР°СѓРЅРµ
+   */
+  private showCooldownFeedback(): void {
+    if (!this.cardPanel) return;
+    
+    // Shake effect
+    this.tweens.add({
+      targets: this.cardPanel,
+      x: this.cardPanel.x + 5,
+      duration: 50,
+      yoyo: true,
+      repeat: 3,
+    });
+  }
+
+  /**
+   * вњ… Р”РћР‘РђР’Р›Р•РќРћ: РўР°Р№РјРµСЂ РѕР±РЅРѕРІР»РµРЅРёСЏ UI РєСѓР»РґР°СѓРЅР°
+   */
+  private startCooldownTimer(): void {
+    // РћС‡РёС‰Р°РµРј РїСЂРµРґС‹РґСѓС‰РёР№ С‚Р°Р№РјРµСЂ РµСЃР»Рё РµСЃС‚СЊ
+    if (this.cooldownTimer) {
+      this.cooldownTimer.destroy();
+    }
+
+    // РћР±РЅРѕРІР»СЏРµРј UI РєР°Р¶РґСѓСЋ СЃРµРєСѓРЅРґСѓ РїРѕРєР° РµСЃС‚СЊ РєСѓР»РґР°СѓРЅ
+    this.cooldownTimer = this.time.addEvent({
+      delay: 1000,
+      callback: () => {
+        const remaining = this.abilityManager.getCooldownRemaining();
+        // Guard against redraw while enlarged card or tooltip is active
+        if (!this.isCardTooltipOpen && !this.isCardEnlarged) {
+          if (remaining > 0) {
+            this.updateCardPanelUI();
+          } else {
+            this.cooldownTimer?.destroy();
+            this.cooldownTimer = undefined;
+            this.updateCardPanelUI();
+          }
+        }
+      },
+      loop: true,
+    });
+  }
+
+  private getCardSymbol(cardId: string): string {
+    const symbols: Record<string, string> = {
+      magma_lava: 'рџЊ‹', magma_molten: 'рџ”Ґ', magma_meteor: 'в„пёЏ',
+      cyborg_shield: 'рџ›ЎпёЏ', cyborg_tether: 'вљЎ', cyborg_barrier: 'рџ§±',
+      void_swap: 'рџ”„', void_ghost: 'рџ‘»', void_wormhole: 'рџЊЂ',
+      insect_toxin: 'вЈпёЏ', insect_mimic: 'рџЋ­', insect_parasite: 'рџ§ ',
+    };
+    return symbols[cardId] || 'вњ¦';
+  }
+
+  // ========== CARD INFO POPUP (RU Localization) ==========
+
+  /**
+   * вњ… Task A: Show card tooltip (used for long-press and cooldown feedback)
+   */
+  private showCardTooltip(
+    cardContainer: Phaser.GameObjects.Container,
+    card: ReturnType<typeof getCard>,
+    slotIndex: number,
+    cooldownSeconds?: number
+  ): void {
+    if (!card) return;
+
+    const panelWorldX = this.cardPanel!.x + cardContainer.x;
+    const panelWorldY = this.cardPanel!.y + cardContainer.y;
+    
+    this.showCardInfo(slotIndex, card.id, panelWorldX, panelWorldY, cooldownSeconds);
+  }
+
+  /**
+   * вњ… 2. Show card info tooltip/popup with Russian localization
+   */
+  private showCardInfo(slotIndex: number, cardId: string, worldX: number, worldY: number, cooldownSeconds?: number): void {
+    this.hideCardInfo(); // Remove previous popup if exists
+
+    const card = getCard(cardId);
+    if (!card) return;
+
+    const cardText = CARD_TEXT_RU[cardId];
+    const name = cardText?.name || card.name;
+    const desc = cardText?.desc || card.description || 'РћРїРёСЃР°РЅРёРµ РЅРµРґРѕСЃС‚СѓРїРЅРѕ';
+    const targetHint = cardText?.target || getTargetHintRU(card.targetType);
+
+    const { width, height } = this.cameras.main;
+    
+    // Position popup above the card panel (or near the card)
+    const panelY = height - 80;
+    const popupY = panelY - 140;
+    const popupX = Math.max(150, Math.min(width - 150, worldX));
+    
+    const popupWidth = Math.min(300, width - 40);
+    const popupPadding = 16;
+
+    this.cardInfoPopup = this.add.container(popupX, popupY);
+    this.cardInfoPopup.setDepth(30000);
+    // вњ… Task B: Ensure tooltip does NOT capture input - do not set interactive
+
+    // Background
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0a0a15, 0.98);
+    const popupHeight = cooldownSeconds ? 200 : 180;
+    bg.fillRoundedRect(-popupWidth / 2, 0, popupWidth, popupHeight, 12);
+    bg.lineStyle(2, cooldownSeconds ? 0xff6b6b : 0x00f2ff, 0.8);
+    bg.strokeRoundedRect(-popupWidth / 2, 0, popupWidth, popupHeight, 12);
+    this.cardInfoPopup.add(bg);
+
+    // Title
+    // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
+    const titleText = createText(this, Math.round(0), Math.round(12), name, {
+      size: 'lg',
+      font: 'primary',
+      color: '#ffffff',
+    }).setOrigin(0.5, 0);
+    this.cardInfoPopup.add(titleText);
+
+    // Description
+    // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
+    const descText = createText(this, Math.round(0), Math.round(42), desc, {
+      size: 'sm',
+      font: 'primary',
+      color: '#cccccc',
+      maxWidth: popupWidth - popupPadding * 2,
+    });
+    descText.setOrigin(0.5, 0);
+    descText.setLineSpacing(4);
+    this.cardInfoPopup.add(descText);
+
+    // Cooldown message if applicable
+    let currentY = descText.y + descText.height + 12;
+    if (cooldownSeconds !== undefined && cooldownSeconds > 0) {
+      // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
+      const cooldownText = createText(this, Math.round(0), Math.round(currentY), UI_RU.cooldown(cooldownSeconds), {
+        size: 'sm',
+        font: 'primary',
+        color: '#ff6b6b',
+      }).setOrigin(0.5, 0);
+      this.cardInfoPopup.add(cooldownText);
+      currentY += 24;
+    }
+
+    // Target hint
+    if (targetHint && !cooldownSeconds) {
+      // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
+      const targetText = createText(this, Math.round(0), Math.round(currentY), targetHint, {
+        size: 'xs',
+        font: 'primary',
+        color: '#00f2ff',
+        fontStyle: 'italic',
+      }).setOrigin(0.5, 0);
+      this.cardInfoPopup.add(targetText);
+    }
+
+    // Fade-in animation
+    this.cardInfoPopup.setAlpha(0);
+    this.tweens.add({
+      targets: this.cardInfoPopup,
+      alpha: 1,
+      duration: 150,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  /**
+   * Show card info with cooldown message
+   */
+  private showCardInfoWithCooldown(slotIndex: number, cardId: string, worldX: number, worldY: number, cooldownSeconds: number): void {
+    this.showCardInfo(slotIndex, cardId, worldX, worldY, cooldownSeconds);
+  }
+
+  /**
+   * вњ… Task 2: Hide card info popup
+   */
+  /**
+   * вњ… Task A: Hide card tooltip
+   */
+  private hideCardTooltip(): void {
+    this.hideCardInfo();
+  }
+
+  private hideCardInfo(): void {
+    if (this.cardInfoPopup) {
+      this.cardInfoPopup.destroy();
+      this.cardInfoPopup = undefined;
+    }
+    const wasOpen = this.isCardTooltipOpen;
+    this.isCardTooltipOpen = false; // вњ… Task C: Reset flag
+    this.selectedCardSlotIndex = null;
+    this.applyCardSlotSelectionVisuals(); // Reset scales
+    
+    // вњ… Task C: Refresh UI after tooltip closes (if it was open)
+    if (wasOpen) {
+      this.updateCardPanelUI();
+    }
+  }
+
+  /**
+   * вњ… Task 2: Apply selection visuals to card slots
+   * Finds containers by name and sets scale
+   */
+  private applyCardSlotSelectionVisuals(): void {
+    if (!this.cardPanel) return;
+    
+    const deck = this.abilityManager.getDeck();
+    deck.forEach((slot, index) => {
+      // вњ… Task 2: Find container by name
+      const slotContainer = this.cardPanel!.getByName(`card_slot_${index}`) as Phaser.GameObjects.Container;
+      if (slotContainer) {
+        if (index === this.selectedCardSlotIndex) {
+          slotContainer.setScale(1.15);
+        } else {
+          slotContainer.setScale(1.0);
+        }
+      }
+    });
+  }
+  
+  /**
+   * вњ… Task 2: Select card slot (sets selection state and shows info)
+   */
+  private selectCardSlot(slotIndex: number, cardId: string, x: number, y: number): void {
+    this.selectedCardSlotIndex = slotIndex;
+    this.applyCardSlotSelectionVisuals();
+    this.showCardInfo(slotIndex, cardId, x, y);
+  }
+
+  private subscribeToEvents(): void {
+    // Очищаем старые обработчики если есть
+    this.eventHandlers.clear();
+    
+    // UI_TIMER_UPDATED
+    const onTimerUpdated = (payload: { remaining: number; total: number }) => {
+      this.gameHUD?.updateMatchTimer(payload.remaining, payload.total);
+    };
+    this.eventHandlers.set(GameEvents.UI_TIMER_UPDATED, onTimerUpdated);
+    eventBus.subscribe(GameEvents.UI_TIMER_UPDATED, onTimerUpdated, this);
+
+    // UI_SCORE_UPDATED
+    const onScoreUpdated = (payload: { player1: number; player2: number }) => {
+      this.gameHUD?.updateScore(payload.player1, payload.player2);
+    };
+    this.eventHandlers.set(GameEvents.UI_SCORE_UPDATED, onScoreUpdated);
+    eventBus.subscribe(GameEvents.UI_SCORE_UPDATED, onScoreUpdated, this);
+
+    // CARD_ACTIVATED
+    const onCardActivated = () => {
+      this.updateCardPanelUI();
+    };
+    this.eventHandlers.set(GameEvents.CARD_ACTIVATED, onCardActivated);
+    eventBus.subscribe(GameEvents.CARD_ACTIVATED, onCardActivated, this);
+
+    // HAPTIC_FEEDBACK
+    const onHapticFeedback = (payload: HapticFeedbackPayload) => {
+      HapticManager.trigger(payload.type);
+    };
+    this.eventHandlers.set(GameEvents.HAPTIC_FEEDBACK, onHapticFeedback);
+    eventBus.subscribe(GameEvents.HAPTIC_FEEDBACK, onHapticFeedback, this);
+
+    // OLD: Removed old PVP event sending (handled by pvpHelper/server now)
+  }
+
+  private unsubscribeFromEvents(): void {
+    // Правильная отписка с использованием сохранённых ссылок на обработчики
+    this.eventHandlers.forEach((handler, eventName) => {
+      try {
+        eventBus.unsubscribe(eventName as GameEvents, handler as any, this);
+      } catch (e) {
+        console.warn('[GameScene] Failed to unsubscribe from:', eventName);
+      }
+    });
+    this.eventHandlers.clear();
+  }
+
+  // ============================================================
+  // EVENT HANDLERS
+  // ============================================================
+
+  private onGoal(data: { player: PlayerNumber; newScore: { player1: number; player2: number } }): void {
+    // ✅ FIX: Защита от повторного вызова для одного и того же гола
+    // Используем флаг вместо проверки фазы, т.к. событие приходит уже в фазе GOAL
+    if (this.isProcessingGoal) return;
+    this.isProcessingGoal = true;
+
+    const isMyGoal = data.player === 1;
+    
+    // === УЛУЧШЕННЫЕ ЭФФЕКТЫ ===
+    
+    // 1. Звуки гола (goal.mp3 + flame_burst.mp3 + goal_crowd.mp3)
+    AudioManager.getInstance().playGoalSounds(isMyGoal);
+    
+    // 2. Улучшенная вибрация
+    HapticManager.triggerGoalVibration(isMyGoal);
+    
+    // 3. Эффекты пламени у ворот (4.7 сек - синхронно с flame_burst.mp3)
+    const isTopGoal = data.player === 1;
+    
+    if (this.fieldBounds && this.vfxManager) {
+      const goalY = isTopGoal ? this.fieldBounds.top : this.fieldBounds.bottom;
+      const fieldScale = this.fieldBounds.width / 600;
+      const halfGoalWidth = (GOAL.WIDTH * fieldScale) / 2;
+      const goalLeftX = this.fieldBounds.centerX - halfGoalWidth;
+      const goalRightX = this.fieldBounds.centerX + halfGoalWidth;
+      
+      // Получаем фракцию команды, которая забила гол
+      const state = this.getState();
+      const factionId = isTopGoal ? (state?.opponentFaction || this.storedOpponentFaction) : (state?.playerFaction || this.storedPlayerFaction);
+      
+      this.vfxManager.playGoalFlameEffect(
+        goalY,
+        goalLeftX,
+        goalRightX,
+        factionId,
+        isTopGoal
+      );
+    }
+    
+    // 4. Тряска камеры
+    this.cameras.main.shake(200, isMyGoal ? 0.008 : 0.005);
+    
+    // === СУЩЕСТВУЮЩИЙ КОД ===
+    this.announcer.announceGoal();
+    this.celebrationManager.showGoalCelebration(isMyGoal);
+    
+    // вњ… Trigger CampaignDialogueSystem goal events
+    if (this.isCampaignMode) {
+      if (data.player === 1) {
+        this.campaignDialogue?.onPlayerGoal();
+      } else {
+        this.campaignDialogue?.onEnemyGoal();
+      }
+    }
+
+    // вњ… B. Clear targeting UI on goal
+    if (this.abilityManager.isActivating()) {
+      this.abilityManager.cancelActivation();
+    }
+    this.abilityManager.forceClearTargetingUI();
+    this.hideCardInfo();
+
+    this.abilityButton.hide();
+    this.cardPanel?.setVisible(false);
     this.shootingController.setEnabled(false);
-    this.state.isProcessingTurn = true;
-    this.gameHUD.setPauseEnabled(false);
+    this.isAbilityInputActive = false;
 
-    const audio = AudioManager.getInstance();
-    audio.stopAmbience();
-    audio.playSFX('sfx_whistle');
+    // вњ… РќРћР’РћР•: РЎРѕС…СЂР°РЅСЏРµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РјР°С‚С‡Р° РїРѕСЃР»Рµ РіРѕР»Р°
+    this.saveMatchProgress();
 
-    if (winner === null) {
-      audio.playSFX('sfx_click', { delay: 0.5 });
-    } else if (winner === 1) {
-      audio.playSFX('sfx_win', { delay: 0.5 });
-    } else {
-      audio.playSFX('sfx_lose', { delay: 0.5 });
+    // ✅ SessionPersistence: сохраняем состояние матча при каждом голе
+    try {
+      const state = this.getState();
+      SessionPersistence.saveMatchState({
+        score: [data.newScore.player1, data.newScore.player2],
+        turn: this.matchDirector?.getTurnNumber?.() ?? 0,
+        playerFaction: state?.playerFaction,
+        opponentFaction: state?.opponentFaction,
+        mode: this.matchContext || 'freeplay',
+      });
+    } catch (e) {
+      // ignore
     }
 
-    const result = ResultHelper.createTimeUpResult(winner, scores);
-    this.showResultScreen(result);
+    this.time.delayedCall(GAME.GOAL_DELAY, () => {
+      this.celebrationManager.hide();
+      this.matchDirector.continueAfterGoal();
+      this.resetPositions();
+      AudioManager.getInstance().playSFX('sfx_whistle', { volume: 0.5 });
+      this.isProcessingGoal = false; // Сброс флага после завершения обработки гола
+    });
   }
 
-  // === TURN HANDLING ===
-
-  private onLocalTurnChange(player: PlayerNumber): void {
-    if (this.state.isPvPMode) return;
-
-    console.log(`[GameScene] Turn changed to player ${player}`);
-
-    this.state.isProcessingTurn = false;
-    this.lastShootingCap = undefined;
-    this.state.selectedCapId = undefined;
-    this.shootingController.setCurrentPlayer(player);
-    this.updateHUD();
-    this.highlightCurrentPlayerCaps();
-    this.updateCapsAuraState();
-
-    if (player === 2 && this.aiController) {
-      console.log('[GameScene] Starting AI turn');
+  private onMatchEnd(data: { result: MatchResult }): void {
+    const { result } = data;
+    
+    // вњ… B. Clear targeting UI on match end
+    if (this.abilityManager.isActivating()) {
+      this.abilityManager.cancelActivation();
+    }
+    this.abilityManager.forceClearTargetingUI();
+    this.hideCardInfo();
+    
+    // вњ… Tutorial: Special handling for tutorial level (1-1)
+    // вњ… BUG FIX: Skip dialogueAfterWin for tutorial - go directly to result screen
+    const isTutorialLevel = this.isCampaignMode && this.campaignLevelConfig?.id === '1-1';
+    
+    // вњ… Trigger CampaignDialogueSystem match end events (skip for tutorial)
+    if (this.isCampaignMode && !isTutorialLevel) {
+      this.campaignDialogue?.onMatchEnd(result.isWin);
+    }
+    
+    if (isTutorialLevel && result.isWin) {
+      // Mark tutorial as complete
+      if (!playerData.hasCompletedFirstMatchTutorial()) {
+        playerData.completeFirstMatchTutorial();
+        playerData.setPendingPostWinMenuTour(true);
+        playerData.setPostWinMenuTourStep('menu');
+        console.log('[GameScene] Tutorial completed, post-win tour pending');
+      }
+      
+      // вњ… FIX: Show special tutorial result screen, then go to MainMenu
+      // Apply tutorial rewards: 500 coins
+      playerData.addCoins(500);
+      
       this.shootingController.setEnabled(false);
-      this.aiController.startTurn();
-    } else {
-      console.log('[GameScene] Starting Player turn');
-      if (this.aiController) {
-        this.aiController.stop();
+      this.abilityButton.hide();
+      this.cardPanel?.setVisible(false);
+      this.gameHUD.setPauseEnabled(false);
+      this.isAbilityInputActive = false;
+
+      if (this.aiController) this.aiController.stop();
+      if (this.cooldownTimer) {
+        this.cooldownTimer.destroy();
+        this.cooldownTimer = undefined;
       }
-      this.shootingController.setEnabled(true);
+
+      AudioManager.getInstance().stopAmbience();
+      AudioManager.getInstance().playSFX('sfx_whistle');
+      // ✅ ИСПРАВЛЕНО: Используем playResultMusic() для длинных треков
+      this.time.delayedCall(500, () => {
+        AudioManager.getInstance().playResultMusic('sfx_win');
+      });
+      this.announcer.announceResult(true);
+      
+      // Show tutorial result screen (it will handle transition to MainMenu)
+      this.showResultScreen(result);
+
+      // ✅ SessionPersistence: матч завершён нормально
+      SessionPersistence.clear();
+      return;
+    }
+    
+    this.shootingController.setEnabled(false);
+    this.abilityButton.hide();
+    this.cardPanel?.setVisible(false);
+    this.gameHUD.setPauseEnabled(false);
+    this.isAbilityInputActive = false;
+
+    if (this.aiController) this.aiController.stop();
+    if (this.cooldownTimer) {
+      this.cooldownTimer.destroy();
+      this.cooldownTimer = undefined;
+    }
+
+    AudioManager.getInstance().stopAmbience();
+    AudioManager.getInstance().playSFX('sfx_whistle');
+    // ✅ ИСПРАВЛЕНО: Используем playResultMusic() для длинных треков
+    this.time.delayedCall(500, () => {
+      if (result.isWin) {
+        AudioManager.getInstance().playResultMusic('sfx_win');
+      } else if (result.isDraw) {
+        // Для ничьей используем sfx_draw если есть, иначе fallback на sfx_win
+        const hasDraw =
+          ((this.cache as any).audio?.exists?.('sfx_draw') ?? false) ||
+          this.cache.audio.has('sfx_draw');
+        AudioManager.getInstance().playResultMusic(hasDraw ? 'sfx_draw' : 'sfx_win');
+      } else {
+        AudioManager.getInstance().playResultMusic('sfx_lose');
+      }
+    });
+
+    this.announcer.announceResult(result.isWin);
+    
+    // вњ… League & Tournament: РћР±СЂР°Р±РѕС‚РєР° СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ
+    this.handleMatchResult(result);
+    
+    this.showResultScreen(result);
+
+    // ✅ SessionPersistence: матч завершён нормально
+    SessionPersistence.clear();
+  }
+  
+  private handleMatchResult(result: MatchResult): void {
+    // рџЋЇ РћР±РЅРѕРІР»СЏРµРј РµР¶РµРґРЅРµРІРЅС‹Рµ Р·Р°РґР°РЅРёСЏ
+    this.updateDailyTasks(result);
+    
+    if (this.matchContext === 'league') {
+      this.handleLeagueResult(result);
+    } else if (this.matchContext === 'tournament') {
+      this.handleTournamentResult(result);
     }
   }
+  
+  /**
+   * РћР±РЅРѕРІРёС‚СЊ РїСЂРѕРіСЂРµСЃСЃ РµР¶РµРґРЅРµРІРЅС‹С… Р·Р°РґР°РЅРёР№
+   */
+  private updateDailyTasks(result: MatchResult): void {
+    try {
+      // #region agent log
+      // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+      // #endregion
+      
+      // Р”РёРЅР°РјРёС‡РµСЃРєРёР№ РёРјРїРѕСЂС‚ РґР»СЏ РёР·Р±РµР¶Р°РЅРёСЏ С†РёРєР»РёС‡РµСЃРєРёС… Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№
+      import('../data/DailyTasks').then(({ dailyTasksManager }) => {
+        // #region agent log
+        // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+        // #endregion
+        
+        // РЎС‹РіСЂР°С‚СЊ РјР°С‚С‡
+        dailyTasksManager.updateTaskProgress('play_matches', 1);
+        
+        // РџРѕР±РµРґР°
+        if (result.isWin) {
+          dailyTasksManager.updateTaskProgress('win_matches', 1);
+        }
+        
+        // Р“РѕР»С‹
+        dailyTasksManager.updateTaskProgress('score_goals', result.playerGoals);
+        
+        // РљР°РјРїР°РЅРёСЏ
+        if (this.isCampaignMode && result.isWin) {
+          dailyTasksManager.updateTaskProgress('complete_campaign', 1);
+        }
+        
+        // Р›РёРіР°
+        if (this.matchContext === 'league') {
+          dailyTasksManager.updateTaskProgress('play_league', 1);
+        }
+      }).catch((error) => {
+        // #region agent log
+        // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+        // #endregion
+        console.warn('[GameScene] Failed to import DailyTasks:', error);
+      });
+    } catch (error) {
+      // #region agent log
+      // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+      // #endregion
+      console.warn('[GameScene] Failed to update daily tasks:', error);
+    }
+  }
+  
+  private handleLeagueResult(result: MatchResult): void {
+    const data = playerData.get();
+    const leagueProgress = data.leagueProgress;
+    
+    if (!leagueProgress) {
+      console.warn('[GameScene] No league progress found');
+      return;
+    }
+    
+    // вњ… РРЎРџР РђР’Р›Р•РќРћ: updateStats СѓР¶Рµ РІС‹Р·РІР°РЅ РІ MatchController/RewardCalculator
+    // currentWinStreak СѓР¶Рµ РѕР±РЅРѕРІР»С‘РЅ, РїРѕСЌС‚РѕРјСѓ РїСЂРѕРІРµСЂСЏРµРј >= 3 (СЌС‚Рѕ РѕР·РЅР°С‡Р°РµС‚ 3+ РїРѕРґСЂСЏРґ)
+    const currentStreak = data.stats.currentWinStreak || 0;
+    const isWinStreak = result.isWin && currentStreak >= 3;
+    
+    console.log(`[GameScene] League match result: ${result.isWin ? 'Win' : 'Loss'}, streak: ${currentStreak}, isWinStreak: ${isWinStreak}`);
+    
+    // ✅ Сохраняем старые значения ДО применения результата
+    const oldStars = leagueProgress.stars;
+    const oldTier = leagueProgress.currentTier;
+    const oldDivision = leagueProgress.division;
+    
+    // Применяем результат матча
+    const newProgress = LeagueManager.applyMatchResult(leagueProgress, result, isWinStreak);
+    const newStars = newProgress.stars;
+    const newTier = newProgress.currentTier;
+    const newDivision = newProgress.division;
+    
+    const starsDiff = newStars - oldStars;
+    console.log(`[GameScene] Stars: ${oldStars} -> ${newStars} (${starsDiff > 0 ? '+' : ''}${starsDiff})`);
+    
+    if (oldTier !== newTier || oldDivision !== newDivision) {
+      console.log(`[GameScene] Rank changed: ${oldTier} ${oldDivision} -> ${newTier} ${newDivision}`);
+    }
+    
+    data.leagueProgress = newProgress;
+    
+    // ✅ Сохраняем данные для передачи в LeagueScene
+    this.leagueResultData = {
+      oldStars,
+      oldTier,
+      oldDivision,
+      matchResult: result.isWin ? 'win' : (result.isDraw ? 'draw' : 'loss'),
+      showOrbitDecay: LeagueManager.shouldTriggerOrbitDecay(newProgress, result)
+    };
+    
+    playerData.save();
+    console.log('[GameScene] League progress saved');
+    console.log('[GameScene] League result data saved:', this.leagueResultData);
 
-  private onStateChange(state: string): void {
-    console.log(`[GameScene] State changed to: ${state}`);
-
-    if (this.state.isPvPMode) {
-      this.debug.log('STATE', `Changed to: ${state}`);
-      if (state === 'moving') {
-        this.shootingController.setEnabled(false);
+    // ✅ Dispatch события для недельных заданий (победа в лиге)
+    if (result.isWin) {
+      try {
+        eventBus.dispatch(GameEvents.LEAGUE_MATCH_WON, {
+          oldStars,
+          newStars: newProgress.stars,
+          tier: String(newProgress.currentTier),
+        });
+      } catch (e) {
+        console.warn('[GameScene] Failed to dispatch LEAGUE_MATCH_WON:', e);
       }
-    } else {
-      const currentPlayer = this.gameStateManager.getCurrentPlayer();
-      const isPlayerTurn = currentPlayer === 1;
-
-      if (state === 'moving') {
-        this.shootingController.setEnabled(false);
-      } else if (state === 'waiting') {
-        if (isPlayerTurn) {
-          this.shootingController.setEnabled(true);
-          if (this.aiController) {
-            this.aiController.stop();
-          }
-        } else if (this.aiController) {
-          if (currentPlayer === 2 && !this.aiController.isThinking) {
-            console.log('[GameScene] Objects stopped, starting AI turn');
-            this.aiController.startTurn();
-          }
+    }
+  }
+  
+  private handleTournamentResult(result: MatchResult): void {
+    if (!this.tournamentId || !this.seriesId) {
+      console.warn('[GameScene] Tournament result but no tournamentId/seriesId');
+      return;
+    }
+    
+    const data = playerData.get();
+    let tournament = data.activeTournament;
+    
+    if (!tournament || tournament.id !== this.tournamentId) {
+      console.warn('[GameScene] Tournament not found in player data');
+      return;
+    }
+    
+    // РќР°С…РѕРґРёРј СЃРµСЂРёСЋ РјР°С‚С‡РµР№
+    const series = tournament.matches.find(m => m.id === this.seriesId);
+    if (!series) {
+      console.warn('[GameScene] Series not found in tournament');
+      return;
+    }
+    
+    // РћРїСЂРµРґРµР»СЏРµРј ID РёРіСЂРѕРєР° Рё СЃРѕРїРµСЂРЅРёРєР°
+    const playerId = data.id;
+    const isPlayerA = series.playerA === playerId;
+    const opponentId = isPlayerA ? series.playerB : series.playerA;
+    
+    // РЎРѕР·РґР°С‘Рј MatchResultSummary
+    const matchSummary = {
+      playerAId: series.playerA,
+      playerBId: series.playerB,
+      winnerId: result.isWin ? (isPlayerA ? series.playerA : series.playerB) : 
+                result.isDraw ? undefined : opponentId,
+      goalsA: isPlayerA ? result.playerGoals : result.opponentGoals,
+      goalsB: isPlayerA ? result.opponentGoals : result.playerGoals,
+      isDraw: result.isDraw,
+    };
+    
+    // РћР±РЅРѕРІР»СЏРµРј СЃРµСЂРёСЋ
+    const updatedSeries = TournamentManager.updateSeriesWithMatch(series, matchSummary);
+    
+    // РћР±РЅРѕРІР»СЏРµРј С‚СѓСЂРЅРёСЂ
+    tournament.matches = tournament.matches.map(m => 
+      m.id === this.seriesId ? updatedSeries : m
+    );
+    
+    // Р•СЃР»Рё СЃРµСЂРёСЏ Р·Р°РІРµСЂС€РµРЅР°, РїСЂРѕРґРІРёРіР°РµРј РїРѕР±РµРґРёС‚РµР»СЏ
+    if (TournamentManager.isSeriesFinished(updatedSeries)) {
+      tournament = TournamentManager.advanceWinnersToNextRound(tournament);
+      
+      // Р•СЃР»Рё РёРіСЂРѕРє РІС‹РёРіСЂР°Р» СЃРµСЂРёСЋ, РѕР±РЅРѕРІР»СЏРµРј С‚РµРєСѓС‰РёР№ СЂР°СѓРЅРґ
+      if (updatedSeries.winnerId === playerId) {
+        // РРіСЂРѕРє РїСЂРѕС€С‘Р» РґР°Р»СЊС€Рµ
+        console.log(`[GameScene] Player advanced to next round: ${tournament.currentRound}`);
+      } else {
+        // РРіСЂРѕРє РІС‹Р»РµС‚РµР»
+        console.log(`[GameScene] Player eliminated from tournament`);
+        // РњРѕР¶РЅРѕ РїРѕРєР°Р·Р°С‚СЊ РјРѕРґР°Р» "Second Chance" РµСЃР»Рё СЌС‚Рѕ СЂР°СѓРЅРґ 1/8
+        if (this.round === '16') {
+          // TODO: РџРѕРєР°Р·Р°С‚СЊ РјРѕРґР°Р» Second Chance
         }
       }
     }
+    
+    // РЎРѕС…СЂР°РЅСЏРµРј РѕР±РЅРѕРІР»С‘РЅРЅС‹Р№ С‚СѓСЂРЅРёСЂ
+    data.activeTournament = tournament;
+    playerData.save();
+  }
 
-    if (state === 'waiting') {
-      this.state.isProcessingTurn = false;
-      this.lastShootingCap = undefined;
-      this.state.selectedCapId = undefined;
-      this.updateCapsAuraState();
+  private onTurnChange(data: { player: PlayerNumber; turnNumber: number }): void {
+    const { player } = data;
+    
+    // Cleanup previous state
+    if (this.abilityManager.isActivating()) this.abilityManager.cancelActivation();
+    this.abilityManager.forceClearTargetingUI();
+    this.hideCardInfo();
+    this.abilityManager.onTurnEnd(this.lastShootingCap);
+    this.player2AbilityManager?.onTurnEnd();
+    this.updateCardPanelUI();
+    this.lastShootingCap = undefined;
+    this.selectedCapId = undefined;
+    this.aiTurnScheduled = false;
+    this.isAbilityInputActive = false;
+
+    this.updateCapsAuraState();
+    this.updateHUD();
+    
+    // вњ… РќРћР’РћР•: РЎРѕС…СЂР°РЅСЏРµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РјР°С‚С‡Р° РїРѕСЃР»Рµ СЃРјРµРЅС‹ С…РѕРґР°
+    this.saveMatchProgress();
+
+    // Check for blocking UI
+    const isDialogueBlocking = this.campaignDialogue?.isBlockingInput() ?? false;
+    const isTutorialBlocking = this.tutorialOverlay?.isActive() && this.tutorialOverlay.visible;
+    const isBlocked = isDialogueBlocking || isTutorialBlocking;
+
+    // ✅ NEW PVP: Обработка смены ходов
+    if (this.isRealtimePvP) {
+      const myOwner = this.getMyOwner();
+      const isMyTurn = player === myOwner;
+      
+      if (isMyTurn) {
+        // Мой ход в PVP
+        this.shootingController.setEnabled(!isBlocked);
+        this.cardPanel?.setVisible(!isBlocked && this.abilityManager.getAvailableCards().length > 0);
+      } else {
+        // Ход оппонента в PVP
+        this.shootingController.setEnabled(false);
+        this.cardPanel?.setVisible(false);
+      }
+      
+      if (this.aiController) this.aiController.stop();
+    } else if (player === 1) {
+      // Player turn (не PVP)
+      this.shootingController.setEnabled(!isBlocked);
+      this.cardPanel?.setVisible(!isBlocked && this.abilityManager.getAvailableCards().length > 0);
+      if (this.aiController) this.aiController.stop();
+    } else if (this.aiController) {
+      // AI Turn (не PVP)
+      this.shootingController.setEnabled(false);
+      this.cardPanel?.setVisible(false);
+      
+      if (isBlocked) {
+        console.log('[GameScene] AI waiting for Nova/Dialogue to finish...');
+        return; // AI waits here. The 'update' loop will resume it when UI closes.
+      }
+      
+      this.scheduleAITurn();
+    }
+  }
+
+  private onTimerWarning(data: { secondsLeft: number }): void {
+    AudioManager.getInstance().playSFX('sfx_whistle', { volume: 0.5 });
+    
+    // вњ… Trigger CampaignDialogueSystem time warning events
+    if (this.isCampaignMode) {
+      this.campaignDialogue?.onTimeWarning(data.secondsLeft);
+    }
+  }
+
+  private onCapSelected(cap: any | null): void {
+    // вњ… РРіРЅРѕСЂРёСЂСѓРµРј РІС‹Р±РѕСЂ СЋРЅРёС‚Р° РµСЃР»Рё Р°РєС‚РёРІРЅР° СЃРїРѕСЃРѕР±РЅРѕСЃС‚СЊ
+    if (this.isAbilityInputActive) {
+      console.log('[GameScene] Cap selection ignored - ability input active');
+      return;
+    }
+    
+    this.selectedCapId = cap?.id;
+    this.updateCapsAuraState();
+
+    if (cap && cap instanceof Unit) {
+      this.abilityButton.setCurrentUnit(cap);
+    } else {
+      this.abilityButton.setCurrentUnit(null);
+    }
+  }
+
+  private onShoot(data: ShootEventData): void {
+    // ✅ TUTORIAL: Проверка разрешения ввода
+    if (this.isTutorialMode && this.tutorialManager) {
+      if (!this.tutorialManager.isInputAllowed()) {
+        console.log('[GameScene] Input blocked by tutorial (dialogue active or not waiting for action)');
+        return;
+      }
+    }
+    
+    // вњ… Handle swap as a valid turn action (don't ignore it)
+    if (data.isSwap) {
+      // Swap consumes the turn - perform cleanup and advance match
+      if (this.abilityManager.isActivating()) {
+        this.abilityManager.cancelActivation();
+      }
+      
+      this.abilityButton.hide();
+      this.cardPanel?.setVisible(false);
+      this.shootingController.setEnabled(false);
+      this.isAbilityInputActive = false;
+      
+      this.lastShootingCap = data.cap as any;
+      this.abilityManager.setLastActiveUnit(this.lastShootingCap);
+      
+      // OLD PVP system removed - swap handled by MatchDirector
+      
+      // вњ… Critical: Advance match so turn transitions properly
+      this.matchDirector.onShot(data.cap.id);
+      return;
+    }
+    
+    // Normal shot handling (unchanged)
+    if (this.abilityManager.isActivating()) {
+      this.abilityManager.cancelActivation();
     }
 
-    if (!this.state.isPvPMode) {
-      if (state === 'paused') {
-        this.matchTimer.pause();
-      } else if (state === 'waiting' || state === 'moving') {
-        this.matchTimer.resume();
+    this.abilityButton.hide();
+    this.cardPanel?.setVisible(false);
+    // вњ… B. Clear targeting UI on goal
+    if (this.abilityManager.isActivating()) {
+      this.abilityManager.cancelActivation();
+    }
+    this.abilityManager.forceClearTargetingUI();
+    this.hideCardInfo();
+
+    this.shootingController.setEnabled(false);
+    this.isAbilityInputActive = false;
+
+    this.lastShootingCap = data.cap as any;
+    this.abilityManager.setLastActiveUnit(this.lastShootingCap);
+    
+    // OLD PVP system removed - shooting handled by ShootingController + pvpHelper
+    
+    this.matchDirector.onShot(data.cap.id);
+  }
+
+  /**
+   * Legacy swap callback (kept for compatibility).
+   * Note: Swap is now processed via onShoot(isSwap=true) and matchDirector.onShot(),
+   * so this callback may not be used by the current swap implementation.
+   */
+  private onSwap(unitA: any, unitB: any): void {
+    console.log('[GameScene] Legacy swap called (swap is processed via onShoot with isSwap flag)');
+  }
+
+  private scheduleAITurn(): void {
+    // вњ… FIXED: Robust AI scheduling - avoid dead states
+    if (!this.aiController) return;
+    
+    // Reset flag if previous call failed
+    this.aiTurnScheduled = false;
+
+    // Single delayed call per turn - check conditions at execution time
+    this.time.delayedCall(150, () => {
+      const phase = this.matchDirector.getPhase();
+      const currentPlayer = this.matchDirector.getCurrentPlayer();
+
+      // Only start AI if conditions are still valid
+      if (currentPlayer === 2 && 
+          phase === MatchPhase.WAITING && 
+          this.aiController && 
+          !this.aiController.isThinking) {
+        this.aiController.startTurn();
+      }
+      // Don't set aiTurnScheduled to false here - it's reset at the start of next turn
+    });
+    
+    this.aiTurnScheduled = true;
+  }
+
+  // ============================================================
+  // UPDATE
+  // ============================================================
+
+  update(time: number, delta: number): void {
+    if (!this.isInitialized) return;
+    
+    const phase = this.matchDirector.getPhase();
+    if (phase === MatchPhase.PAUSED || phase === MatchPhase.FINISHED) return;
+    
+    // ✅ TUTORIAL: В режиме обучения обновляем физику, но пропускаем MatchDirector
+    if (this.isTutorialMode) {
+      // Обновляем базовые компоненты и физику (нужно для waitForObjectsToStop)
+      this.ball?.update();
+      this.caps.forEach(cap => cap.update());
+      this.vfxManager?.update();
+      
+      // НЕ делаем return - физика должна обновляться для waitForObjectsToStop()
+      // Пропускаем только MatchDirector update чтобы не было автоматической смены ходов
+    } else {
+      this.ball.update();
+      this.caps.forEach(cap => cap.update());
+      this.matchDirector.update();
+      
+      this.abilityManager?.update(delta);
+      this.player2AbilityManager?.update(delta);
+      
+      // CHEAT: BOSS NO COOLDOWN
+      if (this.campaignLevelConfig?.isBoss && this.player2AbilityManager) {
+        (this.player2AbilityManager as any).lastGlobalActivationTime = 0;
+      }
+    }
+    
+    this.vfxManager?.update();
+  }
+
+  private updateHUD(): void {
+    const score = this.matchDirector.getScore();
+    const currentPlayer = this.matchDirector.getCurrentPlayer();
+    const phase = this.matchDirector.getPhase();
+
+    this.gameHUD.updateScore(score.player1, score.player2);
+    this.gameHUD.updateTurn(currentPlayer, phase, this.isAIEnabled);
+  }
+  
+  /**
+   * вњ… РќРћР’РћР•: РЎРѕС…СЂР°РЅРёС‚СЊ РїСЂРѕРіСЂРµСЃСЃ РјР°С‚С‡Р° РґР»СЏ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёСЏ РїРѕСЃР»Рµ РїРµСЂРµР·Р°РіСЂСѓР·РєРё
+   */
+  private saveMatchProgress(): void {
+    if (!this.matchDirector) return;
+    
+    const score = this.matchDirector.getScore();
+    // Session state removed - no longer needed
+  }
+
+  private updateCapsAuraState(): void {
+    const currentPlayer = this.matchDirector.getCurrentPlayer();
+    this.caps.forEach(cap => {
+      cap.setActiveTeamTurn(cap.owner === currentPlayer);
+      cap.setSelected(cap.id === this.selectedCapId);
+    });
+  }
+
+  private resetPositions(): void {
+    // вњ… B. Clear targeting UI after reset
+    this.abilityManager?.forceClearTargetingUI();
+    this.player2AbilityManager?.forceClearTargetingUI();
+    this.hideCardInfo();
+    
+    this.abilityManager?.reset();
+    this.player2AbilityManager?.reset();
+    this.ball.reset(this.startPositions.ball.x, this.startPositions.ball.y);
+    
+    // вњ… РРЎРџР РђР’Р›Р•РќРћ: РџРµСЂРµСЃС‡РёС‚С‹РІР°РµРј РїРѕР·РёС†РёРё РёРіСЂРѕРєР° РЅР° РѕСЃРЅРѕРІРµ Р°РєС‚СѓР°Р»СЊРЅРѕР№ С„РѕСЂРјР°С†РёРё
+    this.updatePlayerPositionsFromFormation();
+    
+    // РџРѕР·РёС†РёРё РѕРїРїРѕРЅРµРЅС‚Р° (AI) РѕСЃС‚Р°СЋС‚СЃСЏ РїСЂРµР¶РЅРёРјРё
+    const playerTeamSize = this.caps.filter(c => c.owner === 1).length;
+    this.caps.forEach((cap, i) => {
+      if (cap.owner === 1) {
+        // РџРѕР·РёС†РёРё РёРіСЂРѕРєР° СѓР¶Рµ РѕР±РЅРѕРІР»РµРЅС‹ РІ updatePlayerPositionsFromFormation
+        return;
+      }
+      // РџРѕР·РёС†РёРё РѕРїРїРѕРЅРµРЅС‚Р° (AI) РёСЃРїРѕР»СЊР·СѓРµРј РёР· startPositions
+      const oppIndex = i - playerTeamSize;
+      if (oppIndex >= 0 && this.startPositions.caps[playerTeamSize + oppIndex]) {
+        cap.reset(this.startPositions.caps[playerTeamSize + oppIndex].x, this.startPositions.caps[playerTeamSize + oppIndex].y);
+      }
+    });
+    
+    this.updateCardPanelUI();
+  }
+
+  /**
+   * вњ… РќРћР’РћР•: РћР±РЅРѕРІР»СЏРµС‚ РїРѕР·РёС†РёРё РёРіСЂРѕРєР° РЅР° РѕСЃРЅРѕРІРµ Р°РєС‚СѓР°Р»СЊРЅРѕР№ С„РѕСЂРјР°С†РёРё
+   */
+  private updatePlayerPositionsFromFormation(): void {
+    const playerFormation = playerData.getSelectedFormation();
+    const playerCaps = this.caps.filter(c => c.owner === 1);
+    
+    console.log(`[GameScene] Updating player positions from formation: ${playerFormation.name} (${playerFormation.slots.length} slots, ${playerCaps.length} caps)`);
+    
+    if (playerCaps.length !== playerFormation.slots.length) {
+      console.warn(`[GameScene] Formation slots (${playerFormation.slots.length}) don't match player caps (${playerCaps.length}), using startPositions`);
+      playerCaps.forEach((cap, i) => {
+        if (this.startPositions.caps[i]) {
+          cap.reset(this.startPositions.caps[i].x, this.startPositions.caps[i].y);
+        }
+      });
+      return;
+    }
+
+    // РџРµСЂРµСЃС‡РёС‚С‹РІР°РµРј РїРѕР·РёС†РёРё РЅР° РѕСЃРЅРѕРІРµ С„РѕСЂРјР°С†РёРё
+    playerFormation.slots.forEach((slot, index) => {
+      const absPos = this.relativeToAbsolute(slot.x, slot.y);
+      if (playerCaps[index]) {
+        console.log(`[GameScene] Setting cap ${index} position: (${absPos.x.toFixed(1)}, ${absPos.y.toFixed(1)}) from formation slot (${slot.x.toFixed(2)}, ${slot.y.toFixed(2)})`);
+        playerCaps[index].reset(absPos.x, absPos.y);
+      }
+    });
+  }
+
+  /**
+   * вњ… РќРћР’РћР•: РџСЂРµРѕР±СЂР°Р·СѓРµС‚ РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅС‹Рµ РєРѕРѕСЂРґРёРЅР°С‚С‹ С„РѕСЂРјР°С†РёРё РІ Р°Р±СЃРѕР»СЋС‚РЅС‹Рµ РєРѕРѕСЂРґРёРЅР°С‚С‹ РїРѕР»СЏ
+   */
+  private relativeToAbsolute(relX: number, relY: number): { x: number; y: number } {
+    const bounds = this.fieldBounds;
+    const x = bounds.left + relX * (bounds.right - bounds.left);
+    // вњ… РРЎРџР РђР’Р›Р•РќРћ: РРіСЂРѕРє РёРіСЂР°РµС‚ РІ РЅРёР¶РЅРµР№ РїРѕР»РѕРІРёРЅРµ РїРѕР»СЏ
+    // relY РІ С„РѕСЂРјР°С†РёРё: 0.5 = С†РµРЅС‚СЂ РїРѕР»СЏ, 1.0 = РЅРёР· (РІРѕСЂРѕС‚Р° РёРіСЂРѕРєР°)
+    // РџСЂРµРѕР±СЂР°Р·СѓРµРј: relY РѕС‚ 0.5 РґРѕ 1.0 -> y РѕС‚ centerY РґРѕ bottom
+    const y = bounds.top + relY * (bounds.bottom - bounds.top);
+    return { x, y };
+  }
+
+  // ============================================================
+  // UI SCREENS
+  // ============================================================
+
+  private showMatchIntro(): void {
+    if (import.meta.env.DEV) {
+      console.log('[GameScene] showMatchIntro() called');
+    }
+    // #region agent log
+    // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+    // #endregion
+    
+    this.matter.world.pause();
+    this.shootingController.setEnabled(false);
+    this.gameHUD.setPauseEnabled(false);
+    this.cardPanel?.setVisible(false);
+
+    const state = this.getState();
+    const playerName = playerData.getNickname() || 'You';
+    // вњ… League & Tournament: РњР°СЃРєРёСЂСѓРµРј Р±РѕС‚Р° РїРѕРґ СЂРµР°Р»СЊРЅРѕРіРѕ РёРіСЂРѕРєР°
+    let opponentName: string;
+    if ((this.matchContext === 'league' || this.matchContext === 'tournament') && this.isAIEnabled && this.opponentName) {
+      opponentName = this.opponentName; // РСЃРїРѕР»СЊР·СѓРµРј СЃРіРµРЅРµСЂРёСЂРѕРІР°РЅРЅРѕРµ РёРјСЏ
+      console.log(`[GameScene] Using league/tournament opponentName: "${opponentName}"`);
+    } else if (this.isAIEnabled) {
+      opponentName = 'AI Opponent';
+      console.log('[GameScene] Using AI opponent name');
+    } else {
+      opponentName = 'Player 2';
+      console.log('[GameScene] Using Player 2 name');
+    }
+
+    // вњ… РџРѕР»СѓС‡Р°РµРј Р°РІР°С‚Р°СЂРєРё РёРіСЂРѕРєРѕРІ
+    const playerAvatarId = playerData.get().avatarId || 'avatar_recruit';
+    
+    // Р”Р»СЏ РїСЂРѕС‚РёРІРЅРёРєР° РіРµРЅРµСЂРёСЂСѓРµРј СЃР»СѓС‡Р°Р№РЅСѓСЋ Р°РІР°С‚Р°СЂРєСѓ
+    // вњ… РРЎРџР РђР’Р›Р•РќРћ: РСЃРїРѕР»СЊР·СѓРµРј РЎРћРҐР РђРќРЃРќРќР«Р™ Р°РІР°С‚Р°СЂ РїСЂРѕС‚РёРІРЅРёРєР° РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё
+    let opponentAvatarId = this.opponentAvatarId;
+    
+    // Р•СЃР»Рё Р°РІР°С‚Р°СЂ РЅРµ Р±С‹Р» РїРµСЂРµРґР°РЅ, РіРµРЅРµСЂРёСЂСѓРµРј РµРіРѕ (fallback РґР»СЏ СЃС‚Р°СЂС‹С… СЃРёСЃС‚РµРј)
+    if (!opponentAvatarId) {
+      const botAvatars = [
+        'avatar_recruit', 'avatar_explorer', 'avatar_magma_warrior',
+        'avatar_cyborg_elite', 'avatar_void_mystic', 'avatar_insect_hive',
+        'avatar_champion', 'avatar_legend'
+      ];
+      opponentAvatarId = botAvatars[Math.floor(Math.random() * botAvatars.length)];
+    }
+    
+    // РџСЂРѕРІРµСЂСЏРµРј СЃСѓС‰РµСЃС‚РІРѕРІР°РЅРёРµ С‚РµРєСЃС‚СѓСЂС‹ Р°РІР°С‚Р°СЂРєРё, РёСЃРїРѕР»СЊР·СѓРµРј fallback РµСЃР»Рё РЅРµС‚
+    if (!this.textures.exists(opponentAvatarId)) {
+      console.warn(`[GameScene] Avatar texture missing: ${opponentAvatarId}, using fallback`);
+      opponentAvatarId = 'avatar_recruit'; // Р’СЃРµРіРґР° РґРѕСЃС‚СѓРїРЅР°СЏ Р°РІР°С‚Р°СЂРєР°
+      
+      // Р•СЃР»Рё РґР°Р¶Рµ recruit РЅРµ Р·Р°РіСЂСѓР¶РµРЅ, РёСЃРїРѕР»СЊР·СѓРµРј undefined (Р±СѓРґРµС‚ emoji)
+      if (!this.textures.exists(opponentAvatarId)) {
+        console.error(`[GameScene] Even fallback avatar missing! Using emoji`);
+        opponentAvatarId = undefined as any;
       }
     }
 
-    this.updateHUD();
+    if (import.meta.env.DEV) {
+      console.log(`[GameScene] Creating MatchIntroOverlay: player="${playerName}" (${state.playerFaction}), opponent="${opponentName}" (${state.opponentFaction})`);
+    }
+    
+    // #region agent log
+    // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+    // #endregion
+    this.matchIntroOverlay = new MatchIntroOverlay(
+      this, 
+      state.playerFaction || 'cyborg', 
+      state.opponentFaction || 'magma', 
+      playerName, 
+      opponentName,
+      playerAvatarId,
+      opponentAvatarId
+    );
+    this.matchIntroOverlay.play(() => {
+      if (import.meta.env.DEV) {
+        console.log('[GameScene] MatchIntroOverlay completed, calling onMatchIntroComplete()');
+      }
+      // #region agent log
+      // ✅ REMOVED: fetch запросы для логирования - используем ProductionLogger
+      // #endregion
+      this.onMatchIntroComplete();
+    });
   }
 
-  // === UI ===
+  private onMatchIntroComplete(): void {
+    console.log('[GameScene] onMatchIntroComplete() called');
+    
+    this.matchIntroOverlay?.destroy();
+    this.matchIntroOverlay = undefined;
 
-  private updateHUD(): void {
-    const scores = this.scoreManager.getScores();
+    // Safety flag to prevent double-start
+    let isStarted = false;
+    const safeStart = () => {
+        if (isStarted) {
+          console.warn('[GameScene] safeStart() already called, preventing double-start');
+          return;
+        }
+        isStarted = true;
+        console.log('[GameScene] safeStart() calling startGame()');
+        this.startGame();
+    };
 
-    if (this.state.isPvPMode) {
-      const isMyTurn = this.state.currentTurnId === this.mp.getMyId();
-      this.gameHUD.updateTurn(isMyTurn ? 1 : 2, this.gameStateManager.getState(), false);
+    if (this.isCampaignMode && this.campaignLevelConfig?.dialogueBeforeMatch) {
+      const dialogueId = this.campaignLevelConfig.dialogueBeforeMatch;
+      
+      // рџ”Ґ FIX: Safety Timer. If dialogue fails/hangs, start game after 2s.
+      // This prevents the "Timer at 3:00, nothing happens" bug.
+      const watchdog = this.time.delayedCall(2000, () => {
+          console.warn('[GameScene] Dialogue watchdog triggered. Forcing start.');
+          safeStart();
+      });
+
+      this.campaignDialogue?.playDialogueById(dialogueId, 100, () => {
+        watchdog.remove();
+        safeStart();
+      });
+      
     } else {
-      this.gameHUD.updateTurn(
-        this.gameStateManager.getCurrentPlayer(),
-        this.gameStateManager.getState(),
-        this.state.isAIEnabled
-      );
+      safeStart();
+    }
+  }
+
+  private startGame(): void {
+    console.log('[GameScene] startGame() called - resuming physics and starting match');
+    logInfo('GameScene', 'startGame called - match beginning');
+    
+    // вњ… РљР РРўРР§РќРћ: РЈР±РµР¶РґР°РµРјСЃСЏ С‡С‚Рѕ С„РёР·РёРєР° РІРѕР·РѕР±РЅРѕРІР»РµРЅР°
+    // Р’ Matter.js РЅРµС‚ isPaused(), РїСЂРѕСЃС‚Рѕ РІСЃРµРіРґР° РІС‹Р·С‹РІР°РµРј resume РґР»СЏ РЅР°РґРµР¶РЅРѕСЃС‚Рё
+    console.log('[GameScene] Resuming physics world');
+    this.matter.world.resume();
+    
+    // вњ… РџРѕРєР°Р·С‹РІР°РµРј HUD Рё РєР°СЂС‚РѕС‡РєРё
+    this.gameHUD.setPauseEnabled(true);
+    this.cardPanel?.setVisible(true);
+    
+    // вњ… Р’РєР»СЋС‡Р°РµРј РєРѕРЅС‚СЂРѕР»Р»РµСЂ СЃС‚СЂРµР»СЊР±С‹
+    this.shootingController.setEnabled(true);
+    
+    AudioManager.getInstance().playSFX('sfx_whistle');
+    console.log('[GameScene] Starting match director...');
+    this.matchDirector.startMatch();
+    
+    // вњ… РРЎРџР РђР’Р›Р•РќРћ: РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РјР°С‚С‡ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ Р·Р°РїСѓСЃС‚РёР»СЃСЏ
+    const phase = this.matchDirector.getPhase();
+    console.log(`[GameScene] Match phase after start: ${phase}`);
+    
+    if (phase !== MatchPhase.WAITING && phase !== MatchPhase.AIMING) {
+      console.error(`[GameScene] вќЊ Match did not start properly. Current phase: ${phase}`);
+      // РџС‹С‚Р°РµРјСЃСЏ РёСЃРїСЂР°РІРёС‚СЊ СЃРёС‚СѓР°С†РёСЋ
+      if (phase === MatchPhase.INTRO) {
+        console.warn('[GameScene] вљ пёЏ Match is still in INTRO phase, attempting to fix...');
+        // РџРѕРІС‚РѕСЂРЅР°СЏ РїРѕРїС‹С‚РєР° Р·Р°РїСѓСЃРєР°
+        this.leakGuard.setTimeout(() => {
+          this.matchDirector.startMatch();
+          const newPhase = this.matchDirector.getPhase();
+          if (import.meta.env.DEV) {
+            console.log(`[GameScene] Retry: Match phase after second start: ${newPhase}`);
+          }
+          if (newPhase !== MatchPhase.WAITING && newPhase !== MatchPhase.AIMING) {
+            if (import.meta.env.DEV) {
+              console.error(`[GameScene] вќЊ Still failed to start match. Phase: ${newPhase}`);
+            }
+          }
+        }, 100);
+      }
+    }
+    
+    // вњ… Trigger CampaignDialogueSystem match start event
+    if (this.isCampaignMode) {
+      this.campaignDialogue?.onMatchStart();
+      
+      // вњ… Tutorial: Show abilities hint AFTER tut_start dialogue completes
+      // TutorialOverlay correctly loads portrait, so we use it for abilities hint
+      const isFirstTutorialMatch = this.isCampaignMode &&
+        this.campaignLevelConfig?.id === '1-1' &&
+        !playerData.hasCompletedFirstMatchTutorial();
+      
+      if (isFirstTutorialMatch && !playerData.hasAbilitiesHintShown() && this.tutorialOverlay?.isActive()) {
+        // Wait for tut_start dialogue to complete, then show TutorialOverlay
+        this.waitForDialogueComplete(() => {
+          // Temporarily disable input
+          this.shootingController.setEnabled(false);
+          this.cardPanel?.setVisible(false);
+          
+          // Show abilities hint using TutorialOverlay (which correctly loads portrait)
+          this.tutorialOverlay.showMessage(
+            'РљР°СЂС‚С‹ вЂ” СЌС‚Рѕ СЃРїРѕСЃРѕР±РЅРѕСЃС‚Рё! РќР°Р¶РјРё РЅР° РєР°СЂС‚Сѓ, Р·Р°С‚РµРј РІС‹Р±РµСЂРё С†РµР»СЊ. РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№ вЂ” С‡Р°СЃС‚СЊ С‚Р°РєС‚РёРєРё.',
+            () => {
+              // Re-enable input if it's player's turn and no blocking dialogue exists
+              const blocked = this.campaignDialogue?.isBlockingInput() ?? false;
+              const currentPlayer = this.matchDirector.getCurrentPlayer();
+              if (currentPlayer === 1 && !blocked) {
+                this.shootingController.setEnabled(true);
+                this.cardPanel?.setVisible(this.abilityManager.getAvailableCards().length > 0);
+              }
+              playerData.markAbilitiesHintShown();
+            }
+          );
+        });
+      }
     }
 
-    this.gameHUD.updateScore(scores[1], scores[2]);
+    const currentPlayer = this.matchDirector.getCurrentPlayer();
+    console.log(`[GameScene] Match started. Current player: ${currentPlayer}, Phase: ${phase}`);
+    
+    if (currentPlayer === 1) {
+      // вњ… Block input if dialogue is showing or tutorial overlay is showing
+      const blocked = this.campaignDialogue?.isBlockingInput() ?? false;
+      const showingTutorial = this.tutorialOverlay?.isActive() && this.tutorialOverlay.visible;
+      if (!blocked && !showingTutorial) {
+        this.shootingController.setEnabled(true);
+        this.cardPanel?.setVisible(this.abilityManager.getAvailableCards().length > 0);
+        console.log('[GameScene] вњ… Player input enabled');
+      } else {
+        console.log('[GameScene] вљ пёЏ Player input blocked by dialogue or tutorial');
+      }
+    } else if (this.aiController) {
+      console.log('[GameScene] вњ… Scheduling AI turn');
+      this.scheduleAITurn();
+    } else {
+      console.warn('[GameScene] вљ пёЏ No AI controller available for player 2');
+    }
+  }
+
+  /**
+   * Wait for CampaignDialogueSystem to complete current dialogue, then call callback
+   */
+  private waitForDialogueComplete(callback: () => void): void {
+    // Check if dialogue is already complete
+    if (!this.campaignDialogue?.isBlockingInput()) {
+      callback();
+      return;
+    }
+
+    // Poll every 100ms until dialogue completes
+    const checkInterval = this.time.addEvent({
+      delay: 100,
+      callback: () => {
+        if (!this.campaignDialogue?.isBlockingInput()) {
+          checkInterval.remove();
+          callback();
+        }
+      },
+      repeat: -1
+    });
+
+    // Safety timeout: if dialogue doesn't complete in 30 seconds, call callback anyway
+    this.time.delayedCall(30000, () => {
+      if (checkInterval) {
+        checkInterval.remove();
+      }
+      callback();
+    });
   }
 
   private showPauseMenu(): void {
-    if (this.pauseMenu || this.gameStateManager.getState() === 'finished') return;
-
-    this.gameStateManager.pause();
-    this.matchTimer.pause();
-
+    if (this.pauseMenu) return;
+    
+    // вњ… B. Clear targeting UI before pausing
+    if (this.abilityManager.isActivating()) {
+      this.abilityManager.cancelActivation();
+    }
+    this.abilityManager.forceClearTargetingUI();
+    this.hideCardInfo();
+    
+    this.matchDirector.pause();
     this.pauseMenu = new PauseMenu(this, {
       onResume: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.pauseMenu = undefined;
-        this.gameStateManager.resume();
-        this.matchTimer.resume();
+        this.matchDirector.resume();
+        if (this.matchDirector.getCurrentPlayer() === 2 && this.aiController) {
+          this.aiTurnScheduled = false;
+          this.scheduleAITurn();
+        }
       },
-      onChangeFormation: this.state.isPvPMode
-        ? undefined
-        : () => {
-            AudioManager.getInstance().playSFX('sfx_click');
-            this.pauseMenu = undefined;
-            this.showFormationMenu();
-          },
+      onChangeFormation: this.isRealtimePvP ? undefined : () => {
+        AudioManager.getInstance().playSFX('sfx_click');
+        this.pauseMenu = undefined;
+        this.showFormationMenu();
+      },
       onSettings: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.pauseMenu = undefined;
@@ -1237,275 +2961,634 @@ export class GameScene extends Phaser.Scene {
       onSurrender: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.pauseMenu = undefined;
-        this.handleSurrender();
+        this.matchDirector.surrender();
       },
     });
   }
 
   private showFormationMenu(): void {
-    if (this.formationMenu || this.state.isPvPMode) return;
-
-    this.formationMenu = new FormationMenu(this, this.matchController.getCurrentFormation().id, {
-      onSelect: (formation: Formation) => {
+    if (this.formationMenu || this.isRealtimePvP) return;
+    
+    // вњ… РРЎРџР РђР’Р›Р•РќРћ: РџСЂРёРѕСЃС‚Р°РЅР°РІР»РёРІР°РµРј РјР°С‚С‡ Рё С‚Р°Р№РјРµСЂ С…РѕРґР° РїСЂРё РѕС‚РєСЂС‹С‚РёРё РјРµРЅСЋ С„РѕСЂРјР°С†РёР№
+    this.matchDirector.pause();
+    
+    // вњ… РРЎРџР РђР’Р›Р•РќРћ: РџРµСЂРµРґР°РµРј Р°РєС‚СѓР°Р»СЊРЅСѓСЋ С„СЂР°РєС†РёСЋ РёРіСЂРѕРєР° РІ FormationMenu
+    const playerFaction = this.getState().playerFaction || playerData.getFaction() || 'cyborg';
+    this.formationMenu = new FormationMenu(this, playerData.getSelectedFormation().id, {
+      onSelect: (formation) => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.formationMenu = undefined;
-        this.handleFormationSelect(formation);
-        this.gameStateManager.resume();
-        this.matchTimer.resume();
+        // вњ… РРЎРџР РђР’Р›Р•РќРћ: РЎРѕС…СЂР°РЅСЏРµРј С„РѕСЂРјР°С†РёСЋ Рё РїСЂРёРјРµРЅСЏРµРј РµС‘ РїСЂРё СЃР»РµРґСѓСЋС‰РµРј РіРѕР»Рµ РёР»Рё РїРµСЂРµР·Р°РїСѓСЃРєРµ
+        playerData.selectFormation(formation.id);
+        playerData.save();
+        
+        // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј pending formation РґР»СЏ РїСЂРёРјРµРЅРµРЅРёСЏ РїСЂРё СЃР»РµРґСѓСЋС‰РµРј РіРѕР»Рµ
+        // (С„РѕСЂРјР°С†РёСЏ РїСЂРёРјРµРЅСЏРµС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РїСЂРё СЃР»РµРґСѓСЋС‰РµРј РіРѕР»Рµ С‡РµСЂРµР· MatchDirector)
+        this.matchDirector.resume();
+        
+        // РџРѕРєР°Р·С‹РІР°РµРј СѓРІРµРґРѕРјР»РµРЅРёРµ Рѕ С‚РѕРј, С‡С‚Рѕ С„РѕСЂРјР°С†РёСЏ Р±СѓРґРµС‚ РїСЂРёРјРµРЅРµРЅР° РїСЂРё СЃР»РµРґСѓСЋС‰РµРј РіРѕР»Рµ
+        this.gameHUD?.showFormationAppliedNotification();
       },
       onCancel: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.formationMenu = undefined;
-        this.gameStateManager.resume();
-        this.matchTimer.resume();
+        this.matchDirector.resume();
+        if (this.matchDirector.getCurrentPlayer() === 2 && this.aiController) {
+          this.aiTurnScheduled = false;
+          this.scheduleAITurn();
+        }
       },
-    });
-  }
-
-  private handleFormationSelect(formation: Formation): void {
-    if (formation.id === this.matchController.getCurrentFormation().id) {
-      return;
-    }
-    this.matchController.setPendingFormation(formation);
-    this.gameHUD.showPendingFormationBadge(formation.name);
+    }, playerFaction);
   }
 
   private showInGameSettings(): void {
     if (this.inGameSettings) return;
-
     this.inGameSettings = new InGameSettings(this, {
       onClose: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.inGameSettings = undefined;
-        this.gameStateManager.resume();
-        this.matchTimer.resume();
+        this.matchDirector.resume();
       },
     });
   }
 
   private showResultScreen(result: MatchResult): void {
-    this.resultScreen = new ResultScreen(this, result, this.state.isAIEnabled, {
+    // вњ… Р”РћР‘РђР’Р›Р•РќРћ: РџСЂРµРґРѕС‚РІСЂР°С‰Р°РµРј РјРЅРѕР¶РµСЃС‚РІРµРЅРЅРѕРµ СЃРѕР·РґР°РЅРёРµ ResultScreen
+    if (this.isResultShown) {
+      console.warn('[GameScene] ResultScreen already shown, ignoring duplicate call');
+      return;
+    }
+    this.isResultShown = true;
+    
+    // вњ… РРЎРџР РђР’Р›Р•РќРћ: РџРµСЂРµРґР°РµРј РґР°РЅРЅС‹Рµ РїСЂРѕС‚РёРІРЅРёРєР° РІ ResultScreen
+    const resultScreenData = {
+      opponentName: this.opponentName,
+      opponentAvatarId: this.opponentAvatarId,
+    };
+    
+    this.resultScreen = new ResultScreen(this, result, this.isAIEnabled, resultScreenData, {
       onRematch: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.resultScreen = undefined;
-        if (this.state.isPvPMode) {
-          this.cleanupPvP();
-          this.scene.start('MatchmakingScene');
-        } else {
-          this.restartGame();
-        }
+        this.restartGame();
       },
-      onMainMenu: () => {
+      onMainMenu: async () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.resultScreen = undefined;
-        this.cleanupPvP();
-        this.scene.start('MainMenuScene');
+        
+        // вњ… League & Tournament: РќР°РІРёРіР°С†РёСЏ РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РєРѕРЅС‚РµРєСЃС‚Р°
+        if (this.matchContext === 'league') {
+          // ✅ ДОБАВЛЕНО: Останавливаем ВСЕ звуки перед переходом
+          AudioManager.getInstance().stopAllSounds();
+          // ✅ Передаём сохранённые данные в LeagueScene
+          if (this.leagueResultData) {
+            await safeSceneStart(this, 'LeagueScene', {
+              fromMatch: true,
+              oldStars: this.leagueResultData.oldStars,
+              oldTier: this.leagueResultData.oldTier,
+              oldDivision: this.leagueResultData.oldDivision,
+              matchResult: this.leagueResultData.matchResult,
+              showOrbitDecay: this.leagueResultData.showOrbitDecay
+            });
+            // Очищаем данные после использования
+            this.leagueResultData = undefined;
+          } else {
+            // Fallback если данные не были сохранены
+            const data = playerData.get();
+            const leagueProgress = data.leagueProgress;
+            const oldStars = leagueProgress?.stars || 0;
+            
+            if (leagueProgress && LeagueManager.shouldTriggerOrbitDecay(leagueProgress, result)) {
+              await safeSceneStart(this, 'LeagueScene', { 
+                showOrbitDecay: true,
+                fromMatch: true,
+                oldStars: oldStars 
+              });
+            } else {
+              await safeSceneStart(this, 'LeagueScene', {
+                fromMatch: true,
+                oldStars: oldStars
+              });
+            }
+          }
+        } else if (this.matchContext === 'tournament') {
+          // ✅ ДОБАВЛЕНО: Останавливаем ВСЕ звуки перед переходом
+          AudioManager.getInstance().stopAllSounds();
+          // Р’РѕР·РІСЂР°С‰Р°РµРјСЃСЏ РІ СЃРµС‚РєСѓ С‚СѓСЂРЅРёСЂР°
+          const data = playerData.get();
+          const tournament = data.activeTournament;
+          if (tournament) {
+            await safeSceneStart(this, 'TournamentBracketScene', { tournament });
+          } else {
+            await safeSceneStart(this, 'TournamentScene');
+          }
+        } else if (this.isCampaignMode && this.campaignLevelConfig?.id === '1-1') {
+          // ✅ ДОБАВЛЕНО: Останавливаем ВСЕ звуки перед переходом
+          AudioManager.getInstance().stopAllSounds();
+          // вњ… FIX: If this was tutorial, go to MainMenu with fromTutorial flag
+          this.scene.start('MainMenuScene', { fromTutorial: true });
+        } else {
+          const targetScene = this.isCampaignMode ? 'CampaignSelectScene' : 'MainMenuScene';
+          if (targetScene === 'CampaignSelectScene') {
+            // ✅ ДОБАВЛЕНО: Останавливаем ВСЕ звуки перед переходом
+            AudioManager.getInstance().stopAllSounds();
+            await safeSceneStart(this, targetScene);
+          } else {
+            // ✅ ДОБАВЛЕНО: Останавливаем ВСЕ звуки перед переходом
+            AudioManager.getInstance().stopAllSounds();
+            this.scene.start(targetScene);
+          }
+        }
       },
+      onNextLevel: result.isCampaign && result.unlockedNextLevel ? () => this.goToNextLevel() : undefined,
     });
-  }
-
-  private handleSurrender(): void {
-    this.matchTimer.stop();
-
-    if (this.state.isPvPMode) {
-      this.mp.sendSurrender();
-    }
-
-    if (this.aiController) {
-      this.aiController.stop();
-    }
-
-    const matchControllerResult = this.matchController.surrender();
-
-    const result: MatchResult = {
-      winner: matchControllerResult.winner ?? null,
-      isWin: matchControllerResult.isWin ?? false,
-      isDraw: matchControllerResult.isDraw ?? false,
-      playerGoals: matchControllerResult.playerGoals ?? 0,
-      opponentGoals: matchControllerResult.opponentGoals ?? 0,
-      xpEarned: matchControllerResult.xpEarned ?? 0,
-      coinsEarned: matchControllerResult.coinsEarned ?? 0,
-      isPerfectGame: matchControllerResult.isPerfectGame ?? false,
-      newAchievements: matchControllerResult.newAchievements ?? [],
-      reason: 'surrender',
-      message: 'You surrendered!',
-    };
-
-    this.gameStateManager.finish();
-    this.shootingController.setEnabled(false);
-    this.state.isProcessingTurn = true;
-    this.gameHUD.setPauseEnabled(false);
-
-    AudioManager.getInstance().stopAmbience();
-    AudioManager.getInstance().playSFX('sfx_lose');
-
-    this.showResultScreen(result);
-  }
-
-  // === HELPERS ===
-
-  private getMyOwner(): PlayerNumber {
-    return (this.state.myPlayerIndex + 1) as PlayerNumber;
-  }
-
-  private getCurrentPositions(): FinalPositions {
-    return {
-      ball: { x: this.ball.body.position.x, y: this.ball.body.position.y },
-      caps: this.caps.map((cap) => ({ x: cap.body.position.x, y: cap.body.position.y })),
-    };
-  }
-
-  private updateScoreFromPvP(scores: Record<string, number>): void {
-    const myId = this.mp.getMyId()!;
-    const oppId = this.state.opponentPlayer?.id || '';
-    this.scoreManager.setScores(scores[myId] || 0, scores[oppId] || 0);
-  }
-
-  private freezeAllObjects(): void {
-    if (this.ball?.body) {
-      this.matter.body.setVelocity(this.ball.body, { x: 0, y: 0 });
-      this.matter.body.setAngularVelocity(this.ball.body, 0);
-    }
-    this.caps.forEach((cap) => {
-      if (cap?.body) {
-        this.matter.body.setVelocity(cap.body, { x: 0, y: 0 });
-        this.matter.body.setAngularVelocity(cap.body, 0);
-      }
-    });
-  }
-
-  private resetPositions(): void {
-    this.ball.reset(this.startPositions.ball.x, this.startPositions.ball.y);
-    this.caps.forEach((cap, i) => {
-      cap.reset(this.startPositions.caps[i].x, this.startPositions.caps[i].y);
-    });
-  }
-
-  private highlightCurrentPlayerCaps(): void {
-    if (this.state.isPvPMode) {
-      const isMyTurn = this.state.currentTurnId === this.mp.getMyId();
-      const myOwner = this.getMyOwner();
-      this.caps.forEach((cap) => cap.highlight(isMyTurn && cap.owner === myOwner));
-    } else {
-      const current = this.gameStateManager.getCurrentPlayer();
-      const show = !this.aiController || current === 1;
-      this.caps.forEach((cap) => cap.highlight(show && cap.owner === current));
-    }
-  }
-
-  private updateCapsAuraState(): void {
-    const currentPlayer = this.gameStateManager?.getCurrentPlayer() || 1;
-
-    this.caps.forEach((cap) => {
-      const isActiveTeamTurn = cap.owner === currentPlayer;
-      const isSelected = cap.id === this.state.selectedCapId;
-
-      cap.setActiveTeamTurn(isActiveTeamTurn);
-      cap.setSelected(isSelected);
-    });
-  }
-
-  private applyFormationToField(formation: Formation): void {
-    const playerCaps = this.caps.filter((c) => c.owner === 1);
-    const enemyCaps = this.caps.filter((c) => c.owner === 2);
-
-    formation.slots.forEach((slot, i) => {
-      if (playerCaps[i]) {
-        const pos = this.relativeToAbsolute(slot.x, slot.y);
-        this.startPositions.caps[i] = pos;
-      }
-      if (enemyCaps[i]) {
-        const pos = this.relativeToAbsolute(slot.x, 1 - slot.y);
-        this.startPositions.caps[i + 3] = pos;
-      }
-    });
-  }
-
-  private relativeToAbsolute(relX: number, relY: number): { x: number; y: number } {
-    return {
-      x: this.fieldBounds.left + this.fieldBounds.width * relX,
-      y: this.fieldBounds.top + this.fieldBounds.height * relY,
-    };
   }
 
   private restartGame(): void {
-    this.celebrationManager.hide();
-    this.state.isGoalCelebrating = false;
-
-    this.matchTimer.reset();
-
-    if (this.aiController) {
-      this.aiController.stop();
-    }
-
-    this.matchController.reset();
-    this.matchController.startMatch(this);
-
-    this.scoreManager.reset();
-    this.resetPositions();
-    this.goalDetector.reset();
-    this.gameStateManager.forceStop();
-    this.gameStateManager.setCurrentPlayer(1);
-    this.shootingController.setCurrentPlayer(1);
-    this.shootingController.setEnabled(true);
-    this.state.isProcessingTurn = false;
-    this.lastShootingCap = undefined;
-    this.state.selectedCapId = undefined;
-    this.gameHUD.setPauseEnabled(true);
-    this.gameHUD.hidePendingFormationBadge();
-    this.highlightCurrentPlayerCaps();
-    this.updateCapsAuraState();
-    this.updateHUD();
-
-    this.matchTimer.start();
-
     AudioManager.getInstance().stopAll();
-    AudioManager.getInstance().playAmbience('bgm_match');
-    AudioManager.getInstance().playSFX('sfx_whistle');
-  }
-
-  // === CLEANUP ===
-
-  private cleanupPvP(): void {
-    if (!this.state.isPvPMode) return;
-
-    this.pvpSyncManager?.cleanup();
-    this.pvpSyncManager = undefined;
-
-    this.mp.clearRoom();
-
-    this.celebrationManager.hide();
-    this.state.isGoalCelebrating = false;
-    this.state.guestLocalPhysicsUntil = 0;
-    this.state.snapshotBuffer = [];
-    this.state.timeSyncSamples = [];
-    this.state.lastServerSnapshot = undefined;
+    
+    // вњ… B. Clear targeting UI before restart
+    this.abilityManager?.forceClearTargetingUI();
+    this.player2AbilityManager?.forceClearTargetingUI();
+    this.hideCardInfo();
+    
+    this.matchDirector.reset();
+    this.abilityManager?.resetForNewMatch();
+    this.player2AbilityManager?.resetForNewMatch();
+    this.resetPositions();
+    this.shootingController.setCurrentPlayer(1);
+    this.gameHUD.setPauseEnabled(true);
     this.lastShootingCap = undefined;
-    this.state.selectedCapId = undefined;
-
-    if (this.debugOverlay) {
-      this.debugOverlay.destroy();
-      this.debugOverlay = undefined;
+    this.selectedCapId = undefined;
+    this.aiTurnScheduled = false;
+    this.isAbilityInputActive = false;
+    
+    // РџРµСЂРµР·Р°РїСѓСЃРєР°РµРј С‚Р°Р№РјРµСЂ РєСѓР»РґР°СѓРЅР° РµСЃР»Рё РЅСѓР¶РЅРѕ
+    if (this.cooldownTimer) {
+      this.cooldownTimer.destroy();
+      this.cooldownTimer = undefined;
     }
+    
+    AudioManager.getInstance().playAmbience('bgm_match');
+    this.showMatchIntro();
   }
+
+  private async goToNextLevel(): Promise<void> {
+    await safeSceneStart(this, 'CampaignSelectScene');
+  }
+
+  // OLD: Removed setupPvP() - using pvpHelper now
+
+  /* OLD PVP SYSTEM REMOVED - createPvPSync() method
+  private createPvPSync(): void {
+    import('./game/PvPSyncManager').then(({ PvPSyncManager }) => {
+      import('./game/PvPDebugLogger').then(({ PvPDebugLogger }) => {
+        const debug = new PvPDebugLogger();
+        debug.init(this.isHost, this.mp.getMyPlayerIndex(), this.mp.getMyId());
+        
+        this.pvpSync = new PvPSyncManager(
+          this,
+          {
+            isHost: this.isHost,
+            myPlayerIndex: this.mp.getMyPlayerIndex(),
+          },
+          {
+            onShootExecuted: (data: any, isMyShoot: boolean) => {
+              if (!isMyShoot) {
+                console.log('[GameScene] Opponent shoot executed, applying...', data);
+                // Находим фишку по capId
+                const cap = this.caps.find(c => c.id === data.capId);
+                if (cap && data.force) {
+                  // Применяем силу удара оппонента
+                  const forceVec = new Phaser.Math.Vector2(data.force.x, data.force.y);
+                  cap.applyForce(forceVec.x, forceVec.y);
+                  
+                  // Применяем hitOffset если есть (для Trickster)
+                  if (data.hitOffset !== undefined && typeof (cap as any).setLastHitOffset === 'function') {
+                    (cap as any).setLastHitOffset(data.hitOffset);
+                  }
+                  
+                  // Воспроизводим эффект удара
+                  if (typeof (cap as any).playHitEffect === 'function') {
+                    (cap as any).playHitEffect();
+                  }
+                  
+                  console.log('[GameScene] ✅ Opponent shoot applied to cap:', data.capId);
+                } else {
+                  console.warn('[GameScene] ⚠️ Cap not found for opponent shoot:', data.capId);
+                }
+              }
+            },
+            onTurnChange: (data: any) => {
+              console.log('[GameScene] Turn changed to:', data.currentTurn === this.mp.getMyId() ? 'ME' : 'OPPONENT');
+              
+              // ✅ ИСПРАВЛЕНО: Возобновляем игру если она была на паузе
+              if (this.isPausedForReconnect) {
+                this.resumeGameAfterReconnect();
+              }
+              
+              // Определяем, чей ход (1 или 2)
+              const isMyTurn = data.currentTurn === this.mp.getMyId();
+              const myOwner = this.getMyOwner();
+              const newPlayer: PlayerNumber = isMyTurn ? myOwner : (myOwner === 1 ? 2 : 1);
+              
+              // Обновляем счет
+              if (data.scores) {
+                const myId = this.mp.getMyId();
+                const opponent = this.mp.getOpponent();
+                const myScore = data.scores[myId || ''] || 0;
+                const oppScore = data.scores[opponent?.id || ''] || 0;
+                
+                // Обновляем счет в matchDirector
+                this.matchDirector.setScore(myScore, oppScore);
+              }
+              
+              // ✅ ИСПРАВЛЕНО: Переключаем ход через stateMachine
+              // В PVP режиме смена хода происходит от сервера, поэтому просто устанавливаем игрока
+              const stateMachine = this.matchDirector.getStateMachine();
+              const currentPhase = stateMachine.getPhase();
+              
+              // Если мы в фазе MOVING, переходим в WAITING (но НЕ меняем игрока - это делает сервер)
+              if (currentPhase === MatchPhase.MOVING) {
+                // Просто переходим в WAITING без смены игрока
+                stateMachine.transition(MatchPhase.WAITING);
+              }
+              
+              // Устанавливаем текущего игрока (от сервера)
+              stateMachine.setCurrentPlayer(newPlayer);
+              
+              // Вызываем обработчик смены хода
+              // Номер хода будет увеличен автоматически при следующем выстреле
+              this.onTurnChange({ player: newPlayer, turnNumber: stateMachine.getTurnNumber() });
+              
+              console.log('[GameScene] ✅ Turn changed to player:', newPlayer, 'phase:', stateMachine.getPhase());
+            },
+            onGoalScored: (data: any) => {
+              console.log('[GameScene] Goal scored in PvP', data);
+              
+              // Определяем, кто забил гол (1 или 2)
+              const myId = this.mp.getMyId();
+              const opponent = this.mp.getOpponent();
+              const scorerId = data.scorerId;
+              const scoringPlayer: PlayerNumber = scorerId === myId 
+                ? this.getMyOwner() 
+                : (this.getMyOwner() === 1 ? 2 : 1);
+              
+              // Обновляем счет
+              if (data.scores) {
+                const myScore = data.scores[myId || ''] || 0;
+                const oppScore = data.scores[opponent?.id || ''] || 0;
+                this.matchDirector.setScore(myScore, oppScore);
+              }
+              
+              // Применяем финальные позиции если есть
+              if (data.finalPositions && this.pvpSync) {
+                this.pvpSync.applyFinalPositions(this.ball, this.caps, data.finalPositions);
+              }
+              
+              // Вызываем обработку гола через MatchDirector
+              this.matchDirector.onGoalScored(scoringPlayer);
+              
+              console.log('[GameScene] ✅ Goal processed, scorer:', scoringPlayer);
+            },
+            onContinueGame: (data: any) => {
+              console.log('[GameScene] Continue game after goal');
+              // Определяем, чей ход после гола
+              const isMyTurn = data.currentTurn === this.mp.getMyId();
+              const myOwner = this.getMyOwner();
+              const newPlayer: PlayerNumber = isMyTurn ? myOwner : (myOwner === 1 ? 2 : 1);
+              
+              // Переключаем ход через stateMachine
+              const stateMachine = this.matchDirector.getStateMachine();
+              stateMachine.setCurrentPlayer(newPlayer);
+              
+              // Возобновляем игру
+              this.matchDirector.resume();
+              
+              // Вызываем обработчик смены хода
+              this.onTurnChange({ player: newPlayer, turnNumber: stateMachine.getTurnNumber() });
+              
+              console.log('[GameScene] ✅ Game continued, turn:', newPlayer);
+            },
+            onMatchFinished: (data: any) => {
+              console.log('[GameScene] PvP match finished');
+              this.handlePvPMatchEnd(data);
+            },
+            onOpponentLeft: (reason: string, data: any) => {
+              console.log('[GameScene] Opponent left:', reason);
+              this.handleOpponentLeft(reason);
+            },
+            onTimerUpdate: (remaining: number, total: number) => {
+              if (this.gameHUD) {
+                // TODO: Implement timer update in GameHUD
+                // this.gameHUD.updateTimer(remaining);
+              }
+            },
+          },
+          debug
+        );
+        
+        this.pvpSync.setupListeners();
+        this.pvpSync.startTimeSync();
+        
+        // ✅ PVP: Запускаем синхронизацию позиций для хоста
+        if (this.isHost) {
+          this.pvpSync.startSyncInterval(
+            () => this.ball,
+            () => this.caps
+          );
+          console.log('[GameScene] ✅ PvP position sync started (host)');
+        }
+        
+        // ✅ 2.1: Создаем индикатор сетевого состояния
+        const { width, height } = this.cameras.main;
+        this.networkIndicator = new NetworkStatusIndicator(this, width - 120, 30);
+        this.networkIndicator.updateMetrics({
+          rtt: 0,
+          jitter: 0,
+          quality: 'excellent',
+          isConnected: this.mp.getConnectionStatus(),
+        });
+        
+        // ✅ 2.3: Создаем окно переподключения
+        this.reconnectionOverlay = new ReconnectionOverlay(this);
+        
+        // ✅ 2.1: Обновляем метрики каждую секунду
+        this.time.addEvent({
+          delay: 1000,
+          callback: () => {
+            if (this.pvpSync && this.networkIndicator) {
+              this.networkIndicator.updateMetrics({
+                rtt: this.pvpSync.getRTT(),
+                jitter: this.pvpSync.getJitter(),
+                quality: this.pvpSync.getConnectionQuality(),
+                isConnected: this.mp.getConnectionStatus(),
+              });
+            }
+          },
+          loop: true,
+        });
+        
+        // ✅ 2.3: Подписываемся на события переподключения
+        this.setupReconnectionHandlers();
+        
+        console.log('[GameScene] ✅ PvP sync initialized');
+      });
+    });
+  } END OF createPvPSync() */
+
+  /* OLD PVP SYSTEM REMOVED - setupReconnectionHandlers() method
+  private setupReconnectionHandlers(): void {
+    if (!this.isPvPMode || !this.mp || !this.reconnectionOverlay) return;
+    
+    // ✅ ИСПРАВЛЕНО: Подписываемся на события переподключения
+    // НЕ ставим игру на паузу при обычном отключении - только показываем уведомление
+    this.mp.on('disconnected', (reason: string) => {
+      console.log('[GameScene] Disconnected:', reason);
+      if (this.reconnectionOverlay) {
+        this.reconnectionOverlay.show();
+      }
+      // НЕ ставим игру на паузу - игра продолжается
+    });
+    
+    this.mp.on('reconnected', () => {
+      console.log('[GameScene] Reconnected');
+      if (this.reconnectionOverlay) {
+        this.reconnectionOverlay.setReconnected();
+      }
+      // Возобновляем игру если она была на паузе
+      if (this.isPausedForReconnect) {
+        this.resumeGameAfterReconnect();
+      }
+    });
+    
+    // ✅ ИСПРАВЛЕНО: Обработка отключения оппонента - НЕ ставим игру на паузу
+    // Игра продолжается, просто показываем уведомление
+    this.mp.on('opponent_disconnected', (data: any) => {
+      console.log('[GameScene] Opponent disconnected');
+      if (this.reconnectionOverlay) {
+        this.reconnectionOverlay.setWaitingForOpponent();
+      }
+      // НЕ ставим игру на паузу - оппонент может вернуться
+    });
+  } END OF setupReconnectionHandlers() */
+
+  /* OLD PVP SYSTEM REMOVED - resumeGameAfterReconnect() method
+  private resumeGameAfterReconnect(): void {
+    if (!this.isPausedForReconnect) return;
+    
+    console.log('[GameScene] Resuming game after reconnect');
+    this.isPausedForReconnect = false;
+    
+    // Возобновляем физику и матч
+    this.matter.world.resume();
+    this.matchDirector.resume();
+  } END OF resumeGameAfterReconnect() */
+
+  /* OLD PVP SYSTEM REMOVED - handlePvPMatchEnd() method
+  private handlePvPMatchEnd(data: any): void {
+    const myId = this.mp.getMyId();
+    const isWin = data.winner === myId;
+    const isDraw = data.winner === null;
+    
+    import('./game/MatchResultHelper').then(({ GameResultFactory }) => {
+      import('../managers/PvPManager').then(({ PvPManager }) => {
+        const opponent = this.mp.getOpponent();
+        const myScore = data.scores[myId || ''] || 0;
+        const oppScore = data.scores[opponent?.id || ''] || 0;
+        
+        const result = GameResultFactory.createPvPResult(
+          'ranked', // or get from playerData
+          isDraw ? null : isWin,
+          myScore,
+          oppScore,
+          opponent?.name || 'Opponent',
+          1500, // opponent rating - should come from server
+          this.matchDuration,
+          'time_up'
+        );
+        
+        this.onMatchEnd({ result         });
+      });
+    });
+  } END OF handlePvPMatchEnd() */
+
+  /* OLD PVP SYSTEM REMOVED - handleOpponentLeft() method
+  private handleOpponentLeft(reason: string): void {
+    // Opponent left - award win
+    import('./game/MatchResultHelper').then(({ GameResultFactory }) => {
+      import('../managers/PvPManager').then(({ PvPManager }) => {
+        const opponent = this.mp.getOpponent();
+        const myId = this.mp.getMyId();
+        const scores = this.matchDirector.getScore();
+        
+        const result = GameResultFactory.createPvPResult(
+          'ranked',
+          true, // Win by forfeit
+          scores.player1,
+          scores.player2,
+          opponent?.name || 'Opponent',
+          1500,
+          this.matchDuration,
+          reason === 'surrendered' ? 'surrender' : 'disconnect'
+        );
+        
+        this.onMatchEnd({ result });
+      });
+    });
+  } END OF handleOpponentLeft() */
+
+  private getMyOwner(): PlayerNumber {
+    if (!this.isRealtimePvP) {
+      return 1;
+    }
+    // ✅ FIX: Используем сохраненный myPlayerIndex вместо вызова mp.getMyPlayerIndex()
+    // (чтобы избежать ошибки если mp еще не инициализирован)
+    return (this.myPlayerIndex + 1) as PlayerNumber; // +1 потому что индексы 0,1 -> владельцы 1,2
+  }
+
+  // вњ… РРЎРџР РђР’Р›Р•РќРћ: getState() Р±РѕР»СЊС€Рµ РќР• Р±РµСЂС‘С‚ РѕСЃС‚Р°С‚РѕРє РІСЂРµРјРµРЅРё РёР· matchDirector
+  // Р’РјРµСЃС‚Рѕ СЌС‚РѕРіРѕ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ СЃРѕС…СЂР°РЅС‘РЅРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ this.matchDuration
+  private getState() {
+    const pFaction = (this.storedPlayerFaction || playerData.getFaction() || 'cyborg') as FactionId;
+    const oFaction = (this.campaignLevelConfig?.enemyFaction || this.storedOpponentFaction || 'magma') as FactionId;
+
+    return {
+      // вњ… РРЎРџР РђР’Р›Р•РќРћ: РСЃРїРѕР»СЊР·СѓРµРј СЃРѕС…СЂР°РЅС‘РЅРЅСѓСЋ РґР»РёС‚РµР»СЊРЅРѕСЃС‚СЊ РјР°С‚С‡Р°, Р° РЅРµ РѕСЃС‚Р°С‚РѕРє РІСЂРµРјРµРЅРё
+      matchDuration: this.matchDuration || GAME.DEFAULT_MATCH_DURATION,
+      playerFaction: pFaction,
+      opponentFaction: oFaction,
+      useFactions: !!playerData.getFaction(),
+      aiDifficulty: this.campaignLevelConfig?.aiDifficulty || 'medium',
+      fieldSkinId: playerData.get().equippedFieldSkin || 'field_default',
+      currentArena: undefined,
+      isPvPMode: this.isRealtimePvP,
+      isHost: this.isHost,
+    };
+  }
+
+  private handleResize(): void {
+    this.cameras.main.centerOn(this.fieldBounds.centerX, this.fieldBounds.centerY);
+    if (this.cardPanel) {
+      const { width, height } = this.cameras.main;
+      this.cardPanel.setPosition(width / 2, height - 80);
+    }
+    // РћР±РЅРѕРІР»СЏРµРј РїРѕР·РёС†РёСЋ РєРЅРѕРїРєРё РїР°СѓР·С‹ РїСЂРё СЂРµСЃР°Р№Р·Рµ
+    this.gameHUD?.updateLayout();
+  }
+
+  // ============================================================
+  // PUBLIC API
+  // ============================================================
+
+  public getAbilityManager(): AbilityManager {
+    return this.abilityManager;
+  }
+
+  public getVFXManager(): VFXManager {
+    return this.vfxManager;
+  }
+
+  /**
+   * Получить контроллер стрельбы (для TutorialManager)
+   */
+  public getShootingController(): any {
+    return this.shootingController;
+  }
+
+  /**
+   * ✅ Инициализация слушателей событий ПОСЛЕ очистки EventBus
+   * Вызывается после GameSceneSetup.initialize() чтобы подписки не были удалены.
+   */
+  private initializeEventListeners(): void {
+    // Battle Pass - слушает MATCH_FINISHED и GOAL_SCORED для начисления XP
+    battlePassManager.initialize();
+
+    // Daily Tasks - слушает события для прогресса заданий
+    dailyTasksManager.initialize();
+
+    console.log('[GameScene] Event listeners initialized after EventBus clear');
+  }
+
+  // ============================================================
+  // CLEANUP
+  // ============================================================
 
   shutdown(): void {
-    AudioManager.getInstance().stopAll();
-
-    this.matchTimer?.destroy();
-    this.celebrationManager?.destroy();
-    this.cleanupPvP();
-
-    if (this.aiController) {
-      this.aiController.destroy();
-      this.aiController = undefined;
+    // В начале метода
+    if (import.meta.env.DEV) {
+      import('../core/EventBus').then(({ EventBus }) => {
+        const leaks = EventBus.checkForLeaks();
+        if (leaks.length > 0) {
+          console.warn('[GameScene] Potential EventBus leaks:', leaks);
+        }
+      }).catch(() => {
+        // Игнорируем ошибки импорта
+      });
     }
-
+    
+    // ✅ ИСПРАВЛЕНО: Корректная отписка от lifecycle событий
+    if (this.lifecyclePauseCallback || this.lifecycleResumeCallback) {
+      const lifecycle = AppLifecycle.getInstance();
+      
+      if (this.lifecyclePauseCallback) {
+        lifecycle.offPause(this.lifecyclePauseCallback);
+        this.lifecyclePauseCallback = undefined;
+      }
+      
+      if (this.lifecycleResumeCallback) {
+        lifecycle.offResume(this.lifecycleResumeCallback);
+        this.lifecycleResumeCallback = undefined;
+      }
+    }
+    this.wasBackgrounded = false;
+    
+    // ✅ FIX: LeakGuard автоматически очистит все ресурсы
+    // Нет необходимости вручную очищать таймеры и listeners
+    
+    this.devOverlay?.destroy();
+    this.unsubscribeFromEvents();
+    HapticManager.cleanup();
+    AudioManager.getInstance().stopAll();
+    this.announcer?.clear();
+    this.matchDirector?.destroy();
+    this.matchIntroOverlay?.destroy();
+    this.tutorialOverlay?.destroy();
+    this.celebrationManager?.destroy();
+    this.abilityManager?.destroy();
+    this.player2AbilityManager?.destroy();
+    this.abilityButton?.destroy();
+    this.vfxManager?.destroy();
+    this.passiveManager?.destroy();
+    this.achievementManager?.destroy();
+    this.campaignDialogue?.destroy();
+    this.campaignDialogue = undefined;
+    this.aiController?.destroy();
+    this.cardPanel?.destroy();
     this.gameHUD?.destroy();
     this.pauseMenu?.destroy();
     this.formationMenu?.destroy();
     this.resultScreen?.destroy();
     this.inGameSettings?.destroy();
     this.fieldRenderer?.destroy();
+    this.cooldownTimer?.destroy();
+    
+    // вњ… B. Clear card info popup
+    this.hideCardInfo();
+    
+    this.scale.off('resize', this.handleResize, this);
+    
+    // РћС‡РёС‰Р°РµРј keyboard listeners
+    this.input.keyboard?.off('keydown-ESC');
+    
+    // вњ… FIX 2026-01-23: РќР• С‚СЂРѕРіР°РµРј С‚РµРєСЃС‚СѓСЂС‹ - РёСЃРїРѕР»СЊР·СѓРµРј СЃС‚Р°Р±РёР»СЊРЅС‹Р№ РїРѕРґС…РѕРґ
+    // РўРµРєСЃС‚СѓСЂС‹ Р·Р°РіСЂСѓР¶Р°СЋС‚СЃСЏ РћР”РРќ Р РђР— РІ BootScene Рё РѕСЃС‚Р°СЋС‚СЃСЏ РІ РїР°РјСЏС‚Рё
+    // Р­С‚Рѕ СЂР°Р±РѕС‚Р°РµС‚ СЃС‚Р°Р±РёР»СЊРЅРѕ Р±РµР· РІС‹Р»РµС‚РѕРІ
+    
+    // ✅ NEW PVP: Очищаем PVP ресурсы
+    if (this.pvpHelper) {
+      this.pvpHelper.destroy();
+      this.pvpHelper = undefined;
+    }
   }
 }

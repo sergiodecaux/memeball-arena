@@ -1,4 +1,6 @@
-// src/constants/gameConstants.ts
+// ✅ ИЗМЕНЕНО: Добавлены константы безопасности мяча (MAX_SPEED, OUT_OF_BOUNDS_MARGIN, MAX_ANGULAR_VELOCITY)
+
+import { AbilityDefinition } from '../types/abilities';
 
 export const FIELD = {
   WIDTH: 600,
@@ -11,7 +13,7 @@ export const FIELD = {
 } as const;
 
 export const GOAL = {
-  WIDTH: 138,              // было 160 → идеально 23% поля
+  WIDTH: 138,
   DEPTH: 40,
   POST_THICKNESS: 12,
   NET_COLOR: 0xffffff,
@@ -19,7 +21,7 @@ export const GOAL = {
 } as const;
 
 export const PHYSICS = {
-  FRICTION_AIR: 0.008,     // было 0.015 → объекты живут дольше
+  FRICTION_AIR: 0.008,
   RESTITUTION: 0.7,
   FRICTION: 0.05,
 } as const;
@@ -29,16 +31,41 @@ export const COLLISION_CATEGORIES = {
   CAP: 0x0002,
   BALL: 0x0004,
   GOAL_SENSOR: 0x0008,
+  LAVA: 0x0010,
+  SHIELD: 0x0020,
+  CORNER: 0x0040,   // NEW: Corner colliders
 } as const;
 
 export const BALL = {
   RADIUS: 15,
   COLOR: 0xffffff,
-  MASS: 1.2,               // было 0.8 → тяжелее для стабильных столкновений
-  RESTITUTION: 0.88,       // было 0.85 → больше отскоков
+  MASS: 1.2,
+  RESTITUTION: 0.88,
   FRICTION: 0.005,
-  FRICTION_AIR: 0.005,     // было 0.008 → мяч летает дальше
+  FRICTION_AIR: 0.005,
   LABEL: 'ball',
+  
+  // ========== БЕЗОПАСНОСТЬ: ограничители скорости и позиции ==========
+  // Максимальная скорость мяча (px за шаг симуляции)
+  // Предотвращает "взрывные" отскоки из углов
+  MAX_SPEED: 38,
+  
+  // Мягкий лимит после столкновения со стенами/штангами
+  MAX_SPEED_AFTER_BOUNCE: 32,
+  
+  // Максимальная угловая скорость (rad/step)
+  MAX_ANGULAR_VELOCITY: 0.35,
+  
+  // Запас за пределами FieldBounds, где ещё можно вернуть мяч (px)
+  // Если мяч вылетел дальше - принудительный reset в центр
+  OUT_OF_BOUNDS_MARGIN: 80,
+  
+  // Критический порог скорости для экстренного торможения
+  // Если скорость превышает это значение - мгновенный clamp + damping
+  CRITICAL_SPEED: 50,
+  
+  // Коэффициент damping при критической скорости
+  CRITICAL_SPEED_DAMPING: 0.7,
 } as const;
 
 export type CapClass = 'balanced' | 'tank' | 'sniper' | 'trickster';
@@ -59,67 +86,89 @@ export interface CapClassStats {
 }
 
 export const CAP_CLASSES: Record<CapClass, CapClassStats> = {
+  // Balanced (Novice, Cyborgs)
   balanced: {
     name: 'Balanced',
     description: 'All-round player.',
     mass: 3.5,
     radius: 28,
-    restitution: 0.5,
+    restitution: 0.7,
     friction: 0.05,
-    frictionAir: 0.018,        // было 0.02 → быстрее останавливается
-    forceMultiplier: 0.0020,   // было 0.0018 → чуть сильнее
-    maxForce: 0.26,            // было 0.22
+    frictionAir: 0.02,
+    forceMultiplier: 0.0020,
+    maxForce: 0.26,
     aimLineLength: 1.0,
     canCurve: false,
     curveStrength: 0,
   },
+  // Tank (Magma) - Very Heavy
   tank: {
     name: 'Tank',
     description: 'Heavy defender.',
-    mass: 6.8,                 // было 8.0 → теперь можно пробить
+    mass: 6.0,
     radius: 34,
-    restitution: 0.1,
+    restitution: 0.2,
     friction: 0.2,
-    frictionAir: 0.04,         // было 0.05 → чуть живее
-    forceMultiplier: 0.0017,   // было 0.0015
-    maxForce: 0.20,            // было 0.18
+    frictionAir: 0.05,
+    forceMultiplier: 0.0017,
+    maxForce: 0.20,
     aimLineLength: 0.7,
     canCurve: false,
     curveStrength: 0,
   },
+  // Sniper (Void, Insect Spitter) - Light & Precise
   sniper: {
     name: 'Sniper',
     description: 'Glass cannon.',
-    mass: 3.2,                 // было 2.6 → финал с insect: 2.62 (ratio 2.18)
+    mass: 2.8,
     radius: 24,
-    restitution: 0.48,         // было 0.65 → меньше отскок!
+    restitution: 0.6,
     friction: 0.02,
-    frictionAir: 0.010,        // было 0.006 → быстрее останавливается
-    forceMultiplier: 0.0023,   // было 0.0028 → сильный, но не имба
-    maxForce: 0.28,            // было 0.35 → убрали сверхдальний выстрел
-    aimLineLength: 1.45,       // было 1.6
+    frictionAir: 0.01,
+    forceMultiplier: 0.0023,
+    maxForce: 0.28,
+    aimLineLength: 1.45,
     canCurve: false,
     curveStrength: 0,
   },
+  // Trickster (Void Bender, Insect Mimic) - Bouncy & Weird
   trickster: {
     name: 'Trickster',
     description: 'Curve master.',
     mass: 3.0,
     radius: 26,
-    restitution: 0.5,
+    restitution: 0.9,
     friction: 0.04,
-    frictionAir: 0.012,        // было 0.015 → быстрее
-    forceMultiplier: 0.0019,   // было 0.0016
-    maxForce: 0.24,            // было 0.20
-    aimLineLength: 1.25,       // было 1.1
+    frictionAir: 0.015,
+    forceMultiplier: 0.0019,
+    maxForce: 0.24,
+    aimLineLength: 1.25,
     canCurve: true,
-    curveStrength: 1.25,       // было 0.45 → КРИВЫЕ НАКОНЕЦ-ТО РАБОТАЮТ!
+    curveStrength: 1.25,
   },
 } as const;
 
 export const CAP = CAP_CLASSES.balanced;
 
-// ========== ФРАКЦИИ (ALIEN FACTIONS) ==========
+export const SWIPE_NAVIGATION = {
+  EDGE_ZONE_WIDTH: 25,
+  THRESHOLD_PERCENT: 0.3,
+  VELOCITY_THRESHOLD: 800,
+  MAX_VERTICAL_DRIFT: 100,
+  INDICATOR_WIDTH: 3,
+  INDICATOR_COLOR: 0x00f2ff,
+  INDICATOR_ALPHA_IDLE: 0.25,
+  INDICATOR_ALPHA_HOVER: 0.5,
+  INDICATOR_ALPHA_ACTIVE: 0.8,
+  PARALLAX_FACTOR: 0.3,
+  SHADOW_WIDTH: 20,
+  DIMMING_MAX: 0.4,
+  ANIMATION_DURATION: 200,
+  SPRING_TENSION: 300,
+  SPRING_FRICTION: 20,
+  ARROW_SIZE: 18,
+  PULSE_SPEED: 2000,
+} as const;
 
 export type FactionId = 'magma' | 'cyborg' | 'void' | 'insect';
 
@@ -154,11 +203,11 @@ export const FACTIONS: Record<FactionId, FactionConfig> = {
     name: 'Magma Brutes',
     description: 'Heavy Defense. Hard to move, devastating impact.',
     assetKey: 'unit_magma',
-    assetPath: 'assets/sprites/factions/magma/token.png',
+    assetPath: '/assets/images/factions/art_magma.png',
     color: 0xff4500,
     colorSecondary: 0xff6b35,
     stats: {
-      mass: 1.38,              // было 1.5 → тяжёлые, но пробиваемые
+      mass: 1.38,
       bounce: 0.3,
       speed: 0.85,
     },
@@ -175,7 +224,7 @@ export const FACTIONS: Record<FactionId, FactionConfig> = {
     name: 'Terran Cyborgs',
     description: 'Balanced Tech. Precision engineering for any situation.',
     assetKey: 'unit_cyborg',
-    assetPath: 'assets/sprites/factions/cyborg/token.png',
+    assetPath: '/assets/images/factions/art_cyborg.png',
     color: 0x00f2ff,
     colorSecondary: 0x0088ff,
     stats: {
@@ -196,14 +245,14 @@ export const FACTIONS: Record<FactionId, FactionConfig> = {
     name: 'Void Walkers',
     description: 'Phase Control. Light and elusive with powerful curve shots.',
     assetKey: 'unit_void',
-    assetPath: 'assets/sprites/factions/void/token.png',
+    assetPath: '/assets/images/factions/art_void.png',
     color: 0x9d00ff,
     colorSecondary: 0xcc44ff,
     stats: {
       mass: 0.75,
       bounce: 0.85,
       speed: 1.0,
-      control: 1.55,           // было 1.4 → кривые реально опасны
+      control: 1.55,
     },
     particleEffect: {
       texture: 'p_smoke',
@@ -218,13 +267,13 @@ export const FACTIONS: Record<FactionId, FactionConfig> = {
     name: 'Xeno Swarm',
     description: 'Speed Assault. Lightning fast strikes, fragile but deadly.',
     assetKey: 'unit_insect',
-    assetPath: 'assets/sprites/factions/insect/token.png',
+    assetPath: '/assets/images/factions/art_insect.png',
     color: 0x39ff14,
     colorSecondary: 0x00ff00,
     stats: {
-      mass: 0.82,              // было 0.7 → финальная масса sniper+insect = 2.62
+      mass: 0.82,
       bounce: 0.5,
-      speed: 1.22,             // было 1.35 → больше не ракета
+      speed: 1.22,
     },
     particleEffect: {
       texture: 'p_drip',
@@ -242,8 +291,22 @@ export function getFaction(id: FactionId): FactionConfig {
 
 export const FACTION_IDS: FactionId[] = ['magma', 'cyborg', 'void', 'insect'];
 export const DEFAULT_FACTION: FactionId = 'cyborg';
+export const STARTER_FACTIONS: FactionId[] = ['magma', 'cyborg'];
 
-// ========== ФРАКЦИОННЫЕ АРЕНЫ ==========
+export function isStarterFaction(factionId: FactionId): boolean {
+  return STARTER_FACTIONS.includes(factionId);
+}
+
+export const FACTION_PRICES: Record<FactionId, { coins?: number; crystals?: number }> = {
+  cyborg: { coins: 15000 },
+  magma: { coins: 15000 },
+  void: { coins: 15000 },
+  insect: { coins: 15000 },
+};
+
+export function getFactionPrice(factionId: FactionId): { coins?: number; crystals?: number } {
+  return FACTION_PRICES[factionId];
+}
 
 export interface FactionArena {
   id: FactionId;
@@ -263,7 +326,7 @@ export const FACTION_ARENAS: Record<FactionId, FactionArena> = {
     id: 'magma',
     name: 'The Crucible',
     assetKey: 'field_magma',
-    assetPath: 'assets/backgrounds/field_magma.png',
+    assetPath: '/assets/backgrounds/field_magma.png',
     ambientColor: 0x1a0f0a,
     lineColor: 0xff4500,
     borderColor: 0xff4500,
@@ -275,7 +338,7 @@ export const FACTION_ARENAS: Record<FactionId, FactionArena> = {
     id: 'cyborg',
     name: 'Cyber Grid',
     assetKey: 'field_cyborg',
-    assetPath: 'assets/backgrounds/field_cyborg.png',
+    assetPath: '/assets/backgrounds/field_cyborg.png',
     ambientColor: 0x0a0f1a,
     lineColor: 0x00f2ff,
     borderColor: 0x00f2ff,
@@ -287,7 +350,7 @@ export const FACTION_ARENAS: Record<FactionId, FactionArena> = {
     id: 'void',
     name: 'Event Horizon',
     assetKey: 'field_void',
-    assetPath: 'assets/backgrounds/field_void.png',
+    assetPath: '/assets/backgrounds/field_void.png',
     ambientColor: 0x0f0a1a,
     lineColor: 0x9d00ff,
     borderColor: 0x9d00ff,
@@ -299,7 +362,7 @@ export const FACTION_ARENAS: Record<FactionId, FactionArena> = {
     id: 'insect',
     name: 'The Hive',
     assetKey: 'field_insect',
-    assetPath: 'assets/backgrounds/field_insect.png',
+    assetPath: '/assets/backgrounds/field_insect.png',
     ambientColor: 0x0a1a0f,
     lineColor: 0x39ff14,
     borderColor: 0x39ff14,
@@ -313,7 +376,6 @@ export function getFactionArena(factionId: FactionId): FactionArena {
   return FACTION_ARENAS[factionId];
 }
 
-// ========== АУРА ==========
 export const AURA = {
   TEAM_COLORS: {
     1: 0x00ffff,
@@ -363,18 +425,215 @@ export const STARTING_POSITIONS = {
 } as const;
 
 export const GAME = {
-  WINNING_SCORE: 3,
   GOAL_DELAY: 2000,
   RESTART_DELAY: 1500,
+  DEFAULT_MATCH_DURATION: 300,
 } as const;
 
-export const FACTION_PRICES: Record<FactionId, { coins?: number; crystals?: number }> = {
-  cyborg: {},
-  magma: { coins: 15000 },
-  void: { coins: 15000 },
-  insect: { coins: 15000 },
+export enum UnitStatus {
+  NONE = 0,
+  STUNNED = 1,
+  SHIELDED = 2,
+  TOXIC_CHARGED = 3,
+  IN_LAVA = 4,
+}
+
+// ========== СИСТЕМА ЗАРЯДОВ СПОСОБНОСТЕЙ ==========
+
+export const ABILITY_CHARGE = {
+  MAX_CHARGES: 2,
+  START_CHARGES: 0,
+  
+  // Заработок в матче
+  ON_GOAL_SCORED: 1,
+  ON_GOAL_CONCEDED: 1,
+  ON_BALL_HIT_ENEMY: 0.5,
+
+  // 🔥 GLOBAL COOLDOWN (1 minute = 60000 ms)
+  GLOBAL_COOLDOWN_MS: 60000,
+} as const;
+
+export const ABILITY_CONFIG = {
+  CHARGE_COST: 1,
+  
+  MAGMA_LAVA_RADIUS: 50,
+  MAGMA_LAVA_FRICTION: 0.12,
+  MAGMA_LAVA_DURATION: 4,
+  MAGMA_LAVA_MAX_ON_FIELD: 3,
+  MAGMA_LAVA_MIN_DISTANCE_TO_BALL: 80,
+  MAGMA_LAVA_MIN_DISTANCE_TO_UNIT: 40,
+  MAGMA_LAVA_FORBIDDEN_ZONE_Y: 0.2,
+  MAGMA_LAVA_SPAWN_DELAY: 200,
+
+  CYBORG_SHIELD_RADIUS: 55,
+  CYBORG_SHIELD_BOUNCE: 0.08,
+  CYBORG_SHIELD_DURATION: 2,
+  CYBORG_SHIELD_COOLDOWN: 2,
+  CYBORG_SHIELD_MAX_ACTIVE: 1,
+  CYBORG_SHIELD_TOXIN_IMMUNE: true,
+
+  VOID_SWAP_RANGE: 9999,
+  VOID_SWAP_COOLDOWN: 3,
+  VOID_SWAP_ALLIES_ONLY: true,
+
+  SWARM_TOXIN_DURATION: 2,
+  SWARM_TOXIN_CHARGE_TURNS: 2,
+  SWARM_TOXIN_BLOCKED_BY_SHIELD: true,
+} as const;
+
+// ========== СИСТЕМА ТОЧНОСТИ ==========
+
+/** Базовая точность по классам */
+export const BASE_ACCURACY: Record<CapClass, number> = {
+  sniper: 0.96,
+  balanced: 0.92,
+  trickster: 0.88,
+  tank: 0.84,
 };
 
-export function getFactionPrice(factionId: FactionId): { coins?: number; crystals?: number } {
-  return FACTION_PRICES[factionId];
+/** Модификатор точности по фракциям */
+export const FACTION_ACCURACY_MODIFIER: Record<FactionId, number> = {
+  cyborg: 0.05,   // Самые точные
+  void: 0.02,     // Выше среднего
+  insect: 0,      // Средняя
+  magma: -0.03,   // Ниже среднего (сила важнее)
+};
+
+/** Максимальный разброс угла в радианах (при accuracy = 0) */
+export const MAX_ACCURACY_SPREAD = Math.PI / 12; // 15 градусов
+
+export const ABILITY_DEFINITIONS: Record<FactionId, AbilityDefinition> = {
+  magma: {
+    id: 'lava_placement',
+    factionId: 'magma',
+    name: 'Lava Pool',
+    description: 'Place a lava pool that slows enemies',
+    icon: '🔥',
+    trigger: 'active',
+    targetType: 'field_position',
+    chargeCost: 1,
+  },
+  cyborg: {
+    id: 'energy_shield',
+    factionId: 'cyborg',
+    name: 'Energy Shield',
+    description: 'Protect a unit with a deflecting shield',
+    icon: '⚡',
+    trigger: 'active',
+    targetType: 'own_unit_single',
+    chargeCost: 1,
+  },
+  void: {
+    id: 'phase_swap',
+    factionId: 'void',
+    name: 'Phase Swap',
+    description: 'Swap positions of two allied units',
+    icon: '🌀',
+    trigger: 'active',
+    targetType: 'own_unit_pair',
+    chargeCost: 1,
+  },
+  insect: {
+    id: 'neurotoxin',
+    factionId: 'insect',
+    name: 'Neurotoxin',
+    description: 'Charge a unit to stun enemies on impact',
+    icon: '☣️',
+    trigger: 'active',
+    targetType: 'own_unit_single',
+    chargeCost: 1,
+  },
+};
+
+export interface FactionAbilityConfig {
+  type: 'passive' | 'active' | 'on_hit' | 'on_stop';
+  name: string;
+  description: string;
+  icon: string;
 }
+
+export const FACTION_ABILITIES: Record<FactionId, FactionAbilityConfig> = {
+  magma: {
+    type: 'active',
+    name: 'Lava Pool',
+    description: 'Place a lava pool that slows enemies',
+    icon: '🔥',
+  },
+  cyborg: {
+    type: 'active',
+    name: 'EMP Shield',
+    description: 'Deflects the ball on contact',
+    icon: '⚡',
+  },
+  void: {
+    type: 'active',
+    name: 'Phase Swap',
+    description: 'Swap positions with an ally',
+    icon: '🌀',
+  },
+  insect: {
+    type: 'active',
+    name: 'Neurotoxin',
+    description: 'Stuns enemy units on impact',
+    icon: '☣️',
+  },
+};
+
+export const ABILITY_CARD_PRICES: Record<FactionId, { coins: number; crystals: number; packSize: number }> = {
+  magma: { coins: 500, crystals: 5, packSize: 3 },
+  cyborg: { coins: 500, crystals: 5, packSize: 3 },
+  void: { coins: 600, crystals: 6, packSize: 3 },
+  insect: { coins: 500, crystals: 5, packSize: 3 },
+};
+
+// ========== SPIN & CURVE SYSTEM ==========
+
+export const BALL_SPIN = {
+  // Spin application
+  BASE_SPIN_MULTIPLIER: 0.015,      // How much speed converts to spin
+  MAX_SPIN_VELOCITY: 0.15,           // Maximum spin (rad/frame)
+  SPIN_DECAY: 0.96,                  // Decay per frame (4% loss)
+  SPIN_TO_CURVE_RATIO: 0.0008,       // How spin affects trajectory
+  
+  // Skill modifiers
+  TRICKSTER_BONUS: 0.3,              // +30% spin for Trickster class
+  CONTROL_STAT_WEIGHT: 0.2,           // How much faction control stat matters
+  TECHNIQUE_UPGRADE_WEIGHT: 0.05,     // +5% per technique level
+  
+  // Probability
+  BASE_SPIN_CHANCE: 0.3,              // 30% base chance for spin to "catch"
+  CONTROL_CHANCE_BONUS: 0.5,          // Up to +50% from control (max 80%)
+  
+  // Corner goal
+  CORNER_ZONE_SIZE: 60,               // px (scaled)
+  CORNER_SPIN_MULTIPLIER: 1.3,        // Extra spin in corners
+  WALL_HUG_DISTANCE: 45,              // How close to wall for "hugging"
+  
+  // Optimal angle for spin (in dot product terms)
+  // 0.5 = 60° angle, best for spin
+  OPTIMAL_IMPACT_ANGLE: 0.5,
+} as const;
+
+// ========== WALL & CORNER PHYSICS ==========
+
+export const WALL_PHYSICS = {
+  // Thickness
+  BASE_THICKNESS: 80,                 // px (before scaling)
+  CORNER_CHAMFER_SIZE: 30,            // px (before scaling)
+  
+  // Restitution by zone
+  SIDE_WALL_RESTITUTION: 0.75,
+  END_WALL_RESTITUTION: 0.70,
+  CORNER_RESTITUTION: 0.50,           // Absorbs energy
+  POST_RESTITUTION: 0.92,
+  
+  // Friction by zone
+  SIDE_WALL_FRICTION: 0.03,
+  END_WALL_FRICTION: 0.04,
+  CORNER_FRICTION: 0.10,              // High friction to slow down
+  POST_FRICTION: 0.02,
+  
+  // Safety
+  ESCAPE_SAFETY_MARGIN: 0,             // ✅ 2: Set to 0 - boundary correction should be positional clamping only
+  ESCAPE_VELOCITY_DAMPING: 1.0,        // ✅ 2: Set to 1.0 - no velocity damping in boundary correction
+} as const;

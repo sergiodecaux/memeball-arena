@@ -1,0 +1,53 @@
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: #050505;
+  overflow: hidden; /* Критично */
+  position: fixed;  /* Критично для iOS */
+  top: 0;
+  left: 0;
+  
+  overscroll-behavior: none;
+  touch-action: none; /* Отключаем всё, Phaser сам разберется */
+  
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  
+  font-family: 'Orbitron', sans-serif;
+}
+
+canvas {
+  touch-action: none;
+  -ms-touch-action: none;
+}
+
+#app, #game-container {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: absolute; /* Absolute лучше внутри fixed body */
+  top: 0;
+  left: 0;
+}
+
+#game-container canvas {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  font-smooth: never;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-preload {
+  font-family: 'Orbitron', sans-serif;
+  position: absolute;
+  left: -9999px;
+  visibility: hidden;
+}

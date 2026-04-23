@@ -1,6 +1,8 @@
 // src/ui/ClassIcons.ts
 
 import Phaser from 'phaser';
+import { CapClass } from '../constants/gameConstants';
+import { ROLE_ICON_KEYS } from '../config/assetKeys';
 
 /**
  * Рисует форму рамки класса
@@ -323,4 +325,88 @@ export function getClassSecondaryColor(capClass: string): number {
     case 'balanced': 
     default: return 0x15803d;
   }
+}
+
+/**
+ * Get texture key for role icon PNG
+ */
+export function getRoleIconKey(capClass: CapClass): string {
+  return ROLE_ICON_KEYS[capClass] || ROLE_ICON_KEYS.balanced;
+}
+
+/**
+ * Check if PNG texture exists for role
+ */
+export function hasRoleTexture(scene: Phaser.Scene, capClass: CapClass): boolean {
+  return scene.textures.exists(getRoleIconKey(capClass));
+}
+
+/**
+ * Create role icon sprite from PNG (128x128 base size)
+ * @param scene - Phaser scene
+ * @param x - X position
+ * @param y - Y position  
+ * @param capClass - Role type
+ * @param size - Desired display size (default 32)
+ */
+export function createRoleIconSprite(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  capClass: CapClass,
+  size: number = 32
+): Phaser.GameObjects.Image {
+  const key = getRoleIconKey(capClass);
+  const icon = scene.add.image(x, y, key);
+  
+  // Scale from 128x128 to desired size
+  const scale = size / 128;
+  icon.setScale(scale);
+  
+  return icon;
+}
+
+/**
+ * Create role icon (PNG sprite with fallback to emoji text)
+ * This is the main function to use for displaying role icons throughout the game
+ * @param scene - Phaser scene
+ * @param x - X position
+ * @param y - Y position
+ * @param capClass - Role type
+ * @param size - Desired display size (default 32)
+ * @returns Container with icon (Image or Text as fallback)
+ */
+export function createRoleIcon(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  capClass: CapClass,
+  size: number = 32
+): Phaser.GameObjects.Container {
+  const container = scene.add.container(x, y);
+  const key = getRoleIconKey(capClass);
+  
+  // Try to use PNG texture if available
+  if (scene.textures.exists(key)) {
+    const icon = scene.add.image(0, 0, key);
+    const scale = size / 128;
+    icon.setScale(scale);
+    icon.setOrigin(0.5);
+    container.add(icon);
+  } else {
+    // Fallback to emoji
+    const emojiIcons: Record<CapClass, string> = {
+      balanced: '⚖️',
+      tank: '🛡️',
+      sniper: '🎯',
+      trickster: '✨',
+    };
+    const emoji = emojiIcons[capClass] || '?';
+    const text = scene.add.text(0, 0, emoji, {
+      fontSize: `${size}px`,
+    }).setOrigin(0.5);
+    container.add(text);
+  }
+  
+  return container;
 }

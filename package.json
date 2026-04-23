@@ -4,9 +4,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "node scripts/bump-version.cjs && tsc --noEmit && vite build",
+    "build:fast": "node scripts/bump-version.cjs && vite build",
+    "build:no-bump": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && npx gh-pages -d dist"
+    "deploy": "npm run build && npx gh-pages -d dist",
+    "version:bump": "node scripts/bump-version.cjs",
+    "version:set": "node scripts/set-version.cjs",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "codemod:leakguard": "npx jscodeshift -t scripts/codemods/leak-guardify.js --parser ts --extensions ts \"src/scenes/**/*.ts\"",
+    "audit:leaks": "node scripts/audit-leaks.cjs",
+    "precommit": "npm run lint && npm run audit:leaks"
   },
   "dependencies": {
     "phaser": "^3.80.1",
@@ -15,6 +24,7 @@
   },
   "devDependencies": {
     "gh-pages": "^6.1.0",
+    "jscodeshift": "^0.15.0",
     "typescript": "^5.4.5",
     "vite": "^5.2.11"
   }

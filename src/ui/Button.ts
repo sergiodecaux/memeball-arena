@@ -2,6 +2,9 @@
 
 import Phaser from 'phaser';
 import { getColors, hexToString } from '../config/themes';
+import { AudioManager } from '../managers/AudioManager';
+import { hapticSelection } from '../utils/Haptics';
+import { createText } from '../utils/TextFactory';
 
 export interface ButtonConfig {
   x: number;
@@ -41,11 +44,14 @@ export class Button {
     this.container.add(this.shine);
 
     const displayText = config.icon ? `${config.icon}  ${config.text}` : config.text;
-    this.label = scene.add.text(0, 0, displayText, {
-      fontSize: `${config.fontSize || 18}px`,
-      fontFamily: 'Arial',
+    // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
+    const fontSize = config.fontSize || 18;
+    const size = fontSize <= 14 ? 'sm' : fontSize <= 18 ? 'md' : fontSize <= 24 ? 'lg' : 'xl';
+    this.label = createText(scene, 0, 0, displayText, {
+      size: size as any,
+      font: 'primary',
+      stroke: true,
       color: '#ffffff',
-      fontStyle: 'bold',
     });
     this.label.setOrigin(0.5, 0.5);
     this.container.add(this.label);
@@ -62,13 +68,33 @@ export class Button {
       case 'secondary':
         return { bg: 0x1a1a2e, border: colors.uiPrimary, glow: colors.uiPrimary, text: '#ffffff' };
       case 'accent':
-        return { bg: 0x0a2525, border: colors.uiAccent, glow: colors.uiAccent, text: hexToString(colors.uiAccent) };
+        return {
+          bg: 0x0a2525,
+          border: colors.uiAccent,
+          glow: colors.uiAccent,
+          text: hexToString(colors.uiAccent),
+        };
       case 'danger':
-        return { bg: 0x2a0a0a, border: colors.team2Primary, glow: colors.team2Primary, text: '#ffffff' };
+        return {
+          bg: 0x2a0a0a,
+          border: colors.team2Primary,
+          glow: colors.team2Primary,
+          text: '#ffffff',
+        };
       case 'ghost':
-        return { bg: 0x000000, border: colors.uiTextSecondary, glow: colors.uiTextSecondary, text: '#888888' };
+        return {
+          bg: 0x000000,
+          border: colors.uiTextSecondary,
+          glow: colors.uiTextSecondary,
+          text: '#888888',
+        };
       default:
-        return { bg: 0x0a1a2a, border: colors.uiAccent, glow: colors.uiAccent, text: '#ffffff' };
+        return {
+          bg: 0x0a1a2a,
+          border: colors.uiAccent,
+          glow: colors.uiAccent,
+          text: '#ffffff',
+        };
     }
   }
 
@@ -92,14 +118,20 @@ export class Button {
     }
 
     // Фон
-    const bgAlpha = pressed ? 0.9 : (hover ? 0.8 : 0.6);
+    const bgAlpha = pressed ? 0.9 : hover ? 0.8 : 0.6;
     this.background.fillStyle(style.bg, bgAlpha);
     this.background.fillRoundedRect(-hw, -hh, width, height, radius);
 
-    // Градиентный эффект сверху
+    // Градиентный верх
     if (!pressed) {
       this.background.fillStyle(0xffffff, hover ? 0.1 : 0.05);
-      this.background.fillRoundedRect(-hw + 2, -hh + 2, width - 4, height / 2 - 2, { tl: radius - 2, tr: radius - 2, bl: 0, br: 0 });
+      this.background.fillRoundedRect(
+        -hw + 2,
+        -hh + 2,
+        width - 4,
+        height / 2 - 2,
+        { tl: radius - 2, tr: radius - 2, bl: 0, br: 0 } as any
+      );
     }
 
     // Рамка
@@ -111,13 +143,13 @@ export class Button {
       this.drawCornerMarkers(hw, hh, style.glow, hover);
     }
 
-    // Блик (shine)
+    // Shine
     if (hover && !pressed) {
       this.shine.fillStyle(0xffffff, 0.1);
       this.shine.fillRoundedRect(-hw + 4, -hh + 4, width / 3, height - 8, 6);
     }
 
-    // Обновляем цвет текста
+    // Текст
     this.label.setColor(style.text);
     this.label.setY(pressed ? 1 : 0);
   }
@@ -192,13 +224,16 @@ export class Button {
       this.draw(false, true);
       this.container.setScale(1.03);
       if (this.config.onClick) {
+        // Централизованный звук/хаптик для кнопок
+        const audio = AudioManager.getInstance();
+        audio.playUIClick();
+        hapticSelection();
         this.config.onClick();
       }
     });
   }
 
   private addIdleAnimation(): void {
-    // Subtle glow pulse для accent кнопок
     if (this.config.style === 'accent') {
       this.scene.tweens.add({
         targets: this.glow,

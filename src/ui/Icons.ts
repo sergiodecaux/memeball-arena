@@ -512,3 +512,44 @@ export class Icons {
     return g;
   }
 }
+
+/**
+ * Мэппинг путей к PNG-иконкам UI
+ * Файлы находятся в public/assets/ui/icons/ и доступны через относительные пути (Vite base: './')
+ */
+export const UI_ICONS = {
+  nav: {
+    home: 'assets/ui/icons/nav/icon_nav_home.png',
+    team: 'assets/ui/icons/nav/icon_nav_team.png',
+    shop: 'assets/ui/icons/nav/icon_nav_shop.png',
+    profile: 'assets/ui/icons/nav/icon_nav_profile.png',
+  },
+  match: {
+    primary: 'assets/ui/icons/match/icon_match_primary.png',
+    pvp: 'assets/ui/icons/match/icon_mode_pvp.png',
+    ai: 'assets/ui/icons/match/icon_mode_ai.png',
+    campaign: 'assets/ui/icons/match/icon_mode_campaign.png',
+  },
+  rewards: {
+    coins: 'assets/ui/icons/rewards/icon_currency_coins.png',
+    crystals: 'assets/ui/icons/rewards/icon_currency_crystals.png',
+    daily: 'assets/ui/icons/rewards/icon_daily_reward.png',
+    fragments: 'assets/ui/rewards/reward_fragments_256.png',
+    cardPack: 'assets/ui/rewards/reward_cards_256.png',
+    chest: 'assets/ui/icons/rewards/icon_daily_reward.png', // Используем daily reward как сундук
+  },
+  player: {
+    level: 'assets/ui/icons/player/icon_player_level.png',
+    faction: {
+      magma: 'assets/ui/icons/player/icon_faction_badge_magma.png',
+      cyborg: 'assets/ui/icons/player/icon_faction_badge_cyborg.png',
+      insect: 'assets/ui/icons/player/icon_faction_badge_insect.png',
+      void: 'assets/ui/icons/player/icon_faction_badge_void.png',
+    },
+  },
+  system: {
+    settings: 'assets/ui/icons/system/icon_settings_gear.png',
+  },
+} as const;
+
+export type UIIconKey = typeof UI_ICONS;

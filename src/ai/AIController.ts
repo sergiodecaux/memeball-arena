@@ -1,533 +1,914 @@
-// src/ai/AIController.ts
-// Simulation-based AI Controller с оптимизациями
+// ✅ ИЗМЕНЕНО: Добавлены формации для 4 и 5 юнитов (Faction Mastery v9)
 
 import Phaser from 'phaser';
 import { Ball } from '../entities/Ball';
-import { Unit } from '../entities/Unit';
 import { AIDifficulty, PlayerNumber } from '../types';
-import { FIELD, CapClass, FactionId } from '../constants/gameConstants';
+import { FIELD, GOAL, CapClass, FactionId } from '../constants/gameConstants';
+import { Formation, playerData } from '../data/PlayerData';
+import { AudioManager } from '../managers/AudioManager';
+import { AbilityScorer, AIUnit, CardScore, GameState } from './scoring/AbilityScorer';
+import { CardDefinition, getCardsByFaction } from '../data/CardsCatalog';
+import { getAIFormationsForTeamSize, getDefaultAIFormation } from './AIFormations';
+import { AIUtils } from './AIUtils';
 
-import { SimulationManager } from './simulation/SimulationManager';
-import { CandidateGenerator } from './candidates/CandidateGenerator';
-import { 
-  ShotCandidate, 
-  GameSnapshot, 
-  CandidateGenerationContext,
-  UnitSnapshot,
-} from './candidates/CandidateTypes';
-import { UtilityScorer, createSituationContext } from './scoring/UtilityScorer';
-import { ErrorInjector, AdaptiveDifficultyDirector } from './humanizer/ErrorInjector';
+// === ТИПЫ ===
 
-// ========== ИНТЕРФЕЙСЫ ==========
-
-interface IAIUnit {
-  body: MatterJS.BodyType;
-  owner: PlayerNumber;
-  id: string;
-  stats: any;
-  getCapClass(): string;
-  getRadius(): number;
-  getSpeed(): number;
-  getFactionId?(): string;
-  canCurve?(): boolean;
-  getCurveStrength?(): number;
-  applyForce(fx: number, fy: number): void;
-  highlight(enabled: boolean): void;
+interface ShotCandidate {
+  unit: AIUnit;
+  target: { x: number; y: number };
+  score: number;
+  type: 'goal' | 'pass' | 'defend' | 'clear' | 'pressure';
+  force: { x: number; y: number };
+  description: string;
 }
 
-type AIGameUnit = Unit | IAIUnit;
+interface AIState {
+  playerScore: number;
+  aiScore: number;
+  lastGoalBy: 'player' | 'ai' | null;
+  consecutiveGoalsAgainst: number;
+  turnsSinceLastGoal: number;
+  currentFormation: Formation;
+  aggression: number;
+}
 
-interface DifficultyConfig {
-  reactionTime: [number, number];
+interface DifficultySettings {
+  reactionTime: { min: number; max: number };
   accuracy: number;
   passChance: number;
-  defenseDistance: number;
-  adaptivePlay: boolean;
-  maxSimulations: number;
-  simulationTicks: number;
-  useRicochet: boolean;
+  defenseZone: number;
+  shotPower: { min: number; max: number };
+  formationAdaptation: boolean;
+  useClassAbilities: boolean;
+  // ⭐ NEW: Настройки карт
+  cardUsageChance: number;      // Шанс попытаться использовать карту
+  minCardScore: number;         // Минимальный score для использования карты
+  maxCardsPerMatch: number;     // Макс. карт за матч
 }
 
-const CONFIG: Record<AIDifficulty, DifficultyConfig> = {
-  easy: { 
-    reactionTime: [1200, 1800], 
-    accuracy: 0.4, 
-    passChance: 0, 
-    defenseDistance: 0, 
-    adaptivePlay: false,
-    maxSimulations: 3,
-    simulationTicks: 60,
-    useRicochet: false,
+// ✅ ДОБАВЛЕНО: Локальный интерфейс для юнитов со stats
+interface AIUnitWithStats extends AIUnit {
+  stats?: {
+    forceMultiplier?: number;
+    maxForce?: number;
+    mass?: number;
+    restitution?: number;
+    frictionAir?: number;
+    curveStrength?: number;
+  };
+}
+
+// === НАСТРОЙКИ ===
+
+const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
+  easy: {
+    reactionTime: { min: 1200, max: 1800 },
+    accuracy: 0.35,        // ✅ Reduced from 0.4
+    passChance: 0,         // No passes on easy
+    defenseZone: 0,        // No anticipatory defense
+    shotPower: { min: 0.5, max: 0.75 },
+    formationAdaptation: false,
+    useClassAbilities: false,
+    cardUsageChance: 0,    // ✅ No cards on easy
+    minCardScore: 80,
+    maxCardsPerMatch: 0,   // ✅ No cards per match
   },
-  medium: { 
-    reactionTime: [700, 1000], 
-    accuracy: 0.75, 
-    passChance: 0.15, 
-    defenseDistance: 300, 
-    adaptivePlay: false,
-    maxSimulations: 5,
-    simulationTicks: 90,
-    useRicochet: true,
+  medium: {
+    reactionTime: { min: 700, max: 1000 },
+    accuracy: 0.75,        // Balanced
+    passChance: 0.2,
+    defenseZone: 250,      // Moderate defense zone
+    shotPower: { min: 0.65, max: 0.9 },
+    formationAdaptation: true,
+    useClassAbilities: true,
+    cardUsageChance: 0.3,
+    minCardScore: 60,
+    maxCardsPerMatch: 2,
   },
-  hard: { 
-    reactionTime: [300, 500], 
-    accuracy: 0.92, 
-    passChance: 0.45, 
-    defenseDistance: 420, 
-    adaptivePlay: true,
-    maxSimulations: 8,
-    simulationTicks: 120,
-    useRicochet: true,
+  hard: {
+    reactionTime: { min: 300, max: 500 },
+    accuracy: 0.92,        // Very high accuracy
+    passChance: 0.45,      // ✅ Increased from 0.4
+    defenseZone: 425,      // ✅ Increased from 400 for stronger defense
+    shotPower: { min: 0.8, max: 1.0 },
+    formationAdaptation: true,
+    useClassAbilities: true,
+    cardUsageChance: 0.5,
+    minCardScore: 40,
+    maxCardsPerMatch: 3,
+  },
+  impossible: {
+    reactionTime: { min: 100, max: 300 },
+    accuracy: 0.98,        // Almost perfect
+    passChance: 0.6,       // Very high pass chance
+    defenseZone: 500,      // Maximum defense zone
+    shotPower: { min: 0.9, max: 1.0 },
+    formationAdaptation: true,
+    useClassAbilities: true,
+    cardUsageChance: 0.75, // Very high card usage
+    minCardScore: 20,
+    maxCardsPerMatch: 6,   // Maximum cards
   },
 };
 
-// ========== ГЛАВНЫЙ КЛАСС ==========
+// === КОНСТАНТЫ ПО УМОЛЧАНИЮ ===
+
+const DEFAULT_FORCE_MULTIPLIER = 0.0045;
+const DEFAULT_MAX_FORCE = 0.08;
+
+// === ОСНОВНОЙ КЛАСС ===
 
 export class AIController {
   private scene: Phaser.Scene;
   private difficulty: AIDifficulty;
-  private config: DifficultyConfig;
+  private settings: DifficultySettings;
   
+  private aiUnits: AIUnit[] = [];
+  private playerUnits: AIUnit[] = [];
   private ball!: Ball;
-  private aiUnits: AIGameUnit[] = [];
-  private playerUnits: AIGameUnit[] = [];
   
-  private isMyTurn: boolean = false;
-  public isThinking: boolean = false;
-  private hasMadeMove: boolean = false;
+  // ✅ ДОБАВЛЕНО: Размер команды AI
+  private teamSize: number = 3;
   
-  private onMoveCompleteCallback?: () => void;
-  private thinkingTimer?: Phaser.Time.TimerEvent;
+  private fieldBounds!: {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+    width: number;
+    height: number;
+    centerX: number;
+    centerY: number;
+  };
+  
+  private state: AIState = {
+    playerScore: 0,
+    aiScore: 0,
+    lastGoalBy: null,
+    consecutiveGoalsAgainst: 0,
+    turnsSinceLastGoal: 0,
+    currentFormation: getDefaultAIFormation(3),
+    aggression: 0.5,
+  };
 
-  // Оптимизированный менеджер симуляций
-  private simulationManager: SimulationManager;
-  private errorInjector: ErrorInjector;
-  private adaptiveDirector: AdaptiveDifficultyDirector;
+  // ⭐ NEW: Карточная система AI
+  private factionId: FactionId = 'magma';
+  private availableCards: CardDefinition[] = [];
+  private cardsUsedThisMatch: number = 0;
+  private onCardUsed?: (cardId: string, targetData: any) => void;
   
-  private score: { player: number; opponent: number } = { player: 0, opponent: 0 };
-  private isInitialized = false;
+  // ✅ ADDED: Boss tracking
+  private bossId?: string;
+  
+  private moveCompleteCallback?: () => void;
+  private thinkingTimer?: Phaser.Time.TimerEvent;
+  
+  // ЗАЩИТА ОТ ДВОЙНОГО ХОДА
+  public isThinking = false;
+  private lastMoveTime = 0;
+  private readonly MOVE_COOLDOWN = 800;
 
   constructor(scene: Phaser.Scene, difficulty: AIDifficulty = 'medium') {
     this.scene = scene;
     this.difficulty = difficulty;
-    this.config = CONFIG[difficulty];
+    this.settings = DIFFICULTY_SETTINGS[difficulty];
     
-    this.simulationManager = new SimulationManager();
-    this.errorInjector = new ErrorInjector(difficulty);
-    this.adaptiveDirector = new AdaptiveDifficultyDirector(difficulty);
+    this.calculateFieldBounds();
     
-    // Асинхронная инициализация
-    this.initAsync();
+    console.log(`[AI] 🤖 Created: ${difficulty}`);
   }
 
-  private async initAsync(): Promise<void> {
-    const mode = await this.simulationManager.init();
-    this.isInitialized = true;
-    console.log(`[AIController] Initialized with ${mode} simulation mode`);
+  private calculateFieldBounds(): void {
+    const { centerX, centerY, width, height } = this.scene.cameras.main;
+    const scale = Math.min(
+      (width - 40) / FIELD.WIDTH,
+      (height - 40) / FIELD.HEIGHT
+    );
+    
+    const w = FIELD.WIDTH * scale;
+    const h = FIELD.HEIGHT * scale;
+    
+    this.fieldBounds = {
+      left: centerX - w / 2,
+      right: centerX + w / 2,
+      top: centerY - h / 2,
+      bottom: centerY + h / 2,
+      width: w,
+      height: h,
+      centerX,
+      centerY,
+    };
   }
 
-  init(aiUnits: AIGameUnit[], ball: Ball, playerUnits?: AIGameUnit[]): void {
+  init(aiUnits: AIUnit[], ball: Ball, playerUnits: AIUnit[] = []): void {
     this.aiUnits = aiUnits;
+    this.playerUnits = playerUnits;
     this.ball = ball;
-    this.playerUnits = playerUnits || [];
+    
+    // ✅ ДОБАВЛЕНО: Определяем размер команды
+    this.teamSize = aiUnits.length;
+    
+    // Определяем фракцию AI
+    if (aiUnits.length > 0 && typeof aiUnits[0].getFactionId === 'function') {
+      this.factionId = aiUnits[0].getFactionId!() || 'magma';
+    }
+    
+    // ✅ ADDED: Check for boss
+    const bossUnit = aiUnits.find(u => {
+      // Try multiple ways to get unitId
+      let unitId: string | undefined;
+      if ((u as any).getUnitId && typeof (u as any).getUnitId === 'function') {
+        unitId = (u as any).getUnitId();
+      } else if ((u as any).unitId) {
+        unitId = (u as any).unitId;
+      } else if (u.id && typeof u.id === 'string' && u.id.startsWith('boss_')) {
+        // Fallback: check if id itself is a boss ID
+        unitId = u.id;
+      }
+      return unitId && typeof unitId === 'string' && unitId.startsWith('boss_');
+    });
+    if (bossUnit) {
+      // Get boss ID using the same method
+      let unitId: string | undefined;
+      if ((bossUnit as any).getUnitId && typeof (bossUnit as any).getUnitId === 'function') {
+        unitId = (bossUnit as any).getUnitId();
+      } else if ((bossUnit as any).unitId) {
+        unitId = (bossUnit as any).unitId;
+      } else if (bossUnit.id && typeof bossUnit.id === 'string' && bossUnit.id.startsWith('boss_')) {
+        unitId = bossUnit.id;
+      }
+      if (unitId) {
+        this.bossId = unitId;
+        console.log(`[AI] 👹 Boss Mode Activated: ${this.bossId}`);
+        // Bosses are always Hard+
+        this.settings = { ...DIFFICULTY_SETTINGS['hard'] };
+        this.settings.reactionTime = { min: 200, max: 400 }; // Super fast
+        // ✅ CHEAT: Infinite cards for boss
+        this.settings.maxCardsPerMatch = 9999;
+        this.settings.cardUsageChance = 0.85; // 85% chance to try using a card every turn
+        this.settings.minCardScore = 10; // Use cards even if they are only slightly useful
+      }
+    }
+    
+    // Генерируем виртуальную руку карт
+    this.generateCardHand();
+    
+    // ✅ ИЗМЕНЕНО: Выбираем формацию с учётом размера команды
+    this.selectFormation();
+    
+    console.log(`[AI] Initialized: ${aiUnits.length} AI (${this.factionId}), ${playerUnits.length} player units, teamSize: ${this.teamSize}`);
+    console.log(`[AI] Card hand: ${this.availableCards.map(c => c.id).join(', ')}`);
   }
 
-  updateScore(playerScore: number, aiScore: number): void {
-    this.score = { player: playerScore, opponent: aiScore };
+  // ⭐ NEW: Генерация карт для AI
+  private generateCardHand(): void {
+    // ✅ BOSS OVERRIDE: Bosses get a full hand of Epic/Rare cards
+    if (this.bossId) {
+      const factionCards = getCardsByFaction(this.factionId);
+      this.availableCards = factionCards; // Give them ALL cards
+      this.cardsUsedThisMatch = 0;
+      return;
+    }
+    
+    const factionCards = getCardsByFaction(this.factionId);
+    
+    switch (this.difficulty) {
+      case 'easy':
+        // 1 common карта
+        const commonCards = factionCards.filter(c => c.rarity === 'common');
+        if (commonCards.length > 0) {
+          this.availableCards = [commonCards[0]];
+        }
+        break;
+        
+      case 'medium':
+        // 2 карты (1 common + 1 rare если есть)
+        const commons = factionCards.filter(c => c.rarity === 'common');
+        const rares = factionCards.filter(c => c.rarity === 'rare');
+        this.availableCards = [];
+        if (commons.length > 0) this.availableCards.push(commons[0]);
+        if (rares.length > 0) this.availableCards.push(rares[0]);
+        break;
+        
+      case 'hard':
+        // 3 карты (все типы)
+        this.availableCards = factionCards.slice(0, 3);
+        break;
+    }
+    
+    this.cardsUsedThisMatch = 0;
   }
 
-  recordGoal(scorer: 'player' | 'ai'): void {
-    this.adaptiveDirector.recordGoal(scorer);
+  // ⭐ NEW: Коллбэк для использования карты
+  setCardUsedCallback(callback: (cardId: string, targetData: any) => void): void {
+    this.onCardUsed = callback;
   }
 
   onMoveComplete(callback: () => void): void {
-    this.onMoveCompleteCallback = callback;
+    this.moveCompleteCallback = callback;
   }
+
+  // === УПРАВЛЕНИЕ СЧЁТОМ ===
+
+  updateScore(playerScore: number, aiScore: number): void {
+    this.state.playerScore = playerScore;
+    this.state.aiScore = aiScore;
+    this.updateAggression();
+    
+    if (this.settings.formationAdaptation) {
+      this.selectFormation();
+    }
+  }
+
+  recordGoal(scoredBy: 'player' | 'ai'): void {
+    this.state.lastGoalBy = scoredBy;
+    this.state.turnsSinceLastGoal = 0;
+    
+    if (scoredBy === 'player') {
+      this.state.consecutiveGoalsAgainst++;
+    } else {
+      this.state.consecutiveGoalsAgainst = 0;
+    }
+  }
+
+  private updateAggression(): void {
+    const diff = this.state.aiScore - this.state.playerScore;
+    
+    if (diff >= 2) {
+      this.state.aggression = 0.3;
+    } else if (diff === 1) {
+      this.state.aggression = 0.5;
+    } else if (diff === 0) {
+      this.state.aggression = 0.6;
+    } else if (diff === -1) {
+      this.state.aggression = 0.75;
+    } else {
+      this.state.aggression = 0.9;
+    }
+    
+    if (this.state.consecutiveGoalsAgainst >= 2) {
+      this.state.aggression = Math.max(0.2, this.state.aggression - 0.2);
+    }
+  }
+
+  // === ВЫБОР СХЕМЫ ===
+  // ✅ ИЗМЕНЕНО: Выбор формации с учётом размера команды
+
+  private getFormationsForTeamSize(): Record<string, Formation> {
+    return getAIFormationsForTeamSize(this.teamSize);
+  }
+
+  private selectFormation(): void {
+    const formations = this.getFormationsForTeamSize();
+    const diff = this.state.aiScore - this.state.playerScore;
+    let formationType: string;
+    
+    if (diff >= 2) {
+      formationType = 'defensive';
+    } else if (diff <= -2) {
+      formationType = 'aggressive';
+    } else if (this.state.consecutiveGoalsAgainst >= 2) {
+      formationType = 'defensive';
+    } else if (diff === -1 && this.state.turnsSinceLastGoal > 5) {
+      formationType = 'counter';
+    } else {
+      formationType = 'balanced';
+    }
+    
+    const newFormation = formations[formationType] || formations.balanced;
+    
+    if (newFormation.id !== this.state.currentFormation.id) {
+      console.log(`[AI] 📐 Formation: ${this.state.currentFormation.name} → ${newFormation.name} (teamSize: ${this.teamSize})`);
+      this.state.currentFormation = newFormation;
+    }
+  }
+
+  getCurrentFormation(): Formation {
+    return this.state.currentFormation;
+  }
+
+  // ✅ ДОБАВЛЕНО: Получить размер команды AI
+  getTeamSize(): number {
+    return this.teamSize;
+  }
+
+  // === НАЧАЛО ХОДА ===
 
   startTurn(): void {
-    if (this.isThinking) return;
+    // ЗАЩИТА ОТ ДВОЙНОГО ВЫЗОВА
+    const now = Date.now();
     
-    if (!this.ball || !this.ball.body || this.aiUnits.some(u => !u.body)) {
-      console.warn('[AIController] Cannot start turn: bodies destroyed');
+    if (this.isThinking) {
+      console.log('[AI] ⚠️ Already thinking, ignoring startTurn');
       return;
     }
-
-    console.log('[AIController] === AI TURN STARTED ===');
-    this.isMyTurn = true;
-    this.hasMadeMove = false;
-    this.startThinking();
-  }
-
-  stop(): void {
-    this.isMyTurn = false;
-    this.isThinking = false;
-    this.hasMadeMove = false;
     
-    if (this.thinkingTimer) {
-      this.thinkingTimer.remove(false);
-      this.thinkingTimer = undefined;
-    }
-  }
-
-  endTurn(): void {
-    this.stop();
-  }
-
-  isAITurn(): boolean {
-    return this.isMyTurn;
-  }
-
-  // ========== ЛОГИКА ПРИНЯТИЯ РЕШЕНИЙ ==========
-
-  private startThinking(): void {
-    if (!this.isMyTurn || this.hasMadeMove) {
-      this.stop();
+    if (now - this.lastMoveTime < this.MOVE_COOLDOWN) {
+      console.log('[AI] ⚠️ Move on cooldown, ignoring startTurn');
       return;
     }
     
     this.isThinking = true;
-    const delay = this.errorInjector.getThinkingDelay();
+    this.state.turnsSinceLastGoal++;
     
-    if (this.thinkingTimer) this.thinkingTimer.remove(false);
-
+    const delay = Phaser.Math.Between(
+      this.settings.reactionTime.min,
+      this.settings.reactionTime.max
+    );
+    
+    console.log(`[AI] 🧠 Thinking... (${delay}ms)`);
+    
     this.thinkingTimer = this.scene.time.delayedCall(delay, () => {
-      if (!this.scene.scene.isActive()) return;
-      if (!this.isMyTurn || this.hasMadeMove) return;
-      if (!this.ball || !this.ball.body) return;
-      
-      this.makeSimulationBasedDecision();
+      this.executeMove();
     });
   }
 
-  private async makeSimulationBasedDecision(): Promise<void> {
-    if (!this.isMyTurn || this.hasMadeMove) return;
+  stop(): void {
+    if (this.thinkingTimer) {
+      this.thinkingTimer.destroy();
+      this.thinkingTimer = undefined;
+    }
+    this.isThinking = false;
+  }
 
-    // Ждём инициализации если нужно
-    if (!this.isInitialized) {
-      console.log('[AIController] Waiting for initialization...');
-      await new Promise(resolve => setTimeout(resolve, 100));
-      if (!this.isInitialized) {
-        this.executePanicMove();
-        return;
+  // === ЛОГИКА ХОДА ===
+
+  private executeMove(): void {
+    if (!this.isThinking) {
+      console.log('[AI] ⚠️ Not thinking anymore, aborting move');
+      return;
+    }
+
+    // ⭐ NEW: Сначала проверяем, стоит ли использовать карту
+    if (this.shouldUseCard()) {
+      const cardUsed = this.tryUseCard();
+      if (cardUsed) {
+        // Карта использована — ход всё равно продолжается обычным ударом
+        // (или можно завершить ход здесь)
       }
     }
-
-    try {
-      const startTime = performance.now();
-      
-      // 1. Создаём снимок
-      const snapshot = this.createGameSnapshot();
-      
-      // 2. Искажаем снимок
-      const distortedSnapshot = this.errorInjector.distortSnapshot(snapshot);
-      
-      // 3. Генерируем кандидатов
-      const candidates = this.generateCandidates(distortedSnapshot);
-      
-      if (candidates.length === 0) {
-        console.log('[AIController] No candidates, falling back to panic move');
-        this.executePanicMove();
-        return;
-      }
-
-      // 4. Симулируем пакетом (оптимизировано)
-      const evaluatedCandidates = await this.evaluateCandidatesOptimized(candidates, snapshot);
-      
-      // 5. Выбираем лучшего
-      const bestCandidate = this.selectBestCandidate(evaluatedCandidates);
-      
-      const elapsed = performance.now() - startTime;
-      console.log(`[AIController] Decision made in ${elapsed.toFixed(1)}ms`);
-      
-      // 6. Выполняем удар
-      this.executeCandidate(bestCandidate);
-      
-    } catch (error) {
-      console.error('[AIController] Error in simulation:', error);
-      this.executePanicMove();
-    }
-  }
-
-  // ========== СОЗДАНИЕ СНИМКА ==========
-
-  private createGameSnapshot(): GameSnapshot {
-    const playerUnits = this.playerUnits
-      .filter(u => u.body)
-      .map(u => this.unitToSnapshot(u, 1));
     
-    const opponentUnits = this.aiUnits
-      .filter(u => u.body)
-      .map(u => this.unitToSnapshot(u, 2));
-
-    const fieldWidth = this.scene.scale.width || FIELD.WIDTH;
-    const fieldHeight = this.scene.scale.height || FIELD.HEIGHT;
-
-    return {
-      timestamp: Date.now(),
-      ball: {
-        id: 'ball',
-        x: this.ball.body.position.x,
-        y: this.ball.body.position.y,
-        vx: this.ball.body.velocity.x,
-        vy: this.ball.body.velocity.y,
-        angle: this.ball.body.angle,
-        angularVelocity: this.ball.body.angularVelocity,
-        radius: this.ball.getRadius(),
-        mass: this.ball.body.mass,
-        restitution: this.ball.body.restitution,
-        friction: this.ball.body.friction,
-        frictionAir: this.ball.body.frictionAir,
-      },
-      units: {
-        player: playerUnits,
-        opponent: opponentUnits,
-      },
-      field: {
-        width: fieldWidth,
-        height: fieldHeight,
-        goalWidth: 160,
-        goalDepth: 40,
-      },
-      score: this.score,
-    };
-  }
-
-  private unitToSnapshot(unit: AIGameUnit, owner: 1 | 2): UnitSnapshot {
-    const capClass = this.getUnitCapClass(unit);
-    const factionId = this.getUnitFactionId(unit);
-    const canCurve = this.getUnitCanCurve(unit);
-    const curveStrength = this.getUnitCurveStrength(unit);
+    const candidates = this.generateAllCandidates();
     
-    return {
-      id: unit.id,
-      x: unit.body.position.x,
-      y: unit.body.position.y,
-      vx: unit.body.velocity.x,
-      vy: unit.body.velocity.y,
-      angle: unit.body.angle,
-      angularVelocity: unit.body.angularVelocity,
-      radius: unit.getRadius(),
-      mass: unit.body.mass,
-      restitution: unit.body.restitution || 0.5,
-      friction: unit.body.friction || 0.05,
-      frictionAir: unit.body.frictionAir || 0.02,
-      owner,
-      capClass,
-      factionId,
-      canCurve,
-      curveStrength,
-    };
-  }
-
-  private getUnitCapClass(unit: AIGameUnit): CapClass {
-    if (typeof unit.getCapClass === 'function') {
-      return unit.getCapClass() as CapClass;
-    }
-    return 'balanced';
-  }
-
-  private getUnitFactionId(unit: AIGameUnit): FactionId {
-    if ('getFactionId' in unit && typeof unit.getFactionId === 'function') {
-      return unit.getFactionId() as FactionId;
-    }
-    return 'cyborg';
-  }
-
-  private getUnitCanCurve(unit: AIGameUnit): boolean {
-    if ('canCurve' in unit && typeof unit.canCurve === 'function') {
-      return unit.canCurve();
-    }
-    return false;
-  }
-
-  private getUnitCurveStrength(unit: AIGameUnit): number {
-    if ('getCurveStrength' in unit && typeof unit.getCurveStrength === 'function') {
-      return unit.getCurveStrength();
-    }
-    return 0;
-  }
-
-  // ========== ГЕНЕРАЦИЯ КАНДИДАТОВ ==========
-
-  private generateCandidates(snapshot: GameSnapshot): ShotCandidate[] {
-    const situation = createSituationContext(snapshot, 2);
-    
-    const context: CandidateGenerationContext = {
-      snapshot,
-      aiPlayer: 2,
-      difficulty: this.difficulty,
-      isDefending: situation.isDefending,
-      isAttacking: situation.isAttacking,
-      scoreDifference: situation.scoreDifference,
-      maxCandidates: this.config.maxSimulations,
-      includeRicochet: this.config.useRicochet,
-      includePass: this.config.passChance > 0,
-    };
-
-    const generator = new CandidateGenerator(context);
-    return generator.generate();
-  }
-
-  // ========== ОПТИМИЗИРОВАННАЯ ОЦЕНКА ==========
-
-  private async evaluateCandidatesOptimized(
-    candidates: ShotCandidate[], 
-    snapshot: GameSnapshot
-  ): Promise<ShotCandidate[]> {
-    const situation = createSituationContext(snapshot, 2);
-
-    // Используем пакетную симуляцию
-    const results = await this.simulationManager.simulateBatch(
-      snapshot,
-      candidates,
-      { maxTicks: this.config.simulationTicks }
-    );
-
-    // Оцениваем результаты
-    for (const candidate of candidates) {
-      const result = results.get(candidate.id);
-      
-      if (result) {
-        const unit = snapshot.units.opponent.find(u => u.id === candidate.unitId);
-        const capClass = unit?.capClass || 'balanced';
-        const factionId = unit?.factionId || 'cyborg';
-        
-        const scorer = new UtilityScorer(
-          capClass,
-          factionId,
-          situation,
-          this.difficulty,
-          2
-        );
-        
-        candidate.simulatedScore = scorer.score(result, snapshot);
-        candidate.simulationResult = result;
-        
-        console.log(
-          `[AIController] ${candidate.type}: score=${candidate.simulatedScore.toFixed(1)}`
-        );
-      } else {
-        candidate.simulatedScore = candidate.heuristicScore * 0.5;
-      }
-    }
-
-    return candidates.sort((a, b) => 
-      (b.simulatedScore || 0) - (a.simulatedScore || 0)
-    );
-  }
-
-  // ========== ВЫБОР КАНДИДАТА ==========
-
-  private selectBestCandidate(candidates: ShotCandidate[]): ShotCandidate {
     if (candidates.length === 0) {
-      throw new Error('No candidates to select from');
-    }
-
-    let bestIndex = 0;
-    bestIndex = this.errorInjector.maybeChooseSuboptimal(candidates, bestIndex);
-    
-    const selected = candidates[bestIndex];
-    console.log(
-      `[AIController] Selected: ${selected.type} (unit: ${selected.unitId}, ` +
-      `score: ${selected.simulatedScore?.toFixed(1)})`
-    );
-    
-    return selected;
-  }
-
-  // ========== ВЫПОЛНЕНИЕ УДАРА ==========
-
-  private executeCandidate(candidate: ShotCandidate): void {
-    const unit = this.findUnitById(candidate.unitId);
-    if (!unit || !unit.body) {
-      console.warn('[AIController] Unit not found:', candidate.unitId);
-      this.executePanicMove();
+      console.log('[AI] ❌ No valid moves!');
+      this.finishMove();
       return;
     }
-
-    const distortedForce = this.errorInjector.distortForce(candidate.force);
     
-    const forceMultiplier = 1000;
-    const forceX = distortedForce.x * forceMultiplier;
-    const forceY = distortedForce.y * forceMultiplier;
+    candidates.sort((a, b) => b.score - a.score);
     
-    this.executeShot(unit, forceX, forceY);
-  }
-
-  private findUnitById(unitId: string): AIGameUnit | null {
-    return this.aiUnits.find(u => u.id === unitId) || null;
-  }
-
-  private executePanicMove(): void {
-    const available = this.aiUnits.filter(u => u.body && u.getSpeed() < 0.5);
-    
-    if (available.length === 0) {
-      console.log('[AIController] No available units for panic move, retrying...');
-      this.thinkingTimer = this.scene.time.delayedCall(300, () => this.startThinking());
-      return;
+    // ✅ IMPROVED: Difficulty-based move selection
+    let selected: ShotCandidate;
+    if (this.difficulty === 'hard') {
+      // Hard: always pick the best candidate
+      selected = candidates[0];
+    } else if (this.difficulty === 'medium') {
+      // Medium: random among top 2-3 candidates
+      const topN = Math.min(3, candidates.length);
+      selected = Phaser.Math.RND.pick(candidates.slice(0, topN));
+    } else {
+      // Easy: random among mid-tier candidates (more mistakes)
+      const topN = Math.min(3, candidates.length);
+      const midStart = Math.max(1, Math.floor(topN / 2));
+      const selectionPool = candidates.slice(midStart, topN);
+      selected = selectionPool.length > 0 
+        ? Phaser.Math.RND.pick(selectionPool)
+        : Phaser.Math.RND.pick(candidates.slice(0, Math.max(1, topN - 1)));
     }
+    
+    console.log(`[AI] 🎯 ${selected.description} (score: ${selected.score.toFixed(1)})`);
+    
+    this.executeShot(selected);
+  }
 
-    const unit = available[0];
-    const angle = Phaser.Math.Angle.Between(
-      unit.body.position.x, 
-      unit.body.position.y, 
-      this.ball.x, 
-      this.ball.y
+  // ⭐ NEW: Проверка, стоит ли использовать карту
+  private shouldUseCard(): boolean {
+    if (this.availableCards.length === 0) return false;
+    if (this.cardsUsedThisMatch >= this.settings.maxCardsPerMatch) return false;
+    
+    // ✅ BOSS OVERRIDE: Bosses use cards much more frequently
+    if (this.bossId) {
+      return Math.random() < 0.7;
+    }
+    
+    return Math.random() < this.settings.cardUsageChance;
+  }
+
+  // ⭐ NEW: Попытка использовать карту
+  private tryUseCard(): boolean {
+    const gameState = this.buildGameState();
+    
+    const bestCard = AbilityScorer.getBestCard(
+      this.availableCards,
+      gameState,
+      this.factionId,
+      this.settings.minCardScore
     );
     
-    const force = 150;
-    this.executeShot(unit, Math.cos(angle) * force, Math.sin(angle) * force);
+    if (!bestCard) {
+      console.log('[AI] 🃏 No good card to use');
+      return false;
+    }
+    
+    console.log(`[AI] 🃏 Using card: ${bestCard.card.name} (score: ${bestCard.score}) - ${bestCard.reason}`);
+    
+    // Убираем карту из доступных
+    this.availableCards = this.availableCards.filter(c => c.id !== bestCard.cardId);
+    this.cardsUsedThisMatch++;
+    
+    // Вызываем коллбэк
+    if (this.onCardUsed) {
+      this.onCardUsed(bestCard.cardId, bestCard.targetData);
+    }
+    
+    return true;
   }
 
-  private executeShot(unit: AIGameUnit, forceX: number, forceY: number): void {
-    if (!unit.body) return;
+  // ⭐ NEW: Построение состояния игры для AbilityScorer
+  private buildGameState(): GameState {
+    return {
+      ball: this.ball,
+      aiUnits: this.aiUnits,
+      playerUnits: this.playerUnits,
+      aiScore: this.state.aiScore,
+      playerScore: this.state.playerScore,
+      fieldBounds: this.fieldBounds,
+      aiGoalY: this.fieldBounds.top, // AI защищает верхние ворота
+      playerGoalY: this.fieldBounds.bottom, // AI атакует нижние ворота
+    };
+  }
+
+  private generateAllCandidates(): ShotCandidate[] {
+    const candidates: ShotCandidate[] = [];
     
-    console.log(`[AIController] Executing shot: unit=${unit.id}`);
+    // ✅ NEW: Evaluate danger level for defensive weighting
+    const danger = AIUtils.evaluateDangerLevel(this.ball, this.fieldBounds, true);
+    const attackOpportunity = AIUtils.evaluateAttackOpportunity(this.ball, this.fieldBounds, true);
     
-    unit.highlight(true);
-    
-    this.scene.time.delayedCall(150, () => {
-      if (unit && unit.body) {
-        unit.highlight(false);
-        unit.applyForce(forceX, forceY);
+    // ✅ Универсальный цикл для любого количества юнитов
+    for (const unit of this.aiUnits) {
+      // Голевой удар
+      const goal = this.evaluateGoalShot(unit);
+      if (goal) {
+        // Boost goal shots when attack opportunity is high
+        if (attackOpportunity > 0.6) {
+          goal.score *= 1.2;
+        }
+        candidates.push(goal);
       }
       
-      this.hasMadeMove = true;
-      this.isThinking = false;
-      
-      if (this.onMoveCompleteCallback) {
-        this.onMoveCompleteCallback();
+      // Защита
+      const defend = this.evaluateDefenseShot(unit);
+      if (defend) {
+        // ✅ NEW: Increase defense weight when danger is high
+        if (danger > 0.7) {
+          defend.score *= 1.3; // Prioritize defense in dangerous situations
+        }
+        // Suppress defense when danger is very low
+        if (danger < 0.3) {
+          defend.score *= 0.7;
+        }
+        candidates.push(defend);
       }
-    });
+      
+      // Пас
+      if (Math.random() < this.settings.passChance) {
+        const pass = this.evaluatePass(unit);
+        if (pass) {
+          // Suppress passes when danger is extremely high (prioritize clearing)
+          if (danger > 0.8) {
+            pass.score *= 0.5;
+          }
+          candidates.push(pass);
+        }
+      }
+      
+      // Давление
+      const pressure = this.evaluatePressure(unit);
+      if (pressure) {
+        // Suppress pressure when danger is high
+        if (danger > 0.7) {
+          pressure.score *= 0.6;
+        }
+        candidates.push(pressure);
+      }
+    }
+    
+    return candidates;
   }
 
-  // ========== ПУБЛИЧНЫЕ МЕТОДЫ ==========
+  // === ОЦЕНКА УДАРОВ ===
 
-  setPlayerUnits(units: AIGameUnit[]): void {
-    this.playerUnits = units;
+  private evaluateGoalShot(unit: AIUnit): ShotCandidate | null {
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    
+    const goalCenter = {
+      x: this.fieldBounds.centerX,
+      y: this.fieldBounds.bottom,
+    };
+    
+    const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    
+    const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y);
+    const toGoal = new Phaser.Math.Vector2(goalCenter.x - bPos.x, goalCenter.y - bPos.y);
+    
+    const angle = Math.abs(Phaser.Math.RadToDeg(toBall.angle() - toGoal.angle()));
+    const normAngle = Math.abs(((angle + 180) % 360) - 180);
+    
+    if (normAngle > 90) return null;
+    
+    const power = this.calculatePower(unit, distToBall);
+    const dir = toBall.normalize();
+    const force = this.applyError(dir, power, unit);
+    
+    let score = 50;
+    score += Math.max(0, 30 - distToBall / 10);
+    score += (90 - normAngle) / 3;
+    
+    const unitClass = unit.getCapClass();
+    
+    // ✅ IMPROVED: Enhanced role-aware bonuses
+    // Sniper: bonus for long-range shots with clear path to goal
+    if (unitClass === 'sniper') {
+      if (distToBall > 150) {
+        score += 25; // Long-range bonus
+      }
+      // Additional bonus if path to goal is relatively clear
+      score += 10;
+    }
+    
+    // Tank: penalty for very long shots (reduce random long bombs)
+    if (unitClass === 'tank' && distToBall > 200) {
+      score -= 15;
+    }
+    
+    // Trickster: bonus for medium-range shots with good angle
+    if (unitClass === 'trickster' && distToBall > 100 && distToBall < 180 && normAngle < 45) {
+      score += 15;
+    }
+    
+    score *= (0.5 + this.state.aggression * 0.5);
+    
+    // ✅ BOSS OVERRIDES
+    if (this.bossId === 'boss_krag') {
+      score *= 1.5; // Krag always wants to shoot
+    }
+    if (this.bossId === 'boss_unit734') {
+      // Unit 734 only takes high percentage shots
+      if (score < 60) score = 0;
+      else score *= 1.2;
+    }
+    
+    return {
+      unit,
+      target: goalCenter,
+      score,
+      type: 'goal',
+      force,
+      description: `Goal by ${unit.getCapClass()} (dist:${distToBall.toFixed(0)})`,
+    };
   }
 
-  getDifficulty(): AIDifficulty {
-    return this.difficulty;
+  private evaluateDefenseShot(unit: AIUnit): ShotCandidate | null {
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    
+    const ourGoal = { x: this.fieldBounds.centerX, y: this.fieldBounds.top };
+    const ballToGoal = Phaser.Math.Distance.Between(bPos.x, bPos.y, ourGoal.x, ourGoal.y);
+    
+    if (ballToGoal > this.settings.defenseZone) return null;
+    
+    const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
+    
+    const power = this.calculatePower(unit, distToBall) * 1.2;
+    const force = this.applyError(toBall, power, unit);
+    
+    let score = 40;
+    score += (this.settings.defenseZone - ballToGoal) / 5;
+    
+    const unitClass = unit.getCapClass();
+    
+    // ✅ IMPROVED: Enhanced role-aware defense bonuses
+    // Tank: significant bonus for defense (prioritize blocking shots)
+    if (unitClass === 'tank') {
+      score += 25; // Increased from 15
+    }
+    
+    // Sniper: small penalty to avoid wasting snipers on pure defense if others are closer
+    if (unitClass === 'sniper') {
+      score -= 10;
+    }
+    
+    // Goal-line blocking: extra heavy bonus for tanks when ball is very close to goal
+    if (ballToGoal < 100) {
+      if (unitClass === 'tank') {
+        score += 30; // Heavy boost for goal-line clearing
+      }
+      // Boost all units for emergency defense
+      score += 20;
+    }
+    
+    score -= distToBall / 20;
+    
+    if (this.state.aiScore < this.state.playerScore) {
+      score *= 1.3;
+    }
+    
+    // ✅ BOSS OVERRIDES
+    if (this.bossId === 'boss_unit734' || this.bossId === 'boss_oracle') {
+      // These bosses defend aggressively
+      score *= 1.3;
+    }
+    
+    return {
+      unit,
+      target: bPos,
+      score,
+      type: 'defend',
+      force,
+      description: `Defense by ${unit.getCapClass()}`,
+    };
   }
 
-  setDifficulty(difficulty: AIDifficulty): void {
-    this.difficulty = difficulty;
-    this.config = CONFIG[difficulty];
-    this.errorInjector.setDifficulty(difficulty);
+  private evaluatePass(unit: AIUnit): ShotCandidate | null {
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    
+    let bestTeammate: AIUnit | null = null;
+    let bestScore = 0;
+    
+    // ✅ Универсальный цикл для любого количества тиммейтов
+    for (const tm of this.aiUnits) {
+      if (tm === unit) continue;
+      
+      const tmPos = tm.body.position;
+      const distToGoal = Phaser.Math.Distance.Between(
+        tmPos.x, tmPos.y,
+        this.fieldBounds.centerX, this.fieldBounds.bottom
+      );
+      
+      let posScore = (this.fieldBounds.height - distToGoal) / this.fieldBounds.height * 50;
+      
+      // ✅ IMPROVED: Extra weight if teammate is a sniper (especially when closer to opponent goal)
+      const tmClass = tm.getCapClass();
+      if (tmClass === 'sniper') {
+        posScore += 20; // Prefer passing to snipers
+        // Additional bonus if sniper is in good position
+        if (distToGoal < this.fieldBounds.height * 0.6) {
+          posScore += 15;
+        }
+      }
+      
+      if (posScore > bestScore) {
+        bestScore = posScore;
+        bestTeammate = tm;
+      }
+    }
+    
+    if (!bestTeammate) return null;
+    
+    const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
+    
+    const power = this.calculatePower(unit, distToBall) * 0.7;
+    const force = this.applyError(toBall, power, unit);
+    
+    return {
+      unit,
+      target: bestTeammate.body.position,
+      score: bestScore * 0.6,
+      type: 'pass',
+      force,
+      description: `Pass by ${unit.getCapClass()} to ${bestTeammate.getCapClass()}`,
+    };
   }
 
-  getSimulationMode(): string {
-    return this.simulationManager.getMode();
+  private evaluatePressure(unit: AIUnit): ShotCandidate | null {
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    
+    const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    
+    if (distToBall > 250) return null;
+    
+    const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
+    const power = this.calculatePower(unit, distToBall) * 0.5;
+    const force = this.applyError(toBall, power, unit);
+    
+    let score = 20 + Math.max(0, 20 - distToBall / 10);
+    
+    if (unit.getCapClass() === 'trickster') {
+      score += 10;
+    }
+    
+    return {
+      unit,
+      target: bPos,
+      score: score * this.state.aggression,
+      type: 'pressure',
+      force,
+      description: `Pressure by ${unit.getCapClass()}`,
+    };
   }
 
-  // ========== ОЧИСТКА ==========
+  // === ВСПОМОГАТЕЛЬНЫЕ ===
+
+  private calculatePower(unit: AIUnit, distance: number): number {
+    const { min, max } = this.settings.shotPower;
+    let power = Phaser.Math.Linear(min, max, Math.min(distance / 300, 1));
+    
+    // Учитываем класс юнита
+    switch (unit.getCapClass()) {
+      case 'sniper':
+        power *= 1.25;
+        break;
+      case 'tank':
+        power *= 0.85;
+        break;
+      case 'trickster':
+        power *= 1.0;
+        break;
+    }
+    
+    return power;
+  }
+
+  private applyError(
+    dir: Phaser.Math.Vector2,
+    power: number,
+    unit: AIUnit
+  ): { x: number; y: number } {
+    let errorRange = (1 - this.settings.accuracy) * 0.5;
+    
+    // Снайпер точнее
+    if (unit.getCapClass() === 'sniper') {
+      errorRange *= 0.5;
+    }
+    
+    // Трикстер добавляет кривизну
+    if (unit.getCapClass() === 'trickster' && this.settings.useClassAbilities) {
+      dir.rotate((Math.random() - 0.5) * 0.3);
+    }
+    
+    dir.rotate((Math.random() - 0.5) * errorRange);
+    
+    // ✅ ИСПРАВЛЕНО: Безопасный доступ к stats через приведение типа
+    const unitWithStats = unit as AIUnitWithStats;
+    const forceMultiplier = unitWithStats.stats?.forceMultiplier ?? DEFAULT_FORCE_MULTIPLIER;
+    const maxForce = unitWithStats.stats?.maxForce ?? DEFAULT_MAX_FORCE;
+    const finalPower = Math.min(power * forceMultiplier * 200, maxForce);
+    
+    return { x: dir.x * finalPower, y: dir.y * finalPower };
+  }
+
+  private executeShot(candidate: ShotCandidate): void {
+    // 🔥 FIX: Safety check for paused physics
+    if (!this.scene.matter.world.enabled) {
+      console.warn('[AI] ⚠️ Physics paused, aborting shot execution. Will retry next frame.');
+      this.finishMove(); // Reset flags so GameScene can retry
+      return;
+    }
+    
+    const { unit, force } = candidate;
+    
+    this.scene.matter.body.applyForce(
+      unit.body,
+      unit.body.position,
+      force
+    );
+    
+    if (typeof (unit as any).playHitEffect === 'function') {
+      (unit as any).playHitEffect();
+    }
+    
+    AudioManager.getInstance().playSFX('sfx_kick');
+    
+    this.finishMove();
+  }
+
+  private finishMove(): void {
+    this.isThinking = false;
+    this.lastMoveTime = Date.now();
+    this.moveCompleteCallback?.();
+  }
+
+  // ⭐ NEW: Получить доступные карты AI
+  getAvailableCards(): CardDefinition[] {
+    return [...this.availableCards];
+  }
+
+  // ⭐ NEW: Получить количество использованных карт
+  getCardsUsedCount(): number {
+    return this.cardsUsedThisMatch;
+  }
 
   destroy(): void {
     this.stop();
-    this.simulationManager.destroy();
-    this.aiUnits = [];
-    this.playerUnits = [];
-    this.onMoveCompleteCallback = undefined;
+    this.moveCompleteCallback = undefined;
+    this.onCardUsed = undefined;
+    this.availableCards = [];
   }
 }

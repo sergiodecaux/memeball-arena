@@ -1,389 +1,201 @@
 // src/scenes/game/PvPSyncManager.ts
+// Менеджер синхронизации состояния с сервером + интерполяция
 
-import Phaser from 'phaser';
-import { Ball } from '../../entities/Ball';
-import { GameUnit, Snapshot } from './types';
-import { FieldBounds, PlayerNumber } from '../../types';
-import {
-  MultiplayerManager,
-  ShootData,
-  PositionsData,
-  MatchTimerData,
-  MatchFinishedData,
-  FinalPositions,
-  PvPPlayer,
-} from '../../managers/MultiplayerManager';
-import { PvPDebugLogger } from './PvPDebugLogger';
-import { hasPlayHitEffect } from './types';
+import { ServerGameState } from '../../types/pvp';
 
-export interface PvPSyncConfig {
-  isHost: boolean;
-  myPlayerIndex: number;
+interface Snapshot {
+  state: ServerGameState;
+  timestamp: number;
+  frame: number;
 }
 
-export interface PvPSyncCallbacks {
-  onShootExecuted: (data: ShootData, isMyShoot: boolean) => void;
-  onTurnChange: (data: { currentTurn: string; scores: Record<string, number> }) => void;
-  onGoalScored: (data: {
-    scorerId: string;
-    scores: Record<string, number>;
-    winner: string | null;
-    finalPositions?: FinalPositions;
-  }) => void;
-  onContinueGame: (data: { currentTurn: string }) => void;
-  onMatchFinished: (data: MatchFinishedData) => void;
-  onOpponentLeft: (reason: string, data: any) => void;
-  onTimerUpdate: (remaining: number, total: number) => void;
-}
-
+/**
+ * Менеджер синхронизации состояний с интерполяцией
+ */
 export class PvPSyncManager {
-  private scene: Phaser.Scene;
-  private mp: MultiplayerManager;
-  private config: PvPSyncConfig;
-  private callbacks: PvPSyncCallbacks;
-  private debug: PvPDebugLogger;
-
-  private snapshotBuffer: Snapshot[] = [];
-  private lastServerSnapshot?: Snapshot;
-  private serverTimeOffset = 0;
-  private timeSyncSamples: number[] = [];
-  private syncInterval?: Phaser.Time.TimerEvent;
-
-  private readonly MAX_SNAPSHOTS = 30;
-  private readonly MAX_TIME_SYNC_SAMPLES = 5;
-
-  constructor(
-    scene: Phaser.Scene,
-    config: PvPSyncConfig,
-    callbacks: PvPSyncCallbacks,
-    debug: PvPDebugLogger
-  ) {
-    this.scene = scene;
-    this.mp = MultiplayerManager.getInstance();
-    this.config = config;
-    this.callbacks = callbacks;
-    this.debug = debug;
+  private snapshots: Snapshot[] = [];
+  private maxSnapshots: number = 10;
+  private interpolationFactor: number = 0.25;
+  private desyncThreshold: number = 50; // pixels
+  private lastRTT: number = 0;
+  
+  constructor(config?: { interpolationFactor?: number; desyncThreshold?: number }) {
+    if (config?.interpolationFactor !== undefined) {
+      this.interpolationFactor = config.interpolationFactor;
+    }
+    if (config?.desyncThreshold !== undefined) {
+      this.desyncThreshold = config.desyncThreshold;
+    }
   }
-
-  setupListeners(): void {
-    this.mp.on('shoot_executed', (data: ShootData) => {
-      const isMyShoot = (data as any).shooterId === this.mp.getMyId();
-      this.callbacks.onShootExecuted(data, isMyShoot);
-    });
-
-    this.mp.on(
-      'turn_change',
-      (data: { currentTurn: string; scores: Record<string, number> }) => {
-        this.callbacks.onTurnChange(data);
+  
+  /**
+   * Добавить новый снапшот от сервера
+   */
+  public addSnapshot(state: ServerGameState, frame: number, timestamp: number): void {
+    this.snapshots.push({ state, frame, timestamp });
+    
+    // Оставляем только последние N снапшотов
+    if (this.snapshots.length > this.maxSnapshots) {
+      this.snapshots.shift();
+    }
+  }
+  
+  /**
+   * Получить интерполированное состояние
+   */
+  public getInterpolatedState(): ServerGameState | null {
+    if (this.snapshots.length < 2) {
+      return this.snapshots[0]?.state || null;
+    }
+    
+    // Берём два последних снапшота
+    const prev = this.snapshots[this.snapshots.length - 2];
+    const current = this.snapshots[this.snapshots.length - 1];
+    
+    if (!prev || !current) return null;
+    
+    const result: ServerGameState = {
+      ball: current.state.ball ? {
+        x: current.state.ball.x,
+        y: current.state.ball.y,
+        vx: current.state.ball.vx,
+        vy: current.state.ball.vy,
+        angle: current.state.ball.angle,
+        angularVelocity: current.state.ball.angularVelocity,
+      } : null,
+      units: {}
+    };
+    
+    // Интерполяция мяча
+    if (prev.state.ball && current.state.ball && result.ball) {
+      result.ball.x = this.lerp(prev.state.ball.x, current.state.ball.x, this.interpolationFactor);
+      result.ball.y = this.lerp(prev.state.ball.y, current.state.ball.y, this.interpolationFactor);
+      result.ball.angle = this.lerpAngle(prev.state.ball.angle, current.state.ball.angle, this.interpolationFactor);
+    }
+    
+    // Интерполяция юнитов
+    for (const unitId in current.state.units) {
+      const prevUnit = prev.state.units[unitId];
+      const currentUnit = current.state.units[unitId];
+      
+      if (prevUnit && currentUnit) {
+        result.units[unitId] = {
+          x: this.lerp(prevUnit.x, currentUnit.x, this.interpolationFactor),
+          y: this.lerp(prevUnit.y, currentUnit.y, this.interpolationFactor),
+          vx: currentUnit.vx,
+          vy: currentUnit.vy,
+          angle: this.lerpAngle(prevUnit.angle, currentUnit.angle, this.interpolationFactor),
+        };
+      } else {
+        result.units[unitId] = { ...currentUnit };
       }
-    );
-
-    if (!this.config.isHost) {
-      this.mp.on('positions_update', (data: PositionsData) =>
-        this.handlePositionsUpdate(data)
+    }
+    
+    return result;
+  }
+  
+  /**
+   * Применить состояние к игровым объектам с интерполяцией
+   */
+  public interpolateAndApply(
+    ball: any,
+    units: any[],
+    fieldBounds: { minX: number; maxX: number; minY: number; maxY: number }
+  ): void {
+    const state = this.getInterpolatedState();
+    if (!state) return;
+    
+    // Применяем к мячу
+    if (ball && state.ball) {
+      const distance = Math.hypot(
+        ball.body.position.x - state.ball.x,
+        ball.body.position.y - state.ball.y
       );
-      this.mp.on('snapshot', (data: Snapshot) => this.handleSnapshot(data));
-    }
-
-    this.mp.on('match_timer', (data: MatchTimerData) => {
-      this.callbacks.onTimerUpdate(data.remainingTime, data.totalTime);
-    });
-
-    this.mp.on(
-      'goal_scored',
-      (data: {
-        scorerId: string;
-        scores: Record<string, number>;
-        winner: string | null;
-        finalPositions?: FinalPositions;
-      }) => {
-        this.callbacks.onGoalScored(data);
+      
+      if (distance > this.desyncThreshold) {
+        // Hard sync - телепорт
+        ball.setPosition(state.ball.x, state.ball.y);
+        ball.setVelocity(state.ball.vx, state.ball.vy);
+        ball.setAngle(state.ball.angle);
+        ball.setAngularVelocity(state.ball.angularVelocity);
+      } else {
+        // Smooth interpolation
+        const newX = this.lerp(ball.body.position.x, state.ball.x, this.interpolationFactor);
+        const newY = this.lerp(ball.body.position.y, state.ball.y, this.interpolationFactor);
+        ball.setPosition(newX, newY);
       }
-    );
-
-    this.mp.on('continue_game', (data: { currentTurn: string }) => {
-      this.callbacks.onContinueGame(data);
-    });
-
-    this.mp.on('match_finished', (data: MatchFinishedData) => {
-      this.callbacks.onMatchFinished(data);
-    });
-
-    this.mp.on('opponent_surrendered', (data: any) => {
-      this.callbacks.onOpponentLeft('surrendered', data);
-    });
-
-    this.mp.on('opponent_disconnected', (data: any) => {
-      this.callbacks.onOpponentLeft('disconnected', data);
-    });
-
-    this.mp.on('pong_sync', (data: { clientTime: number; serverTime: number }) => {
-      this.handlePongSync(data);
-    });
-  }
-
-  startTimeSync(): void {
-    this.scene.time.addEvent({
-      delay: 5000,
-      callback: () => this.sendTimeSync(),
-      loop: true,
-    });
-
-    this.sendTimeSync();
-    this.scene.time.delayedCall(200, () => this.sendTimeSync());
-    this.scene.time.delayedCall(400, () => this.sendTimeSync());
-  }
-
-  private sendTimeSync(): void {
-    if (this.mp?.getConnectionStatus()) {
-      this.mp.sendPingSync(Date.now());
     }
-  }
-
-  private handlePongSync(data: { clientTime: number; serverTime: number }): void {
-    const now = Date.now();
-    const clientTimeSent = Number(data.clientTime);
-    const serverTime = Number(data.serverTime);
-
-    if (isNaN(clientTimeSent) || isNaN(serverTime)) return;
-
-    const rtt = now - clientTimeSent;
-    if (rtt > 1000) return;
-
-    const offset = serverTime - now + Math.floor(rtt / 2);
-
-    this.timeSyncSamples.push(offset);
-    if (this.timeSyncSamples.length > this.MAX_TIME_SYNC_SAMPLES) {
-      this.timeSyncSamples.shift();
-    }
-
-    const sorted = [...this.timeSyncSamples].sort((a, b) => a - b);
-    this.serverTimeOffset = sorted[Math.floor(sorted.length / 2)];
-
-    this.debug.log('TIME', `RTT: ${rtt}ms, Offset: ${this.serverTimeOffset}ms`);
-  }
-
-  startSyncInterval(
-    getBall: () => Ball,
-    getCaps: () => GameUnit[]
-  ): void {
-    if (!this.config.isHost) return;
-
-    this.syncInterval = this.scene.time.addEvent({
-      delay: 33,
-      callback: () => this.sendPositionsToGuest(getBall, getCaps),
-      loop: true,
-    });
-  }
-
-  private sendPositionsToGuest(
-    getBall: () => Ball,
-    getCaps: () => GameUnit[]
-  ): void {
-    if (!this.mp.getConnectionStatus()) return;
-
-    const ball = getBall();
-    const caps = getCaps();
-    const isMoving =
-      ball.getSpeed() > 0.5 || caps.some((c) => c.getSpeed() > 0.5);
-
-    this.mp.sendSyncPositions(
-      {
-        x: ball.body.position.x,
-        y: ball.body.position.y,
-        vx: ball.body.velocity.x,
-        vy: ball.body.velocity.y,
-      },
-      caps.map((cap) => ({
-        x: cap.body.position.x,
-        y: cap.body.position.y,
-        vx: cap.body.velocity.x,
-        vy: cap.body.velocity.y,
-      })),
-      isMoving
-    );
-  }
-
-  private handlePositionsUpdate(data: PositionsData): void {
-    if (this.config.isHost) return;
-
-    const snapshot: Snapshot = {
-      tick: (data as any).tick || 0,
-      serverTime: Number((data as any).serverTime) || Date.now(),
-      ball: data.ball,
-      caps: data.caps,
-      isMoving: (data as any).isMoving,
-    };
-
-    this.lastServerSnapshot = snapshot;
-    this.addSnapshot(snapshot);
-  }
-
-  private handleSnapshot(data: Snapshot): void {
-    if (this.config.isHost) return;
-
-    const snapshot = {
-      ...data,
-      serverTime: Number(data.serverTime) || Date.now(),
-    };
-
-    this.lastServerSnapshot = snapshot;
-    this.addSnapshot(snapshot);
-  }
-
-  private addSnapshot(snapshot: Snapshot): void {
-    this.snapshotBuffer.push(snapshot);
-    while (this.snapshotBuffer.length > this.MAX_SNAPSHOTS) {
-      this.snapshotBuffer.shift();
-    }
-  }
-
-  interpolateAndApply(
-    ball: Ball,
-    caps: GameUnit[],
-    fieldBounds: FieldBounds
-  ): void {
-    const latest =
-      this.snapshotBuffer.length > 0
-        ? this.snapshotBuffer[this.snapshotBuffer.length - 1]
-        : this.lastServerSnapshot;
-
-    if (!latest) return;
-
-    const smoothMove = (current: number, target: number): number => {
-      const diff = target - current;
-      const distance = Math.abs(diff);
-
-      if (distance < 1) return target;
-
-      let factor: number;
-      if (distance > 100) factor = 0.5;
-      else if (distance > 50) factor = 0.4;
-      else if (distance > 20) factor = 0.3;
-      else factor = 0.2;
-
-      return current + diff * factor;
-    };
-
-    const clampToBounds = (
-      x: number,
-      y: number,
-      radius: number
-    ): { x: number; y: number } => {
-      return {
-        x: Phaser.Math.Clamp(
-          x,
-          fieldBounds.left + radius,
-          fieldBounds.right - radius
-        ),
-        y: Phaser.Math.Clamp(
-          y,
-          fieldBounds.top + radius,
-          fieldBounds.bottom - radius
-        ),
-      };
-    };
-
-    // Apply ball position
-    const ballRadius = ball.getRadius();
-    const clampedBall = clampToBounds(latest.ball.x, latest.ball.y, ballRadius);
-
-    const ballPos = ball.body.position;
-    this.scene.matter.body.setPosition(ball.body, {
-      x: smoothMove(ballPos.x, clampedBall.x),
-      y: smoothMove(ballPos.y, clampedBall.y),
-    });
-
-    const ballVel = ball.body.velocity;
-    this.scene.matter.body.setVelocity(ball.body, {
-      x: ballVel.x + (latest.ball.vx - ballVel.x) * 0.3,
-      y: ballVel.y + (latest.ball.vy - ballVel.y) * 0.3,
-    });
-
-    // Apply caps positions
-    latest.caps.forEach((capState, i) => {
-      const cap = caps[i];
-      if (!cap) return;
-
-      const capRadius = cap.getRadius();
-      const clampedCap = clampToBounds(capState.x, capState.y, capRadius);
-
-      const capPos = cap.body.position;
-      this.scene.matter.body.setPosition(cap.body, {
-        x: smoothMove(capPos.x, clampedCap.x),
-        y: smoothMove(capPos.y, clampedCap.y),
-      });
-
-      const capVel = cap.body.velocity;
-      this.scene.matter.body.setVelocity(cap.body, {
-        x: capVel.x + (capState.vx - capVel.x) * 0.3,
-        y: capVel.y + (capState.vy - capVel.y) * 0.3,
-      });
-    });
-
-    // Cleanup old snapshots
-    if (this.snapshotBuffer.length > 5) {
-      this.snapshotBuffer = this.snapshotBuffer.slice(-3);
-    }
-  }
-
-  applyFinalPositions(
-    ball: Ball,
-    caps: GameUnit[],
-    positions: FinalPositions
-  ): void {
-    this.scene.matter.body.setPosition(ball.body, positions.ball);
-    this.scene.matter.body.setVelocity(ball.body, { x: 0, y: 0 });
-    ball.update();
-
-    positions.caps.forEach((pos, i) => {
-      if (caps[i]) {
-        this.scene.matter.body.setPosition(caps[i].body, pos);
-        this.scene.matter.body.setVelocity(caps[i].body, { x: 0, y: 0 });
-        caps[i].update();
+    
+    // Применяем к юнитам
+    units.forEach((unit) => {
+      const unitId = this.getUnitId(unit);
+      const serverUnit = state.units[unitId];
+      
+      if (serverUnit && unit.body) {
+        const distance = Math.hypot(
+          unit.body.position.x - serverUnit.x,
+          unit.body.position.y - serverUnit.y
+        );
+        
+        if (distance > this.desyncThreshold) {
+          // Hard sync
+          unit.setPosition(serverUnit.x, serverUnit.y);
+          unit.setVelocity(serverUnit.vx, serverUnit.vy);
+          unit.setAngle(serverUnit.angle);
+        } else {
+          // Smooth interpolation
+          const newX = this.lerp(unit.body.position.x, serverUnit.x, this.interpolationFactor);
+          const newY = this.lerp(unit.body.position.y, serverUnit.y, this.interpolationFactor);
+          unit.setPosition(newX, newY);
+        }
       }
     });
-
-    this.clearState();
-    this.debug.log('SYNC', 'Final positions applied');
   }
-
-  clearState(): void {
-    this.snapshotBuffer = [];
-    this.lastServerSnapshot = undefined;
+  
+  /**
+   * Получить ID юнита
+   */
+  private getUnitId(unit: any): string {
+    // Пытаемся получить ID из разных мест
+    if (unit.id) return unit.id;
+    if (unit.unitId) return unit.unitId;
+    if (unit.name) return unit.name;
+    return 'unknown';
   }
-
-  getLastServerSnapshot(): Snapshot | undefined {
-    return this.lastServerSnapshot;
+  
+  /**
+   * Линейная интерполяция
+   */
+  private lerp(start: number, end: number, t: number): number {
+    return start + (end - start) * t;
   }
-
-  getSnapshotBuffer(): Snapshot[] {
-    return this.snapshotBuffer;
+  
+  /**
+   * Интерполяция углов (с учётом кругового характера)
+   */
+  private lerpAngle(start: number, end: number, t: number): number {
+    const diff = ((end - start + 180) % 360) - 180;
+    return start + diff * t;
   }
-
-  getServerTimeOffset(): number {
-    return this.serverTimeOffset;
+  
+  /**
+   * Обновить RTT (Round Trip Time)
+   */
+  public setRTT(rtt: number): void {
+    this.lastRTT = rtt;
   }
-
-  cleanup(): void {
-    this.mp.off('shoot_executed');
-    this.mp.off('turn_change');
-    this.mp.off('positions_update');
-    this.mp.off('snapshot');
-    this.mp.off('match_timer');
-    this.mp.off('goal_scored');
-    this.mp.off('continue_game');
-    this.mp.off('match_finished');
-    this.mp.off('opponent_surrendered');
-    this.mp.off('opponent_disconnected');
-    this.mp.off('pong_sync');
-
-    if (this.syncInterval) {
-      this.syncInterval.destroy();
-      this.syncInterval = undefined;
-    }
-
-    this.clearState();
-    this.timeSyncSamples = [];
+  
+  /**
+   * Получить RTT
+   */
+  public getRTT(): number {
+    return this.lastRTT;
+  }
+  
+  /**
+   * Очистить снапшоты
+   */
+  public clear(): void {
+    this.snapshots = [];
   }
 }

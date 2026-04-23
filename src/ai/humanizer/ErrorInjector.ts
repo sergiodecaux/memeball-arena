@@ -46,6 +46,15 @@ const ERROR_CONFIGS: Record<AIDifficulty, ErrorConfig> = {
     ricochetError: 0.05,
     panicDefenseChance: 0.05,
   },
+  impossible: {
+    ballPositionError: 1,
+    forceError: 0.01,
+    angleError: 0.01,
+    suboptimalChoiceChance: 0,
+    randomMoveChance: 0,
+    ricochetError: 0.01,
+    panicDefenseChance: 0,
+  },
 };
 
 export class ErrorInjector {

@@ -1,5 +1,7 @@
+// src/controllers/ScoreManager.ts
+// ✅ ИЗМЕНЕНО: Убраны ссылки на WINNING_SCORE, теперь победа определяется только по времени
+
 import Phaser from 'phaser';
-import { GAME } from '../constants/gameConstants';
 import { PlayerNumber } from '../types';
 
 export class ScoreManager {
@@ -39,14 +41,16 @@ export class ScoreManager {
 
   /**
    * Добавляет гол игроку.
-   * Возвращает true если это победный гол.
+   * ✅ ИЗМЕНЕНО: Больше не возвращает true при "победном голе" — 
+   * победа определяется только по истечении времени.
    */
   addGoal(player: PlayerNumber): boolean {
     this.scores[player]++;
     this.scoreText.setText(`${this.scores[1]} : ${this.scores[2]}`);
     this.showGoalAnimation(player);
 
-    return this.scores[player] >= GAME.WINNING_SCORE;
+    // ✅ Всегда возвращаем false — матч продолжается до конца таймера
+    return false;
   }
 
   // --- НОВЫЙ МЕТОД: Установка счета извне (для PvP) ---
@@ -58,10 +62,35 @@ export class ScoreManager {
   // ----------------------------------------------------
 
   /**
-   * Проверяет, достиг ли игрок победного счёта
+   * Проверяет, лидирует ли игрок
+   * ✅ ИЗМЕНЕНО: Теперь просто проверяет, у кого больше голов
    */
-  checkWin(player: PlayerNumber): boolean {
-    return this.scores[player] >= GAME.WINNING_SCORE;
+  isLeading(player: PlayerNumber): boolean {
+    const opponent: PlayerNumber = player === 1 ? 2 : 1;
+    return this.scores[player] > this.scores[opponent];
+  }
+
+  /**
+   * Проверяет, есть ли ничья
+   */
+  isDraw(): boolean {
+    return this.scores[1] === this.scores[2];
+  }
+
+  /**
+   * Возвращает текущего лидера или null при ничьей
+   */
+  getLeader(): PlayerNumber | null {
+    if (this.scores[1] > this.scores[2]) return 1;
+    if (this.scores[2] > this.scores[1]) return 2;
+    return null;
+  }
+
+  /**
+   * Возвращает разницу в счёте
+   */
+  getScoreDifference(): number {
+    return Math.abs(this.scores[1] - this.scores[2]);
   }
 
   private showGoalAnimation(player: PlayerNumber): void {

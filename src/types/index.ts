@@ -1,6 +1,35 @@
 // src/types/index.ts
+// ✅ ОБНОВЛЕНО: Добавлены re-exports новых типов
 
 import { CapClass, FactionId } from '../constants/gameConstants';
+
+// ==================== RE-EXPORTS ====================
+
+// Из match.ts
+export type { 
+  TurnPhase, 
+  GameMode, 
+  MatchConfig, 
+  TurnState, 
+  ScoreState, 
+  TimerState, 
+  MatchState 
+} from './match';
+export { createInitialMatchState } from './match';
+
+// Из MatchResult.ts
+export type { MatchResult, Achievement, MatchRewards, MatchEndReason } from './MatchResult';
+
+// Из abilities.ts (основные)
+export type { 
+  AbilityType, 
+  AbilityTrigger, 
+  AbilityTargetType,
+  AbilityDefinition,
+  AbilityEvent,
+  AbilityEventType,
+  ChargeGainReason,
+} from './abilities';
 
 // ==================== SKIN RARITY ====================
 
@@ -9,6 +38,11 @@ export type SkinRarity = 'basic' | 'common' | 'rare' | 'epic' | 'legendary';
 // ==================== POSITION & DIMENSIONS ====================
 
 export interface Position {
+  x: number;
+  y: number;
+}
+
+export interface Velocity {
   x: number;
   y: number;
 }
@@ -29,10 +63,12 @@ export interface FieldBounds {
   height: number;
 }
 
+// ==================== PLAYERS ====================
+
 export type PlayerNumber = 1 | 2;
 
 export interface GameEntityData {
-  type: 'ball' | 'cap' | 'unit';
+  type: 'ball' | 'unit';  // ✅ Убрано дублирование 'cap'
   owner?: PlayerNumber;
   id?: string;
   factionId?: FactionId;
@@ -46,8 +82,8 @@ export type { FactionId } from '../constants/gameConstants';
 
 export interface FormationSlot {
   id: string;
-  x: number;
-  y: number;
+  x: number;  // 0-1 относительные координаты
+  y: number;  // 0-1 относительные координаты
 }
 
 export interface Formation {
@@ -103,7 +139,7 @@ export interface SkinVisualConfig {
 
 // ==================== AI ====================
 
-export type AIDifficulty = 'easy' | 'medium' | 'hard';
+export type AIDifficulty = 'easy' | 'medium' | 'hard' | 'impossible';
 export type AIStrategy = 'attack' | 'defend' | 'intercept' | 'block';
 
 export interface AIMoveEvaluation {
@@ -130,7 +166,8 @@ export interface SkinPrice {
   crystals?: number;
 }
 
-// ==================== GAME CONFIG ====================
+// ==================== LEGACY GAME CONFIG ====================
+// ⚠️ DEPRECATED: Используй MatchConfig из './match'
 
 export interface GameConfig {
   vsAI: boolean;

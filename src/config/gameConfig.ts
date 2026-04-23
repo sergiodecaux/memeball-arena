@@ -1,29 +1,24 @@
-// src/config/gameConfig.ts
-
 import Phaser from 'phaser';
 import { BootScene } from '../scenes/BootScene';
 import { MainMenuScene } from '../scenes/MainMenuScene';
-import { MatchmakingScene } from '../scenes/MatchmakingScene';
 import { GameScene } from '../scenes/GameScene';
-import { ShopScene } from '../scenes/ShopScene';
-import { ProfileScene } from '../scenes/ProfileScene';
-import { SettingsScene } from '../scenes/SettingsScene';
-import { TeamScene } from '../scenes/TeamScene'; // ← НОВАЯ сцена Team (замена TacticsScene)
-import { ProfileSetupScene } from '../scenes/ProfileSetupScene';
-import { FactionSelectScene } from '../scenes/FactionSelectScene';
+import { MatchVSScene } from '../scenes/MatchVSScene';
+// import { LeakGuardPlugin } from '../plugins/LeakGuardPlugin';
+// import { tgApp } from '../utils/TelegramWebApp';
+// ⚡ Остальные сцены импортируются динамически через SceneLoader
 
-export const DESIGN_WIDTH = 430;
-export const DESIGN_HEIGHT = 932;
+export const DESIGN_WIDTH = 390;
+export const DESIGN_HEIGHT = 844;
+
+// Упрощаем, без проверки производительности
+const isLowEnd = false;
 
 export const gameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'game-container',
-
   width: DESIGN_WIDTH,
   height: DESIGN_HEIGHT,
-
-  backgroundColor: '#0a0a12',
-
+  backgroundColor: '#050505', // Унифицировано с Telegram theme-color
   physics: {
     default: 'matter',
     matter: {
@@ -31,43 +26,66 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-
   scene: [
-    BootScene,
-    FactionSelectScene,  // ← Экран выбора фракции (показывается первым для новых игроков)
-    ProfileSetupScene,   // ← Затем настройка профиля
-    MainMenuScene,
-    MatchmakingScene,
-    GameScene,
-    ShopScene,
-    ProfileScene,
-    SettingsScene,
-    TeamScene,           // ← НОВАЯ: замена TacticsScene
+    BootScene,        // Core: Загрузка ассетов
+    MainMenuScene,    // Core: Главное меню
+    GameScene,        // Core: Игровая сцена
+    MatchVSScene,    // Core: VS экран перед матчем
+    // Остальные сцены загружаются динамически через SceneLoader
   ],
-
   scale: {
-    mode: Phaser.Scale.FIT,
+    mode: Phaser.Scale.RESIZE, // ИЗМЕНЕНО: Был FIT. RESIZE лучше для TWA.
+    parent: 'game-container',
+    width: '100%',
+    height: '100%',
     autoCenter: Phaser.Scale.CENTER_BOTH,
-    width: DESIGN_WIDTH,
-    height: DESIGN_HEIGHT,
   },
-
+  // ОПТИМИЗАЦИЯ РЕНДЕРА (зависит от класса производительности)
   render: {
     pixelArt: false,
-    antialias: true,
-    antialiasGL: true,
+    antialias: !isLowEnd, // Отключаем сглаживание на слабых устройствах
+    antialiasGL: !isLowEnd,
+    powerPreference: 'default',
+    batchSize: isLowEnd ? 1024 : 2048,
+    maxTextures: isLowEnd ? 2 : 4,
   },
-
+  
+  // ОПТИМИЗАЦИЯ FPS (зависит от класса производительности)
+  fps: {
+    target: isLowEnd ? 30 : 60, // 30 FPS для слабых андроидов
+    min: 30, // ✅ Разрешаем падение FPS вместо крашей
+    forceSetTimeOut: true, // Стабильнее для таймингов на мобилках
+  },
+  
   input: {
     activePointers: 3,
+    touch: {
+      capture: true,  // Захватывать touch события
+    },
   },
-
-  // НОВОЕ: для DOM input (поле ввода никнейма)
   dom: {
     createContainer: true,
   },
-
+  disableContextMenu: true,
   banner: false,
+  // plugins: {
+  //   scene: [
+  //     {
+  //       key: 'LeakGuard',
+  //       plugin: LeakGuardPlugin,
+  //       mapping: 'leakGuard',
+  //       start: true,
+  //     },
+  //   ],
+  // },
+  callbacks: {
+    preBoot: (game) => {
+      // Дополнительная защита при загрузке
+      if (game.canvas) {
+        game.canvas.style.touchAction = 'none';
+      }
+    }
+  },
 };
 
 export const getScale = (game: Phaser.Game) => {

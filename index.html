@@ -2,33 +2,116 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="theme-color" content="#050505" />
+  
+  <!-- ✅ Предотвращение кэширования HTML -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  
   <title>Galaxy League</title>
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
   
+  <script>
+    // Отключаем Service Worker в Telegram Mini App
+    // SW вызывает проблемы с кэшированием на iOS
+    (function() {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          registrations.forEach(function(r) {
+            r.unregister().then(function() {
+              console.log('[SW] Unregistered');
+            });
+          });
+        });
+      }
+    })();
+  </script>
+  
+  <script>
+    // Показываем ошибки на экране для iOS отладки
+    window.onerror = function(msg, url, line) {
+      var div = document.createElement('div');
+      div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:10px;z-index:999999;font-size:12px;';
+      div.textContent = 'ERROR: ' + msg + ' (line ' + line + ')';
+      document.body.appendChild(div);
+      return false;
+    };
+    
+    window.onunhandledrejection = function(e) {
+      var div = document.createElement('div');
+      div.style.cssText = 'position:fixed;top:30px;left:0;right:0;background:orange;color:black;padding:10px;z-index:999999;font-size:12px;';
+      div.textContent = 'PROMISE: ' + (e.reason ? e.reason.message || e.reason : 'Unknown');
+      document.body.appendChild(div);
+    };
+  </script>
+  
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * { 
+      margin: 0; 
+      padding: 0; 
+      box-sizing: border-box;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
     
     html, body {
       width: 100%;
       height: 100%;
       background: #050505;
       overflow: hidden;
-      -webkit-tap-highlight-color: transparent;
-      -webkit-user-select: none;
-      user-select: none;
-      font-family: 'Orbitron', sans-serif;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      
+      /* Блокировка pull-to-refresh через CSS */
+      overscroll-behavior: none;
+      overscroll-behavior-y: none;
+      
+      /* НЕ ставим touch-action: none - это блокирует скролл Phaser */
+      /* touch-action: manipulation разрешает скролл и тапы */
+      touch-action: manipulation;
+      
+      -webkit-touch-callout: none;
+    }
+    
+    /* Canvas может иметь touch-action: none - Phaser сам обрабатывает */
+    canvas {
+      touch-action: none;
+      display: block;
+    }
+    
+    #app {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      position: fixed;
+      top: 0;
+      left: 0;
+      /* Разрешаем touch на контейнере */
+      touch-action: manipulation;
+      overscroll-behavior: none;
     }
     
     #game-container {
       width: 100%;
       height: 100%;
+      position: relative;
+      z-index: 1;
+      background-color: #1a1a2e; /* Тёмно-синий фон вместо чёрного */
+    }
+    
+    #game-container canvas {
+      display: block;
     }
     
     .font-preload {
@@ -37,11 +120,513 @@
       left: -9999px;
       visibility: hidden;
     }
+    
+    #loading-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #050505;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    }
   </style>
 </head>
 <body>
+  <!-- DEBUG OVERLAY -->
+<div id="debug-overlay" style="
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 50%;
+  background: rgba(0,0,0,0.95);
+  color: #0f0;
+  font-family: monospace;
+  font-size: 10px;
+  padding: 10px;
+  padding-top: 50px;
+  z-index: 99999;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-bottom: 3px solid #0f0;
+  display: none;
+  pointer-events: auto;
+"></div>
+
+<!-- DEBUG CONTROLS -->
+<div id="debug-controls" style="
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: #111;
+  padding: 10px;
+  z-index: 100000;
+  display: none;
+  text-align: center;
+  pointer-events: auto;
+">
+  <button id="debug-copy-btn" style="
+    font-size: 14px;
+    padding: 8px 16px;
+    margin: 0 5px;
+    background: #0a0;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    pointer-events: auto;
+    touch-action: manipulation;
+  ">📋 COPY LOGS</button>
+  <button id="debug-clear-btn" style="
+    font-size: 14px;
+    padding: 8px 16px;
+    margin: 0 5px;
+    background: #a00;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    pointer-events: auto;
+    touch-action: manipulation;
+  ">🗑️ CLEAR</button>
+  <button id="debug-close-btn" style="
+    font-size: 14px;
+    padding: 8px 16px;
+    margin: 0 5px;
+    background: #555;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    pointer-events: auto;
+    touch-action: manipulation;
+  ">✖️ CLOSE</button>
+</div>
+
+<!-- DEBUG TOGGLE BUTTON -->
+<button id="debug-toggle-btn" style="
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  z-index: 99998;
+  font-size: 24px;
+  padding: 12px 16px;
+  background: #222;
+  color: #0f0;
+  border: 2px solid #0f0;
+  border-radius: 10px;
+  opacity: 0.9;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+">🐛</button>
+
+<script>
+(function() {
+  function initDebug() {
+    var STORAGE_KEY = '__GL_DEBUG_LOGS__';
+    var COUNT_KEY = '__GL_LOAD_COUNT__';
+    var MAX_LOGS = 200;
+    
+    var debugEl = document.getElementById('debug-overlay');
+    var controlsEl = document.getElementById('debug-controls');
+    var toggleBtn = document.getElementById('debug-toggle-btn');
+    var copyBtn = document.getElementById('debug-copy-btn');
+    var clearBtn = document.getElementById('debug-clear-btn');
+    var closeBtn = document.getElementById('debug-close-btn');
+    
+    // Проверка что все элементы найдены
+    if (!debugEl || !controlsEl || !toggleBtn || !copyBtn || !clearBtn || !closeBtn) {
+      console.error('[DEBUG] Failed to find debug elements');
+      return;
+    }
+    
+    // Загружаем логи из localStorage
+    var logs = [];
+    try {
+      var saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) logs = JSON.parse(saved);
+    } catch(e) {
+      logs = ['Failed to load logs: ' + e.message];
+    }
+    
+    // Счётчик загрузок
+    var loadCount = 1;
+    try {
+      loadCount = parseInt(localStorage.getItem(COUNT_KEY) || '0') + 1;
+      localStorage.setItem(COUNT_KEY, String(loadCount));
+    } catch(e) {}
+    
+    // Платформа
+    var ua = navigator.userAgent || '';
+    var isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+    var platform = isMobile ? (/Android/i.test(ua) ? 'ANDROID' : 'IOS') : 'DESKTOP';
+    
+    // Время
+    var lastLoad = parseInt(localStorage.getItem('__GL_LAST__') || '0');
+    var now = Date.now();
+    var gap = lastLoad ? Math.round((now - lastLoad) / 1000) + 's ago' : 'first';
+    localStorage.setItem('__GL_LAST__', String(now));
+    
+    // Разделитель
+    logs.push('');
+    logs.push('══════════════════════════════════════════');
+    logs.push(' [' + platform + '] LOAD #' + loadCount + ' (' + gap + ')');
+    logs.push(' ' + new Date().toISOString());
+    logs.push('══════════════════════════════════════════');
+    
+    function save() {
+      try {
+        while (logs.length > MAX_LOGS) logs.shift();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(logs));
+      } catch(e) {}
+    }
+    
+    function render() {
+      if (debugEl) {
+        debugEl.textContent = logs.join('\n');
+        debugEl.scrollTop = debugEl.scrollHeight;
+      }
+    }
+    
+    window.__DEBUG_LOG__ = function(msg) {
+      var t = new Date().toISOString().substr(11, 12);
+      logs.push(t + ' ' + msg);
+      save();
+      render();
+    };
+    
+    // Console перехват
+    var _log = console.log;
+    var _warn = console.warn;
+    var _error = console.error;
+    
+    function str(a) {
+      if (a == null) return String(a);
+      if (a instanceof Error) return a.message;
+      if (typeof a === 'object') {
+        try { return JSON.stringify(a); } catch(e) { return '[Object]'; }
+      }
+      return String(a);
+    }
+    
+    function capture(s) {
+      s = String(s || '');
+      return s.indexOf('[Main]') >= 0 || 
+             s.indexOf('[Boot]') >= 0 || 
+             s.indexOf('[TG]') >= 0 ||
+             s.indexOf('Telegram') >= 0 ||
+             s.indexOf('bootGame') >= 0 ||
+             s.indexOf('BOOT') >= 0 ||
+             s.indexOf('expand') >= 0 ||
+             s.indexOf('Expand') >= 0 ||
+             s.indexOf('viewport') >= 0 ||
+             s.indexOf('Viewport') >= 0 ||
+             s.indexOf('context') >= 0 ||
+             s.indexOf('Phaser') >= 0 ||
+             s.indexOf('Game') >= 0 ||
+             s.indexOf('Scene') >= 0;
+    }
+    
+    console.log = function() {
+      var a = Array.from(arguments);
+      if (capture(a[0])) {
+        window.__DEBUG_LOG__(a.map(str).join(' '));
+      }
+      _log.apply(console, a);
+    };
+    
+    console.warn = function() {
+      var a = Array.from(arguments);
+      window.__DEBUG_LOG__('[WARN] ' + a.map(str).join(' '));
+      _warn.apply(console, a);
+    };
+    
+    console.error = function() {
+      var a = Array.from(arguments);
+      window.__DEBUG_LOG__('[ERR] ' + a.map(str).join(' '));
+      _error.apply(console, a);
+    };
+    
+    // Ошибки
+    window.addEventListener('error', function(e) {
+      window.__DEBUG_LOG__('[CRASH] ' + (e.message || 'Unknown') + ' @' + (e.lineno || '?'));
+    });
+    
+    window.addEventListener('unhandledrejection', function(e) {
+      window.__DEBUG_LOG__('[PROMISE] ' + (e.reason ? (e.reason.message || e.reason) : '?'));
+    });
+    
+    // Visibility
+    document.addEventListener('visibilitychange', function() {
+      window.__DEBUG_LOG__('[VIS] ' + document.visibilityState);
+    });
+    
+    // Toggle button
+    toggleBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var show = debugEl.style.display === 'none' || !debugEl.style.display;
+      debugEl.style.display = show ? 'block' : 'none';
+      controlsEl.style.display = show ? 'block' : 'none';
+      if (show) render();
+    });
+    
+    // Copy button
+    copyBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var text = logs.join('\n');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+          alert('Logs copied! (' + logs.length + ' lines)');
+        }).catch(function() {
+          fallbackCopy(text);
+        });
+      } else {
+        fallbackCopy(text);
+      }
+    });
+    
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:50%;z-index:999999;font-size:8px;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand('copy');
+        alert('Logs copied!');
+      } catch(e) {
+        alert('Select all text and copy manually');
+      }
+      // Не удаляем textarea чтобы можно было скопировать вручную
+    }
+    
+    // Clear button
+    clearBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (confirm('Clear all logs and reload?')) {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(COUNT_KEY);
+        localStorage.removeItem('__GL_LAST__');
+        location.reload();
+      }
+    });
+    
+    // Close button
+    closeBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      debugEl.style.display = 'none';
+      controlsEl.style.display = 'none';
+    });
+    
+    // === INITIAL INFO ===
+    window.__DEBUG_LOG__('--- ENV ---');
+    window.__DEBUG_LOG__('Platform: ' + platform);
+    window.__DEBUG_LOG__('UA: ' + ua.substr(0, 80));
+    window.__DEBUG_LOG__('Screen: ' + screen.width + 'x' + screen.height);
+    window.__DEBUG_LOG__('Window: ' + window.innerWidth + 'x' + window.innerHeight);
+    
+    window.__DEBUG_LOG__('--- TELEGRAM ---');
+    var tg = window.Telegram ? window.Telegram.WebApp : null;
+    if (tg) {
+      window.__DEBUG_LOG__('TG.platform: ' + (tg.platform || '?'));
+      window.__DEBUG_LOG__('TG.version: ' + (tg.version || '?'));
+      window.__DEBUG_LOG__('TG.isExpanded: ' + tg.isExpanded);
+      window.__DEBUG_LOG__('TG.viewportHeight: ' + tg.viewportHeight);
+      window.__DEBUG_LOG__('TG.viewportStableHeight: ' + tg.viewportStableHeight);
+    } else {
+      window.__DEBUG_LOG__('TG: not loaded');
+    }
+    
+    window.__DEBUG_LOG__('--- FLAGS ---');
+    window.__DEBUG_LOG__('INITIALIZING: ' + window.__GAME_INITIALIZING__);
+    window.__DEBUG_LOG__('INITIALIZED: ' + window.__GAME_INITIALIZED__);
+    window.__DEBUG_LOG__('GAME: ' + (window.__GAME__ ? 'yes' : 'no'));
+    window.__DEBUG_LOG__('EXPAND: ' + window.__EXPAND_CALLED__);
+    
+    save();
+    window.__DEBUG_LOG__('=== READY ===');
+  }
+  
+  // Инициализация при готовности DOM
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDebug);
+  } else {
+    initDebug();
+  }
+})();
+</script>
+
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <!-- Фоновое изображение -->
+    <img id="loading-bg" 
+         src="./assets/ui/backgrounds/loading_screen_1080x1920.png" 
+         alt="" 
+         style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.3;"
+         onerror="this.style.display='none'" />
+    
+    <!-- Контент -->
+    <div id="loading-content" style="position: relative; z-index: 1; text-align: center; color: white; font-family: 'Orbitron', sans-serif;">
+      <div id="loading-logo" style="font-size: 24px; font-weight: bold; margin-bottom: 20px;">
+        🌌 Galaxy League
+      </div>
+      
+      <div id="loading-progress-container" style="
+        width: 200px;
+        height: 8px;
+        background: rgba(255,255,255,0.2);
+        border-radius: 4px;
+        overflow: hidden;
+        margin: 0 auto 10px;
+      ">
+        <div id="loading-progress-bar" style="
+          width: 0%;
+          height: 100%;
+          background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+          transition: width 0.3s ease;
+        "></div>
+      </div>
+      
+      <div id="loading-text" style="font-size: 14px; opacity: 0.8;">
+        Загрузка... 0%
+      </div>
+      
+      <div id="loading-hint" style="font-size: 12px; opacity: 0.5; margin-top: 10px;">
+        Первый запуск может занять до минуты
+      </div>
+    </div>
+  </div>
+  
   <div class="font-preload"><span>a</span></div>
   <div id="game-container"></div>
   <script type="module" src="/src/main.ts"></script>
+  
+  <script>
+    // Детектор множественных expand() - только для отладки
+    (function() {
+      if (typeof window === 'undefined' || !window.Telegram?.WebApp) return;
+      
+      var originalExpand = window.Telegram.WebApp.expand;
+      var expandCount = 0;
+      
+      window.Telegram.WebApp.expand = function() {
+        expandCount++;
+        console.log('[DEBUG] tg.expand() called, total:', expandCount);
+        
+        if (expandCount > 1) {
+          console.error('[DEBUG] ⚠️ MULTIPLE EXPAND CALLS DETECTED!');
+          console.trace();
+        }
+        
+        return originalExpand.apply(this, arguments);
+      };
+      
+      console.log('[DEBUG] Expand detector installed');
+    })();
+  </script>
+  
+  <script>
+    (function() {
+      if (window.__GL_LOADING_INITIALIZED__) return;
+      window.__GL_LOADING_INITIALIZED__ = true;
+
+      // Обновление прогресса (вызывается из Phaser BootScene)
+      window.updateLoadingProgress = function(percent, text) {
+        var bar = document.getElementById('loading-progress-bar');
+        var textEl = document.getElementById('loading-text');
+        var hint = document.getElementById('loading-hint');
+        
+        if (bar) bar.style.width = percent + '%';
+        if (textEl) textEl.textContent = text || ('Загрузка... ' + percent + '%');
+        
+        // Адаптивные подсказки
+        if (hint && percent < 100) {
+          if (percent < 30) {
+            hint.textContent = 'Загрузка графики...';
+          } else if (percent < 70) {
+            hint.textContent = 'Загрузка звуков и текстур...';
+          } else {
+            hint.textContent = 'Почти готово...';
+          }
+        }
+      };
+      
+      // Современное управление таймерами через AbortController
+      const loadingController = new AbortController();
+      const { signal } = loadingController;
+      
+      // Таймер ошибки загрузки
+      const errorTimeoutId = setTimeout(function() {
+        if (signal.aborted) return; // Игра загрузилась - выходим
+        
+        var loadingElement = document.getElementById('loading-screen');
+        if (loadingElement && loadingElement.style.display !== 'none') {
+          var hint = document.getElementById('loading-hint');
+          if (hint) {
+            hint.innerHTML = '<span style="color: #f59e0b;">Загрузка затянулась. Проверьте соединение.</span>';
+          }
+        }
+      }, 60000);
+      
+      var loadingHidden = false;
+      
+      // ✅ ДОБАВИТЬ: Функция показа loading screen (для contextlost и других случаев)
+      window.showLoadingScreen = function(message) {
+        loadingHidden = false; // Сбрасываем флаг
+        
+        var loadingElement = document.getElementById('loading-screen');
+        if (!loadingElement) return;
+        
+        // Убираем display:none если было установлено
+        loadingElement.style.display = 'flex';
+        // Плавное появление
+        loadingElement.style.transition = 'opacity 0.3s ease-in';
+        loadingElement.style.opacity = '1';
+        
+        // Обновляем текст если передан
+        if (message) {
+          var textEl = document.getElementById('loading-text');
+          if (textEl) textEl.textContent = message;
+        }
+        
+        // Сбрасываем прогресс-бар
+        var bar = document.getElementById('loading-progress-bar');
+        if (bar) bar.style.width = '0%';
+      };
+      
+      // Функция скрытия загрузочного экрана
+      window.hideLoadingScreen = function() {
+        console.log('[Loading] Hiding loading screen...');
+        var loadingElement = document.getElementById('loading-screen');
+        if (loadingElement) {
+          loadingElement.style.transition = 'opacity 0.3s ease-out';
+          loadingElement.style.opacity = '0';
+          setTimeout(function() {
+            loadingElement.style.display = 'none';
+            console.log('[Loading] Loading screen hidden');
+          }, 300);
+        }
+      };
+      
+      // Очистка при закрытии страницы
+      window.addEventListener('pagehide', function() {
+        loadingController.abort();
+        clearTimeout(errorTimeoutId);
+      });
+    })();
+  </script>
 </body>
 </html>

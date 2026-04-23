@@ -1,2 +1,9 @@
-node_modules/ 
-dist/ 
+node_modules/
+dist/
+.cursor/
+*.log
+
+# Временные файлы в public
+public/ui/Новый текстовый документ*.txt
+public/backgrounds/Новая папка/
+public/ui/Новая папка/

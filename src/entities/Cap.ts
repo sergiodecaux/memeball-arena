@@ -9,8 +9,8 @@ import { drawClassIcon, getClassColor } from '../ui/ClassIcons';
 import { createCapIcon } from '../ui/CapIcon';
 
 export interface CapOptions {
-  applyUpgrades?: boolean;
-  customUpgrades?: CapUpgrades;
+  // ⚠️ REMOVED: applyUpgrades - старая система прокачки убрана
+  // Теперь статы фиксированные для каждого юнита
 }
 
 export class Cap {
@@ -27,7 +27,7 @@ export class Cap {
   private scale: number;
   private skinData: CapSkinData;
   private skinId: string;
-  private upgrades: CapUpgrades;
+  // ⚠️ REMOVED: private upgrades: CapUpgrades; - прокачка убрана
 
   private lastHitOffset = 0;
   private lastShotTime = 0;
@@ -92,18 +92,8 @@ export class Cap {
     this.stats = { ...CAP_CLASSES[this.capClass] };
     this.baseRadius = this.stats.radius;
 
-    const shouldApplyUpgrades = options?.applyUpgrades ?? true;
-
-    if (options?.customUpgrades) {
-      this.upgrades = { ...options.customUpgrades };
-      this.applyUpgrades();
-    } else if (shouldApplyUpgrades && owner === 1) {
-      this.upgrades = playerData.getCapStats(skinId);
-      this.applyUpgrades();
-    } else {
-      this.upgrades = { power: 1, mass: 1, aim: 1, technique: 1 };
-    }
-
+    // ⚠️ NEW: Теперь только бонус редкости, без upgrades
+    // Каждый юнит имеет фиксированные статы
     this.applyRarityBonus();
     this.scaledRadius = this.stats.radius * scale;
     this.auraBaseScale = (this.scaledRadius * 2 * AURA.RADIUS_MULTIPLIER) / 128;
@@ -229,45 +219,9 @@ export class Cap {
     Cap.team2Counter = 0;
   }
 
-  private applyUpgrades(): void {
-    const { power, mass, aim, technique } = this.upgrades;
-
-    const powerBonus = 1 + (power - 1) * 0.05;
-    this.stats.forceMultiplier *= powerBonus;
-    this.stats.maxForce *= powerBonus;
-
-    const massBonus = 1 + (mass - 1) * 0.05;
-    const restitutionPenalty = 1 - (mass - 1) * 0.02;
-    this.stats.mass *= massBonus;
-    this.stats.restitution = Math.max(0.2, this.stats.restitution * restitutionPenalty);
-
-    const aimBonus = 1 + (aim - 1) * 0.1;
-    this.stats.aimLineLength *= aimBonus;
-
-    this.applyTechniqueBonus(technique);
-  }
-
-  private applyTechniqueBonus(level: number): void {
-    const bonus = level - 1;
-
-    switch (this.capClass) {
-      case 'tank':
-        this.stats.radius *= 1 + bonus * 0.02;
-        break;
-      case 'sniper':
-        this.stats.frictionAir = Math.max(0.003, this.stats.frictionAir * (1 - bonus * 0.03));
-        break;
-      case 'trickster':
-        this.stats.curveStrength *= 1 + bonus * 0.1;
-        break;
-      case 'balanced':
-        const allBonus = 1 + bonus * 0.015;
-        this.stats.forceMultiplier *= allBonus;
-        this.stats.maxForce *= allBonus;
-        this.stats.mass *= allBonus;
-        break;
-    }
-  }
+  // ⚠️ REMOVED: applyUpgrades() - старая система прокачки убрана
+  // ⚠️ REMOVED: applyTechniqueBonus() - старая система прокачки убрана
+  // Теперь статы фиксированные для каждого юнита из UnitsRepository
 
   private applyRarityBonus(): void {
     const rarityBonus = RARITY_STAT_BONUS[this.skinData.rarity] || 0;
@@ -646,9 +600,7 @@ export class Cap {
     return this.skinId;
   }
 
-  getUpgrades(): CapUpgrades {
-    return { ...this.upgrades };
-  }
+  // ⚠️ REMOVED: getUpgrades() - прокачка убрана
 
   highlight(enabled: boolean): void {
     this.highlightRing.setVisible(enabled);

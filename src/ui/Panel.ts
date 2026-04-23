@@ -48,22 +48,33 @@ export class Panel {
     // Внешнее свечение
     for (let i = 4; i >= 1; i--) {
       this.glow.lineStyle(12 / i, glow, (glowIntensity || 0.3) * (i / 4));
-      this.glow.strokeRoundedRect(-width / 2 - 2, -height / 2 - 2, width + 4, height + 4, borderRadius! + 2);
+      this.glow.strokeRoundedRect(
+        -width / 2 - 2,
+        -height / 2 - 2,
+        width + 4,
+        height + 4,
+        borderRadius! + 2
+      );
     }
 
-    // Основной фон с градиентом эффектом
+    // Основной фон
     this.background.fillStyle(0x000000, fillAlpha);
     this.background.fillRoundedRect(-width / 2, -height / 2, width, height, borderRadius);
 
-    // Верхняя светлая полоса (стеклянный эффект)
+    // Верхняя светлая полоса
     this.background.fillStyle(0xffffff, 0.05);
-    this.background.fillRoundedRect(-width / 2 + 2, -height / 2 + 2, width - 4, height / 3, { tl: borderRadius! - 2, tr: borderRadius! - 2, bl: 0, br: 0 });
+    this.background.fillRoundedRect(
+      -width / 2 + 2,
+      -height / 2 + 2,
+      width - 4,
+      height / 3,
+      { tl: borderRadius! - 2, tr: borderRadius! - 2, bl: 0, br: 0 } as any
+    );
 
     // Рамка
     this.background.lineStyle(1.5, glow, 0.6);
     this.background.strokeRoundedRect(-width / 2, -height / 2, width, height, borderRadius);
 
-    // Угловые акценты
     this.drawCornerAccents(width, height, glow);
   }
 
@@ -75,7 +86,6 @@ export class Panel {
 
     this.background.lineStyle(2, color, 0.8);
 
-    // Углы
     [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([dx, dy]) => {
       const cx = dx * (hw - offset);
       const cy = dy * (hh - offset);
@@ -103,4 +113,4 @@ export class Panel {
   destroy(): void {
     this.container.destroy();
   }
-} 
+}
