@@ -1,6 +1,3 @@
-// src/scenes/BootScene.ts
-// ✅ ИЗМЕНЕНО: Заменён несуществующий метод fillStar на fillCircle
-
 import Phaser from 'phaser';
 import { ParticleTextures } from '../assets/textures/ParticleTextures';
 import { CapTextures } from '../assets/textures/CapTextures';
@@ -8,691 +5,391 @@ import { BallTextures } from '../assets/textures/BallTextures';
 import { FieldTextures } from '../assets/textures/FieldTextures';
 import { AvatarTextures } from '../assets/textures/AvatarTextures';
 import { playerData } from '../data/PlayerData';
-import { SessionPersistence } from '../utils/SessionPersistence';
-
-// Loaders
 import { loadAudio } from '../assets/loading/AudioLoader';
-import { loadImages, loadImagesBoot } from '../assets/loading/ImageLoader';
-import { UNITS_CATALOG } from '../data/UnitsCatalog';
-import { CARDS_CATALOG, getAllCards } from '../data/CardsCatalog';
-
-// Generators
-import { CampaignGenerator } from '../assets/generation/CampaignGenerator';
-import { FactionGenerator } from '../assets/generation/FactionGenerator';
-import { UIGenerator } from '../assets/generation/UIGenerator';
-
-// Configurators
-import { applyHybridTextureFiltering, generateMipmapsForHDTextures } from '../utils/TextureConfigurator';
-
-// Глобальный флаг для защиты от повторной загрузки
-declare global {
-  interface Window {
-    __BOOT_ASSETS_LOADED__?: boolean;
-  }
-}
+import { loadImages } from '../assets/loading/ImageLoader';
 
 export class BootScene extends Phaser.Scene {
+  private static readonly LOADING_TIMEOUT_MS = 30_000;
+  private static readonly CRITICAL_FAILURE_THRESHOLD = 0.5;
+  private static readonly REQUIRED_TEXTURE_KEYS = ['logo', 'ui_home_bg', 'ball_plasma', 'ui_scoreboard'];
+
   private navigationStarted = false;
-  private failedAssets: string[] = [];
+  private criticalErrorShown = false;
+  private criticalErrorCount = 0;
+  private loadErrorCount = 0;
+  private queuedAssetCount = 0;
+  private loadTimeoutEvent?: Phaser.Time.TimerEvent;
+  private loadingBar?: Phaser.GameObjects.Graphics;
+  private loadingText?: Phaser.GameObjects.Text;
+  private progressText?: Phaser.GameObjects.Text;
+  private readonly canSendAgentLogs = Boolean(window.DEV_MODE);
 
   constructor() {
     super({ key: 'BootScene' });
   }
 
-  // ✅ Сброс флагов при каждом запуске сцены
   init(): void {
     this.navigationStarted = false;
-    this.failedAssets = [];
-    // ✅ НЕ сбрасываем window.__BOOT_ASSETS_LOADED__ — он должен сохраняться между restart
+    this.criticalErrorShown = false;
+    this.criticalErrorCount = 0;
+    this.loadErrorCount = 0;
+    this.queuedAssetCount = 0;
+    this.loadTimeoutEvent = undefined;
   }
 
   preload(): void {
     console.log('[BootScene] preload started');
-    
-    // ✅ ЕДИНСТВЕННЫЙ обработчик ошибок загрузки
-    this.load.on('loaderror', (file: Phaser.Loader.File) => {
-      console.warn('[BootScene] Failed to load:', file.key, file.url);
-      this.failedAssets.push(file.key);
-    });
-    
-    // Прогресс загрузки
+    // #region agent log
+    this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H1', location: 'BootScene.ts:preload:start', message: 'Boot preload started', data: { baseUrl: import.meta.env.BASE_URL, href: window.location.href }, timestamp: Date.now() });
+    // #endregion
+
+    this.createLoadingScreen();
+
     this.load.on('progress', (value: number) => {
-      const percent = Math.round(value * 100);
-      if (typeof (window as any).updateLoadingProgress === 'function') {
-        (window as any).updateLoadingProgress(percent, `Загрузка... ${percent}%`);
-      }
+      this.updateProgress(value);
     });
-    
+
+    this.load.on('loaderror', (file: Phaser.Loader.File) => {
+      this.loadErrorCount += 1;
+      console.warn('[BootScene] Failed to load:', file.key);
+      // #region agent log
+      this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H1', location: 'BootScene.ts:preload:loaderror', message: 'Loader file failed', data: { key: file.key, type: file.type, url: (file as any).url }, timestamp: Date.now() });
+      // #endregion
+    });
+
     this.load.on('complete', () => {
       console.log('[BootScene] Assets loaded');
-      if (typeof (window as any).updateLoadingProgress === 'function') {
-        (window as any).updateLoadingProgress(100, 'Запуск игры...');
+      this.clearLoadingTimeout();
+      this.queuedAssetCount = this.getQueuedAssetCount();
+      if (this.hasCriticalLoadingFailure()) {
+        this.showCriticalErrorModal('Слишком много файлов не загрузилось. Попробуйте перезапустить игру.');
       }
+      // #region agent log
+      this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H2', location: 'BootScene.ts:preload:complete', message: 'Loader complete event', data: { totalComplete: (this.load as any).totalComplete, totalFailed: (this.load as any).totalFailed, totalToLoad: (this.load as any).totalToLoad }, timestamp: Date.now() });
+      // #endregion
     });
-    
-    // ========================================
-    // ЗАГРУЗКА АССЕТОВ - ТОЛЬКО ЧЕРЕЗ loadImages()
-    // НЕ вызываем отдельные методы - они уже внутри loadImages()
-    // ========================================
-    
+
     try {
       loadImages(this);
-      console.log('[BootScene] loadImages() called');
     } catch (e) {
-      console.error('[BootScene] loadImages() error:', e);
+      this.criticalErrorCount += 1;
+      console.error('[BootScene] Loading error:', e);
     }
-    
-    // Аудио - опционально
+
     try {
       loadAudio(this);
-      console.log('[BootScene] loadAudio() called');
     } catch (e) {
-      console.error('[BootScene] loadAudio() error:', e);
+      this.criticalErrorCount += 1;
+      console.error('[BootScene] Loading error:', e);
     }
-    
-    // ========================================
-    // ДОПОЛНИТЕЛЬНО: Иконки карточек способностей
-    // ========================================
-    try {
-      this.loadCardAssets();
-      console.log('[BootScene] loadCardAssets() called');
-    } catch (e) {
-      console.error('[BootScene] loadCardAssets() error:', e);
-    }
-    
-    console.log('[BootScene] preload complete');
-  }
 
-  /**
-   * Загружает только критические ассеты для быстрого старта
-   */
-  private loadCriticalAssets(): void {
-    if (import.meta.env.DEV) {
-      console.log('[BootScene] Loading CRITICAL assets only...');
-    }
-    
-    // 1. UI элементы для меню
-    this.loadCriticalUI();
-    
-    // 2. Базовые текстуры (мяч, поле)
-    this.loadCriticalGameAssets();
-    
-    // 3. Юниты текущей фракции игрока (только 5-10 штук)
-    this.loadPlayerFactionUnits();
-    
-    // 4. Аудио - только критические звуки
-    this.loadCriticalAudio();
-  }
-
-  private loadCriticalUI(): void {
-    // Загружаем только основные UI элементы через loadImagesBoot
-    loadImagesBoot(this);
-    
-    // Role icons (128x128)
-    this.load.image('role_balanced', 'assets/ui/icons/roles/role_balanced.png');
-    this.load.image('role_tank', 'assets/ui/icons/roles/role_tank.png');
-    this.load.image('role_sniper', 'assets/ui/icons/roles/role_sniper.png');
-    this.load.image('role_trickster', 'assets/ui/icons/roles/role_trickster.png');
-  }
-
-  private loadCriticalGameAssets(): void {
-    // Мяч и базовые игровые элементы
-    // Эти генерируются процедурно, поэтому не нужно загружать
-  }
-
-  private loadPlayerFactionUnits(): void {
-    // ОПТИМИЗАЦИЯ: Загружаем только 3-4 базовых юнита для меню (если они там отображаются)
-    // Или вообще убираем, если в меню используются только портреты (portraits)
-    try {
-      const playerFaction = playerData.getFaction() || 'cyborg';
-      
-      // Импортируем репозиторий динамически
-      import('../data/UnitsRepository').then(({ UNITS_REPOSITORY }) => {
-        // Берем только первые 3-4 юнита текущей фракции
-        const factionUnits = UNITS_REPOSITORY.filter(
-          (u: any) => u.factionId === playerFaction
-        ).slice(0, 4); // Только 4 базовых юнита
-        
-        if (import.meta.env.DEV) {
-          console.log(`[BootScene] Loading ${factionUnits.length} basic units for faction: ${playerFaction}`);
-        }
-        
-        factionUnits.forEach((unit: any) => {
-          const hdKey = `${unit.assetKey}_512`;
-          let assetPath = unit.assetPath;
-          if (assetPath.startsWith('/')) {
-            assetPath = assetPath.substring(1);
-          }
-          
-          if (!this.textures.exists(hdKey)) {
-            this.load.image(hdKey, assetPath);
-          }
-        });
-      }).catch((e) => {
-        if (import.meta.env.DEV) {
-          console.warn('[BootScene] Could not load faction units:', e);
-        }
-      });
-    } catch (e) {
-      if (import.meta.env.DEV) {
-        console.warn('[BootScene] Could not load faction units:', e);
-      }
-    }
-  }
-
-  private loadCriticalAudio(): void {
-    // Загружаем только UI звуки, музыку загрузим позже
-    const criticalSounds = [
-      { key: 'sfx_click', path: 'assets/audio/ui/click.mp3' },
-      { key: 'sfx_goal', path: 'assets/audio/sfx/goal.mp3' },
-    ];
-    
-    criticalSounds.forEach(sound => {
-      if (!this.cache.audio.exists(sound.key)) {
-        this.load.audio(sound.key, sound.path);
-      }
-    });
-  }
-
-
-  /**
-   * Загрузка ассетов карт способностей
-   * ✅ УПРОЩЕНО: Используем тот же подход что и для юнитов
-   */
-  private loadCardAssets(): void {
-    const cards = Object.values(CARDS_CATALOG);
-    let loadedCount = 0;
-    
-    if (import.meta.env.DEV) {
-      console.log(`[BootScene] 🃏 Loading ${cards.length} card assets...`);
-    }
-    
-    cards.forEach(card => {
-      const textureKey = `card_${card.id}`;
-      
-      // Убираем начальный слеш для Vite
-      let assetPath = card.assetPath;
-      if (assetPath.startsWith('/')) {
-        assetPath = assetPath.substring(1);
-      }
-      
-      // ✅ ПРОСТО: Загружаем только если ещё не загружено (как юниты)
-      if (!this.textures.exists(textureKey)) {
-        this.load.image(textureKey, assetPath);
-        loadedCount++;
-      }
-    });
-    
-    if (import.meta.env.DEV) {
-      console.log(`[BootScene] 🃏 Queued ${loadedCount} card textures`);
-    }
-    
-    // Загружаем бустеры
-    this.loadCardCommonAssets();
-  }
-
-  /**
-   * Загрузка ассетов турнира (билеты и ключи)
-   */
-  private loadTournamentAssets(): void {
-    // ✅ ИСПРАВЛЕННЫЕ ПУТИ (папка keys)
-    const tournamentAssets = [
-      { key: 'tournament_key_fragment_128', path: 'assets/ui/tournament/keys/tournament_key_fragment_128.png' },
-      { key: 'tournament_key_full_256', path: 'assets/ui/tournament/keys/tournament_key_full_256.png' },
-      { key: 'tournament_ticket_256x128', path: 'assets/ui/tournament/keys/tournament_ticket_256x128.png' },
-    ];
-
-    tournamentAssets.forEach(({ key, path }) => {
-      if (!this.textures.exists(key)) {
-        this.load.image(key, path);
-        this.load.once(`loaderror`, (file: any) => {
-          if (file.key === key) {
-            if (import.meta.env.DEV) {
-              console.warn(`[BootScene] Tournament asset not found: ${key}, will use placeholder`);
-            }
-            // Создадим placeholder в create() если ассет не загрузился
-          }
-        });
-      }
-    });
-  }
-
-  /**
-   * Загрузка preview изображений для уровней кампании
-   */
-  private loadCampaignPreviewImages(): void {
-    const campaignPreviewImages: { key: string; path: string }[] = [
-      { key: 'campaign_ch1_l1_preview', path: 'assets/ui/campaign/ch1/ch1_l1_preview.png' },
-      { key: 'campaign_ch1_l2_preview', path: 'assets/ui/campaign/ch1/ch1_l2_preview.png' },
-      { key: 'campaign_ch1_l3_preview', path: 'assets/ui/campaign/ch1/ch1_l3_preview.png' },
-      { key: 'campaign_ch1_l4_preview', path: 'assets/ui/campaign/ch1/ch1_l4_preview.png' },
-
-      { key: 'campaign_ch2_l1_preview', path: 'assets/ui/campaign/ch2/ch2_l1_preview.png' },
-      { key: 'campaign_ch2_l2_preview', path: 'assets/ui/campaign/ch2/ch2_l2_preview.png' },
-      { key: 'campaign_ch2_l3_preview', path: 'assets/ui/campaign/ch2/ch2_l3_preview.png' },
-      { key: 'campaign_ch2_l4_preview', path: 'assets/ui/campaign/ch2/ch2_l4_preview.png' },
-
-      { key: 'campaign_ch3_l1_preview', path: 'assets/ui/campaign/ch3/ch3_l1_preview.png' },
-      { key: 'campaign_ch3_l2_preview', path: 'assets/ui/campaign/ch3/ch3_l2_preview.png' },
-      { key: 'campaign_ch3_l3_preview', path: 'assets/ui/campaign/ch3/ch3_l3_preview.png' },
-      { key: 'campaign_ch3_l4_preview', path: 'assets/ui/campaign/ch3/ch3_l4_preview.png' },
-
-      { key: 'campaign_ch4_l1_preview', path: 'assets/ui/campaign/ch4/ch4_l1_preview.png' },
-      { key: 'campaign_ch4_l2_preview', path: 'assets/ui/campaign/ch4/ch4_l2_preview.png' },
-      { key: 'campaign_ch4_l3_preview', path: 'assets/ui/campaign/ch4/ch4_l3_preview.png' },
-      { key: 'campaign_ch4_l4_preview', path: 'assets/ui/campaign/ch4/ch4_l4_preview.png' },
-    ];
-
-    campaignPreviewImages.forEach(({ key, path }) => {
-      this.load.image(key, path);
-    });
-  }
-
-  /**
-   * Загрузка общих ассетов для карточной системы (рамки + бустеры)
-   * ✅ УПРОЩЕНО: Без лишних проверок
-   */
-  private loadCardCommonAssets(): void {
-    if (import.meta.env.DEV) {
-      console.log('[BootScene] Loading card common assets...');
-    }
-    
-    // Рамки карт
-    if (!this.textures.exists('card_bg_common')) {
-      this.load.image('card_bg_common', 'assets/cards/frames/frame_common.png');
-    }
-    if (!this.textures.exists('card_bg_rare')) {
-      this.load.image('card_bg_rare', 'assets/cards/frames/frame_rare.png');
-    }
-    if (!this.textures.exists('card_bg_epic')) {
-      this.load.image('card_bg_epic', 'assets/cards/frames/frame_epic.png');
-    }
-    
-    // Бустеры
-    if (!this.textures.exists('booster_tactical')) {
-      this.load.image('booster_tactical', 'assets/ui/boosters/booster_tactical.png');
-    }
-    if (!this.textures.exists('booster_magma')) {
-      this.load.image('booster_magma', 'assets/ui/boosters/booster_magma.png');
-    }
-    if (!this.textures.exists('booster_cyborg')) {
-      this.load.image('booster_cyborg', 'assets/ui/boosters/booster_cyborg.png');
-    }
-    if (!this.textures.exists('booster_void')) {
-      this.load.image('booster_void', 'assets/ui/boosters/booster_void.png');
-    }
-    if (!this.textures.exists('booster_insect')) {
-      this.load.image('booster_insect', 'assets/ui/boosters/booster_insect.png');
-    }
-    if (!this.textures.exists('booster_faction')) {
-      this.load.image('booster_faction', 'assets/ui/boosters/booster_tactical.png');
-    }
-    
-    if (import.meta.env.DEV) {
-      console.log('[BootScene] Card common assets queued');
-    }
+    this.queuedAssetCount = this.getQueuedAssetCount();
+    this.installLoadingTimeout();
+    this.loadVersionMeta();
   }
 
   create(): void {
     console.log('[BootScene] create started');
-    
-    // Генерируем базовые текстуры (как в рабочей версии)
-    try {
-      new ParticleTextures(this).generate();
-      new CapTextures(this).generate();
-      new BallTextures(this).generate();
-      new FieldTextures(this).generate();
-      new AvatarTextures(this).generate();
-    } catch (e) {
-      console.warn('[BootScene] Texture generation failed:', e);
+
+    this.generateTexturesSafely();
+    this.ensureCriticalTextureFallbacks();
+    // #region agent log
+    this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H3', location: 'BootScene.ts:create:afterTextureGen', message: 'Boot create reached', data: { hasBallPlasma: this.textures.exists('ball_plasma'), hasMainMenuScene: this.scene.get('MainMenuScene') !== undefined }, timestamp: Date.now() });
+    // #endregion
+
+    this.hideLoadingScreen();
+
+    if (this.hasCriticalLoadingFailure()) {
+      this.showCriticalErrorModal('Критическая ошибка загрузки. Проверьте интернет и попробуйте снова.');
+      return;
     }
-    
-    console.log('[BootScene] Starting MainMenuScene...');
-    
-    // Простой переход к MainMenuScene
-    this.scene.start('MainMenuScene');
-    
-    // Скрываем loading screen через 100ms
+
     this.time.delayedCall(100, () => {
-      if (typeof (window as any).hideLoadingScreen === 'function') {
-        (window as any).hideLoadingScreen();
-      }
+      this.navigateToNextScene();
     });
   }
 
-  /**
-   * ✅ FIX: Создает базовые ключи юнитов как aliases к _512 версиям
-   * Например: 'magma_ember_fang' -> alias к 'magma_ember_fang_512'
-   */
-  private createUnitAliases(): void {
-    // Динамический импорт для избежания циклических зависимостей
-    import('../data/UnitsRepository').then(({ UNITS_REPOSITORY }) => {
-      let aliasCount = 0;
-      let magmaAliases = 0;
-      UNITS_REPOSITORY.forEach(unit => {
-        // ⚠️ FIX: Используем unit.assetKey для создания alias, а не unit.id!
-        const hdKey = `${unit.assetKey}_512`;
-        const baseKey = unit.assetKey;
-        
-        // Если _512 текстура существует, но базовая нет - создаем alias
-        if (this.textures.exists(hdKey) && !this.textures.exists(baseKey)) {
-          const hdTexture = this.textures.get(hdKey);
-          this.textures.addImage(baseKey, hdTexture.getSourceImage() as HTMLImageElement);
-          aliasCount++;
-          
-          if (unit.factionId === 'magma' && unit.isShopItem) {
-            magmaAliases++;
-            if (import.meta.env.DEV) {
-              console.log(`[BootScene] 🔥 Created alias for MAGMA shop unit: "${baseKey}" -> "${hdKey}"`);
-            }
-          }
-        } else if (unit.factionId === 'magma' && unit.isShopItem) {
-          if (import.meta.env.DEV) {
-            console.warn(`[BootScene] ⚠️ MAGMA shop unit alias not created: hdKey="${hdKey}" exists=${this.textures.exists(hdKey)}, baseKey="${baseKey}" exists=${this.textures.exists(baseKey)}`);
-          }
-        }
-        
-        // ✅ FIX: Создаем алиас и для unit.id, если он отличается от assetKey
-        // Это нужно для совместимости с кодом, который использует unit.id
-        if (unit.id !== unit.assetKey) {
-          const idHdKey = `${unit.assetKey}_512`; // HD ключ всегда на основе assetKey
-          if (this.textures.exists(idHdKey) && !this.textures.exists(unit.id)) {
-            const idHdTexture = this.textures.get(idHdKey);
-            this.textures.addImage(unit.id, idHdTexture.getSourceImage() as HTMLImageElement);
-            aliasCount++;
-            
-            if (import.meta.env.DEV) {
-              console.log(`[BootScene] ✅ Created alias for unit.id: "${unit.id}" -> "${idHdKey}"`);
-            }
-          }
-        }
-      });
-      
-      if (import.meta.env.DEV) {
-        console.log(`[BootScene] ✅ Created ${aliasCount} unit texture aliases (${magmaAliases} magma shop units)`);
-      }
-    }).catch(err => {
-      if (import.meta.env.DEV) {
-        console.warn('[BootScene] Failed to create unit aliases:', err);
-      }
-    });
+  private createLoadingScreen(): void {
+    const { centerX, centerY, width, height } = this.cameras.main;
+
+    this.add.rectangle(centerX, centerY, width, height, 0x050505);
+
+    this.add
+      .text(centerX, centerY - 100, 'GALAXY LEAGUE', {
+        fontFamily: 'Arial',
+        fontSize: '28px',
+        color: '#ffffff',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5);
+
+    this.loadingText = this.add
+      .text(centerX, centerY - 30, 'Загрузка...', {
+        fontFamily: 'Arial',
+        fontSize: '18px',
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+
+    const barWidth = Math.min(300, width * 0.7);
+    const barHeight = 20;
+    const barBg = this.add.rectangle(centerX, centerY + 20, barWidth, barHeight, 0x222222);
+    barBg.setStrokeStyle(2, 0x444444);
+
+    this.loadingBar = this.add.graphics();
+
+    this.progressText = this.add
+      .text(centerX, centerY + 60, '0%', {
+        fontFamily: 'Arial',
+        fontSize: '16px',
+        color: '#aaaaaa',
+      })
+      .setOrigin(0.5);
   }
 
-  /**
-   * Генерация placeholder'ов для ассетов турнира
-   */
-  private generateTournamentPlaceholders(): void {
-    const tournamentAssets = [
-      { key: 'tournament_key_fragment', color: 0xffaa00, icon: '🔑' },
-      { key: 'tournament_ticket', color: 0x00ff88, icon: '🎫' },
-      { key: 'tournament_key_full', color: 0xffd700, icon: '🔐' },
-    ];
+  private updateProgress(value: number): void {
+    const { centerX, centerY, width } = this.cameras.main;
+    const barWidth = Math.min(300, width * 0.7);
+    const percent = Math.round(value * 100);
 
-    tournamentAssets.forEach(({ key, color, icon }) => {
-      if (!this.textures.exists(key)) {
-        // Создаём простой placeholder
-        const graphics = this.add.graphics();
-        graphics.fillStyle(color, 0.8);
-        graphics.fillCircle(0, 0, 64);
-        graphics.lineStyle(3, 0xffffff, 1);
-        graphics.strokeCircle(0, 0, 64);
-        
-        // Генерируем текстуру
-        graphics.generateTexture(key, 128, 128);
-        graphics.destroy();
-        
-        if (import.meta.env.DEV) {
-          console.log(`[BootScene] Generated placeholder for ${key}`);
-        }
-      }
-    });
-  }
+    if (this.loadingBar) {
+      this.loadingBar.clear();
+      this.loadingBar.fillStyle(0x00f2ff, 1);
+      this.loadingBar.fillRect(centerX - barWidth / 2, centerY + 10, barWidth * value, 20);
+    }
 
-  /**
-   * Quiet asset verification - only logs counts, not per-asset
-   */
-  private verifyAssetsQuiet(): void {
-    // Just check counts, don't log each one
-    const unitKeys = UNITS_CATALOG.map(u => u.assetKey);
-    const loadedUnits = unitKeys.filter(k => this.textures.exists(k)).length;
-    if (import.meta.env.DEV) {
-      console.log(`[Boot] Units: ${loadedUnits}/${unitKeys.length}`);
+    if (this.progressText) {
+      this.progressText.setText(`${percent}%`);
     }
-    
-    const ballKeys = ['ball_plasma', 'ball_core', 'ball_quantum'];
-    const loadedBalls = ballKeys.filter(k => this.textures.exists(k)).length;
-    if (import.meta.env.DEV) {
-      console.log(`[Boot] Balls: ${loadedBalls}/${ballKeys.length}`);
-    }
-    
-    const cardKeys = getAllCards().map(c => `card_${c.id}`);
-    const loadedCards = cardKeys.filter(k => this.textures.exists(k)).length;
-    if (import.meta.env.DEV) {
-      console.log(`[Boot] Cards: ${loadedCards}/${cardKeys.length}`);
+
+    if (typeof (window as any).updateLoadingProgress === 'function') {
+      (window as any).updateLoadingProgress(percent, `Загрузка... ${percent}%`);
     }
   }
 
-  /**
-   * Generate all fallbacks (full coverage for missing textures)
-   * Each generator method checks if texture exists before creating
-   */
-  private generateAllFallbacks(): void {
-    // UI Generator
-    const uiGenerator = new UIGenerator(this);
-    uiGenerator.generateMetalRingTexture();
-    uiGenerator.generateAuraTexture();
-    uiGenerator.generateSelectedRingTexture();
-    uiGenerator.generateScoreboardFallback();
-    uiGenerator.generatePortraitFallbacks();
-    
-    // Tournament assets placeholders
-    this.generateTournamentPlaceholders();
-    uiGenerator.generateEmotionPortraitFallbacks();
-    uiGenerator.generateFactionParticleTextures();
+  private hideLoadingScreen(): void {
+    if (this.loadingBar) {
+      this.loadingBar.destroy();
+    }
+    if (this.loadingText) {
+      this.loadingText.destroy();
+    }
+    if (this.progressText) {
+      this.progressText.destroy();
+    }
 
-    // Faction Generator
-    const factionGenerator = new FactionGenerator(this);
-    factionGenerator.generateFactionFallbacks();
-    factionGenerator.generateUnitFallbacks();
-    factionGenerator.generateArenaFallbacks();
-    factionGenerator.generateFactionArtFallbacks();
-    factionGenerator.generateFactionUIBackgroundFallbacks();
-
-    // Campaign Generator
-    const campaignGenerator = new CampaignGenerator(this);
-    campaignGenerator.generateCampaignMapFallbacks();
-    campaignGenerator.generateStarFallbacks();
-    campaignGenerator.generateCampaignChapterBackgroundFallbacks();
-    campaignGenerator.generateBossFallbacks();
-  }
-
-  /**
-   * Boot sanity check - verify key assets exist (DEV only)
-   */
-  private bootSanityCheck(): void {
-    if (import.meta.env.DEV) {
-      console.log('[BootCheck] card_magma_lava:', this.textures.exists('card_magma_lava'));
-      console.log('[BootCheck] booster_tactical:', this.textures.exists('booster_tactical'));
-      if (UNITS_CATALOG.length > 0) {
-        console.log('[BootCheck] sample unit:', this.textures.exists(UNITS_CATALOG[0].assetKey));
-      }
-      console.log('[BootCheck] ui_home_bg:', this.textures.exists('ui_home_bg'));
+    if (typeof (window as any).hideLoadingScreen === 'function') {
+      (window as any).hideLoadingScreen();
     }
   }
 
-  /**
-   * ✅ НОВОЕ: Применяет мипмапы к _512 версиям всех юнитов
-   * Улучшает качество текстур при масштабировании и динамике
-   */
-  private applyUnitMipmaps(): void {
-    if (import.meta.env.DEV) {
-      console.log('[BootScene] Applying mipmaps to HD unit textures...');
+  private navigateToNextScene(): void {
+    if (this.hasCriticalLoadingFailure()) {
+      this.showCriticalErrorModal('Критическая ошибка загрузки. Невозможно продолжить.');
+      return;
     }
 
-    // Импортируем UNITS_REPOSITORY для получения списка всех юнитов
-    import('../data/UnitsRepository').then(({ UNITS_REPOSITORY }) => {
-      // Динамический импорт TextureConfigurator
-      import('../utils/TextureConfigurator').then(({ generateMipmapsForKeys }) => {
-        // ✅ FIX: Используем unit.assetKey вместо unit.id, так как текстуры загружаются по assetKey
-        const unitKeys = UNITS_REPOSITORY.map(u => `${u.assetKey}_512`);
-        generateMipmapsForKeys(this, unitKeys);
-        
-        if (import.meta.env.DEV) {
-          console.log(`[BootScene] ✅ Mipmaps applied to ${unitKeys.length} unit textures`);
-        }
-      });
-    }).catch(err => {
-      if (import.meta.env.DEV) {
-        if (import.meta.env.DEV) {
-          console.warn('[BootScene] Failed to apply unit mipmaps:', err);
-        }
-      }
-    });
-  }
+    const missingTextures = BootScene.REQUIRED_TEXTURE_KEYS.filter((key) => !this.textures.exists(key));
+    if (missingTextures.length > 0) {
+      this.criticalErrorCount += 1;
+      console.error('[BootScene] Missing required textures:', missingTextures);
+      this.showCriticalErrorModal(`Отсутствуют критические текстуры: ${missingTextures.join(', ')}`);
+      return;
+    }
 
-  private async navigateToNextScene(): Promise<void> {
-    console.log('[BootScene] navigateToNextScene() called');
-    
-    // Защита от повторного вызова
     if (this.navigationStarted) {
-      console.warn('[BootScene] Navigation already started, skipping');
       return;
     }
     this.navigationStarted = true;
-    console.log('[BootScene] Navigation started, determining target scene...');
 
     try {
-      if (import.meta.env.DEV) {
-        console.log('[BootScene] ========== NAVIGATING TO NEXT SCENE ==========');
-      }
-      
-      // ✅ Проверяем, есть ли сохранённое состояние сессии
-      const savedSession = SessionPersistence.getRestoredState();
-      if (savedSession) {
-        if (import.meta.env.DEV) {
-          console.log('[BootScene] Found saved session:', savedSession.currentScene);
-        }
-        
-        // Если был прерван матч, показываем сообщение и идём в меню
-        if (savedSession.matchState) {
-          if (import.meta.env.DEV) {
-            console.log('[BootScene] Match was interrupted, going to menu');
-          }
-          SessionPersistence.clear();
-          this.scene.start('MainMenuScene', {
-            showMessage: 'Предыдущий матч был прерван',
-          });
-          // ✅ Скрываем loading screen после запуска сцены
-          this.hideLoadingScreenDelayed();
-          return;
-        }
-      }
-
       const data = playerData.get();
-
-      if (import.meta.env.DEV) {
-        console.log('[BootScene] Navigation:', {
-          faction: data.selectedFaction,
-          profile: data.isProfileSetupComplete,
-        });
-      }
+      // #region agent log
+      this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H4', location: 'BootScene.ts:navigateToNextScene', message: 'Navigation decision snapshot', data: { selectedFaction: data.selectedFaction ?? null, isProfileSetupComplete: Boolean(data.isProfileSetupComplete) }, timestamp: Date.now() });
+      // #endregion
 
       if (!data.selectedFaction) {
-        if (import.meta.env.DEV) {
-          console.log('[BootScene] → FactionSelectScene (dynamic)');
-        }
-        // ⚡ Динамическая загрузка FactionSelectScene
-        const { SceneLoader } = await import('../managers/SceneLoader');
-        await SceneLoader.loadAndStart(this, 'FactionSelectScene');
-        // ✅ Скрываем loading screen после успешной загрузки
-        this.hideLoadingScreenDelayed();
+        console.log('[BootScene] → FactionSelectScene');
+        void this.loadSceneDynamic('FactionSelectScene');
         return;
       }
 
       if (!data.isProfileSetupComplete) {
-        if (import.meta.env.DEV) {
-          console.log('[BootScene] → ProfileSetupScene (dynamic)');
-        }
-        // ⚡ Динамическая загрузка ProfileSetupScene
-        const { SceneLoader } = await import('../managers/SceneLoader');
-        await SceneLoader.loadAndStart(this, 'ProfileSetupScene');
-        // ✅ Скрываем loading screen после успешной загрузки
-        this.hideLoadingScreenDelayed();
+        console.log('[BootScene] → ProfileSetupScene');
+        void this.loadSceneDynamic('ProfileSetupScene');
         return;
       }
 
-      if (import.meta.env.DEV) {
-        console.log('[BootScene] → MainMenuScene');
-      }
-      
-      try {
-        console.log('[BootScene] Starting MainMenuScene...');
-        this.scene.start('MainMenuScene');
-        this.hideLoadingScreenDelayed();
-      } catch (error) {
-        console.error('[BootScene] Failed to start MainMenuScene:', error);
-        // Показываем ошибку пользователю
-        if (typeof (window as any).updateLoadingProgress === 'function') {
-          (window as any).updateLoadingProgress(100, 'Ошибка загрузки. Перезагрузите страницу.');
-        }
-      }
-      
+      console.log('[BootScene] → MainMenuScene');
+      this.scene.start('MainMenuScene');
     } catch (error) {
-      if (import.meta.env.DEV) {
-        console.error('[BootScene] Navigation error:', error);
-      }
-      // Fallback
-      try {
-        this.scene.start('MainMenuScene');
-        this.hideLoadingScreenDelayed();
-      } catch (fallbackError) {
-        if (import.meta.env.DEV) {
-          console.error('[BootScene] Critical fallback error:', fallbackError);
-        }
-        // ✅ Даже при ошибке скрываем loading screen
-        this.hideLoadingScreenDelayed();
-      }
+      console.error('[BootScene] Navigation error:', error);
+      this.scene.start('MainMenuScene');
     }
   }
 
-  // ✅ Новый метод — скрываем loading screen после полного рендера MainMenuScene
-  private hideLoadingScreenDelayed(): void {
-    // Ждём пока MainMenuScene будет активна и отрендерена
-    const maxAttempts = 20; // Максимум 2 секунды (20 * 100ms)
-    let attempts = 0;
-    
-    const checkMainMenuReady = () => {
-      attempts++;
-      const mainMenuScene = this.scene.get('MainMenuScene');
-      
-      // Проверяем что сцена существует, активна и имеет хотя бы один дочерний элемент
-      if (mainMenuScene && 
-          mainMenuScene.scene.isActive() && 
-          mainMenuScene.children && 
-          mainMenuScene.children.length > 0) {
-        
-        console.log('[BootScene] MainMenuScene is ready, hiding loading screen');
-        
-        // Даём ещё немного времени на полный рендер
-        this.time.delayedCall(100, () => {
-          if (typeof (window as any).hideLoadingScreen === 'function') {
-            (window as any).hideLoadingScreen();
-          }
-        });
-      } else if (attempts < maxAttempts) {
-        // Повторяем проверку через 100ms
-        this.time.delayedCall(100, checkMainMenuReady);
-      } else {
-        // Fallback: скрываем loading screen после таймаута
-        console.warn('[BootScene] MainMenuScene not ready after timeout, forcing hide');
-        if (typeof (window as any).hideLoadingScreen === 'function') {
-          (window as any).hideLoadingScreen();
-        }
-      }
-    };
-    
-    // Начинаем проверку через 200ms после старта MainMenuScene
-    this.time.delayedCall(200, checkMainMenuReady);
+  private loadSceneDynamic(sceneName: string): Promise<void> {
+    return import('../managers/SceneLoader')
+      .then(({ SceneLoader }) => SceneLoader.loadAndStart(this, sceneName))
+      .catch((error) => {
+        console.error(`[BootScene] Failed to load ${sceneName}:`, error);
+        this.scene.start('MainMenuScene');
+      });
   }
 
+  private getQueuedAssetCount(): number {
+    const loaderStats = this.load as Phaser.Loader.LoaderPlugin & {
+      totalToLoad?: number;
+      totalComplete?: number;
+      totalFailed?: number;
+      list?: { size?: number };
+      inflight?: { size?: number };
+    };
+
+    const fromTotals = loaderStats.totalToLoad ?? 0;
+    const fromList = (loaderStats.list?.size ?? 0) + (loaderStats.inflight?.size ?? 0);
+    return Math.max(fromTotals, fromList, this.queuedAssetCount);
+  }
+
+  private hasCriticalLoadingFailure(): boolean {
+    const loaderStats = this.load as Phaser.Loader.LoaderPlugin & { totalFailed?: number; totalToLoad?: number };
+    const totalFailed = Math.max(loaderStats.totalFailed ?? 0, this.loadErrorCount);
+    const totalToLoad = Math.max(loaderStats.totalToLoad ?? 0, this.queuedAssetCount);
+    const failedRatio = totalToLoad > 0 ? totalFailed / totalToLoad : 0;
+
+    return this.criticalErrorCount > 0 || failedRatio > BootScene.CRITICAL_FAILURE_THRESHOLD;
+  }
+
+  private installLoadingTimeout(): void {
+    this.clearLoadingTimeout();
+    this.loadTimeoutEvent = this.time.delayedCall(BootScene.LOADING_TIMEOUT_MS, () => {
+      console.warn('[BootScene] Loading timed out, forcing transition');
+      this.hideLoadingScreen();
+      if (!this.hasCriticalLoadingFailure()) {
+        this.navigateToNextScene();
+      } else {
+        this.showCriticalErrorModal('Загрузка заняла слишком много времени и завершилась с ошибками.');
+      }
+    });
+  }
+
+  private clearLoadingTimeout(): void {
+    if (this.loadTimeoutEvent) {
+      this.loadTimeoutEvent.remove(false);
+      this.loadTimeoutEvent = undefined;
+    }
+  }
+
+  private showCriticalErrorModal(message: string): void {
+    if (this.criticalErrorShown) {
+      return;
+    }
+    this.criticalErrorShown = true;
+    this.clearLoadingTimeout();
+    this.hideLoadingScreen();
+
+    const { centerX, centerY, width, height } = this.cameras.main;
+    const boxWidth = Math.min(520, width * 0.9);
+    const boxHeight = Math.min(380, height * 0.6);
+
+    this.add.rectangle(centerX, centerY, width, height, 0x000000, 0.75).setDepth(1000);
+    this.add.rectangle(centerX, centerY, boxWidth, boxHeight, 0x101622, 0.98).setDepth(1001).setStrokeStyle(2, 0xff4d4f, 1);
+
+    this.add
+      .text(centerX, centerY - 110, 'Ошибка загрузки', {
+        fontFamily: 'Arial',
+        fontSize: '28px',
+        color: '#ff7a7a',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(1002);
+
+    this.add
+      .text(centerX, centerY - 25, message, {
+        fontFamily: 'Arial',
+        fontSize: '18px',
+        color: '#ffffff',
+        align: 'center',
+        wordWrap: { width: boxWidth - 60 },
+      })
+      .setOrigin(0.5)
+      .setDepth(1002);
+
+    const retryButton = this.add
+      .text(centerX, centerY + 110, 'Перезапустить', {
+        fontFamily: 'Arial',
+        fontSize: '20px',
+        color: '#101622',
+        backgroundColor: '#6be6ff',
+        padding: { x: 22, y: 10 },
+      })
+      .setOrigin(0.5)
+      .setDepth(1002)
+      .setInteractive({ useHandCursor: true });
+
+    retryButton.on('pointerup', () => {
+      window.location.reload();
+    });
+  }
+
+  private loadVersionMeta(): void {
+    fetch('version.json', { cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) {
+          console.warn(`[BootScene] version.json unavailable (${response.status}), continuing without version metadata`);
+        }
+      })
+      .catch((error) => {
+        console.warn('[BootScene] version.json fetch failed, continuing without metadata', error);
+      });
+  }
+
+  private generateTexturesSafely(): void {
+    const tasks: Array<{ name: string; run: () => void }> = [
+      { name: 'ParticleTextures', run: () => new ParticleTextures(this).generate() },
+      { name: 'CapTextures', run: () => new CapTextures(this).generate() },
+      { name: 'BallTextures', run: () => new BallTextures(this).generate() },
+      { name: 'FieldTextures', run: () => new FieldTextures(this).generate() },
+      { name: 'AvatarTextures', run: () => new AvatarTextures(this).generate() },
+    ];
+
+    tasks.forEach(({ name, run }) => {
+      try {
+        run();
+      } catch (error) {
+        this.criticalErrorCount += 1;
+        console.warn(`[BootScene] ${name} generation failed:`, error);
+      }
+    });
+
+    console.log('[BootScene] Texture generation completed');
+  }
+
+  private ensureCriticalTextureFallbacks(): void {
+    if (!this.textures.exists('ball_plasma')) {
+      const g = this.add.graphics().setVisible(false);
+      g.fillStyle(0x4f46e5, 1);
+      g.fillCircle(32, 32, 28);
+      g.fillStyle(0xffffff, 0.85);
+      g.fillCircle(32, 32, 10);
+      g.lineStyle(2, 0x93c5fd, 0.9);
+      g.strokeCircle(32, 32, 30);
+      g.generateTexture('ball_plasma', 64, 64);
+      g.destroy();
+      console.warn('[BootScene] Generated fallback texture for ball_plasma');
+    }
+  }
+
+  private sendAgentLog(payload: unknown): void {
+    if (!this.canSendAgentLogs) {
+      return;
+    }
+
+    fetch('http://127.0.0.1:7362/ingest/422d027d-7908-442f-94c4-876b2618395d', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e0960d' },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  }
 }
