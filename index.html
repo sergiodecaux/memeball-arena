@@ -103,9 +103,9 @@
     window.onerror = function(msg, url, line) {
       const loadingText = document.getElementById('loading-text');
       if (loadingText) {
-        loadingText.textContent = 'Ошибка загрузки. Обновите страницу.';
+        loadingText.textContent = 'Ошибка загрузки. Обновите страницу и очистите кэш.';
       }
-      return true;
+      return false;
     };
   </script>
 
@@ -146,14 +146,8 @@
         }, 300);
       };
 
-      // Аварийное скрытие через 15 секунд
-      setTimeout(function() {
-        const loading = document.getElementById('loading-screen');
-        if (loading && loading.style.opacity !== '0') {
-          console.warn('[HTML] Force hiding loading screen');
-          window.hideLoadingScreen();
-        }
-      }, 15000);
+      // Важно: не скрываем лоадер насильно.
+      // Если инициализация сломалась, пользователь должен видеть сообщение об ошибке.
     })();
   </script>
 
