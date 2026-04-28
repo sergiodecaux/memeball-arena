@@ -2,6 +2,8 @@ node_modules/
 dist/
 .cursor/
 *.log
+*.tar.gz
+*.tgz
 
 # Временные файлы в public
 public/ui/Новый текстовый документ*.txt
