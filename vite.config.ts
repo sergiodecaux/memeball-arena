@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/memeball-arena/',
+  // Relative base prevents broken asset URLs when deployment path changes.
+  base: './',
   
   build: {
     target: ['es2015', 'edge88', 'firefox78', 'chrome87', 'safari13'],
