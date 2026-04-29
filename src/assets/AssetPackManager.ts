@@ -4,6 +4,7 @@
 import Phaser from 'phaser';
 import { CARDS_CATALOG, getAllCardIds } from '../data/CardsCatalog';
 import { UNITS_CATALOG } from '../data/UnitsCatalog';
+import { UNITS_REPOSITORY } from '../data/UnitsRepository';
 import { FACTION_ARENAS, FACTION_IDS, FACTIONS } from '../constants/gameConstants';
 import { LoadingOverlay } from '../ui/LoadingOverlay';
 import { UI_ICONS } from '../ui/Icons';
@@ -27,6 +28,22 @@ const getPreloadUnitKeys = (): string[] =>
 /** Исправление пути для Vite (убираем начальный слеш если есть) */
 const normalizePath = (path: string): string => 
   path.startsWith('/') ? path.slice(1) : path;
+
+const normalizeAssetUrl = (path: string): string => normalizePath(path).split('?')[0];
+
+const findUnitAsset = (idOrKey: string): { key: string; url: string } | undefined => {
+  const catalogUnit = UNITS_CATALOG.find(u => u.assetKey === idOrKey || u.id === idOrKey);
+  if (catalogUnit) {
+    return { key: catalogUnit.assetKey, url: normalizeAssetUrl(catalogUnit.assetPath) };
+  }
+
+  const repositoryUnit = UNITS_REPOSITORY.find(u => u.assetKey === idOrKey || u.id === idOrKey);
+  if (repositoryUnit) {
+    return { key: repositoryUnit.assetKey, url: normalizeAssetUrl(repositoryUnit.assetPath) };
+  }
+
+  return undefined;
+};
 
 /** Строит пакет initialLoad для предзагрузки при старте */
 const buildInitialLoadPack = (): PackDefinition => {
@@ -568,17 +585,19 @@ export class AssetPackManager {
     const uniqueKeys = [...new Set(unitKeysOrIds)];
     
     uniqueKeys.forEach(idOrKey => {
-      // Пытаемся найти по assetKey или id
-      const unit = UNITS_CATALOG.find(u => u.assetKey === idOrKey || u.id === idOrKey);
-      if (!unit) return;
+      const unitAsset = findUnitAsset(idOrKey);
+      if (!unitAsset) {
+        if (import.meta.env.DEV) {
+          console.warn(`[AssetPackManager] Unit asset not found for "${idOrKey}"`);
+        }
+        return;
+      }
 
-      const key = unit.assetKey;
+      const key = unitAsset.key;
       
       // Проверяем, загружена ли уже текстура
       if (!scene.textures.exists(key) || !isRealImageLoaded(key)) {
-        // Vite fix: убираем начальный слэш
-        const url = unit.assetPath.startsWith('/') ? unit.assetPath.substring(1) : unit.assetPath;
-        assetsToLoad.push({ key, url });
+        assetsToLoad.push({ key, url: unitAsset.url });
       }
       
       // Также можно добавить загрузку HD версии (_512), если нужно

@@ -189,12 +189,11 @@ export class FallbackManager {
     // Проверяем все юниты из UNITS_REPOSITORY
     let needsUnitFallbacks = false;
     UNITS_REPOSITORY.forEach((unit) => {
-      // ✅ Используем unit.id (как в ImageLoader)
-      if (!this.scene.textures.exists(unit.id)) {
+      if (!this.scene.textures.exists(unit.id) || !this.scene.textures.exists(unit.assetKey)) {
         needsUnitFallbacks = true;
         
         if (import.meta.env.DEV) {
-          console.warn(`[FallbackManager] Missing texture for unit: ${unit.id} (path: ${unit.assetPath})`);
+          console.warn(`[FallbackManager] Missing texture for unit: ${unit.id}/${unit.assetKey} (path: ${unit.assetPath})`);
         }
       }
     });

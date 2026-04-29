@@ -538,14 +538,13 @@ export class FactionGenerator {
 
   /**
    * ✅ NEW: Генерирует fallback для UNITS_REPOSITORY (80 новых уникальных юнитов)
-   * Использует unit.id как ключ текстуры (как в ImageLoader)
+   * Создает ключи и для unit.id, и для unit.assetKey: разные сцены используют разные идентификаторы.
    */
   generateUnitsRepositoryFallbacks(): void {
     const size = 512;
 
     UNITS_REPOSITORY.forEach((unit) => {
-      // ✅ Используем unit.id (как в ImageLoader), а не unit.assetKey
-      if (this.scene.textures.exists(unit.id)) {
+      if (this.scene.textures.exists(unit.id) && this.scene.textures.exists(unit.assetKey)) {
         return;
       }
 
@@ -607,8 +606,13 @@ export class FactionGenerator {
       ctx.fillStyle = 'rgba(255,255,255,0.3)';
       ctx.fill();
 
-      // ✅ Используем unit.id как ключ текстуры
-      this.scene.textures.addCanvas(unit.id, canvas);
+      if (!this.scene.textures.exists(unit.id)) {
+        this.scene.textures.addCanvas(unit.id, canvas);
+      }
+
+      if (!this.scene.textures.exists(unit.assetKey)) {
+        this.scene.textures.addCanvas(unit.assetKey, canvas);
+      }
     });
 
     if (import.meta.env.DEV) {

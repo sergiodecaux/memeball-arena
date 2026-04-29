@@ -707,7 +707,7 @@ function loadFactionUnits(scene: Phaser.Scene): void {
     }
     
     // Загружаем под ключом assetKey
-    if (!scene.textures.exists(unit.assetKey)) {
+    if (!scene.textures.exists(unit.assetKey) || !isRealImageLoaded(unit.assetKey)) {
       scene.load.image(unit.assetKey, assetPath);
       loadedCount++;
     }
@@ -840,14 +840,14 @@ function loadCapCollectionAssets(scene: Phaser.Scene): void {
     const baseKey = unit.assetKey;
     
     // Загружаем HD версию
-    if (!scene.textures.exists(hdKey)) {
+    if (!scene.textures.exists(hdKey) || !isRealImageLoaded(hdKey)) {
       scene.load.image(hdKey, assetPath);
       loadedCount++;
     }
     
     // ВАЖНО: Загружаем также под базовым ключом (без _512)
     // Это нужно для ShopScene который использует unit.assetKey
-    if (!scene.textures.exists(baseKey)) {
+    if (!scene.textures.exists(baseKey) || !isRealImageLoaded(baseKey)) {
       scene.load.image(baseKey, assetPath);
       loadedCount++;
     }
