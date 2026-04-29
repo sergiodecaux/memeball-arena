@@ -32,14 +32,14 @@ const normalizePath = (path: string): string =>
 const normalizeAssetUrl = (path: string): string => normalizePath(path).split('?')[0];
 
 const findUnitAsset = (idOrKey: string): { key: string; url: string } | undefined => {
-  const catalogUnit = UNITS_CATALOG.find(u => u.assetKey === idOrKey || u.id === idOrKey);
-  if (catalogUnit) {
-    return { key: catalogUnit.assetKey, url: normalizeAssetUrl(catalogUnit.assetPath) };
-  }
-
   const repositoryUnit = UNITS_REPOSITORY.find(u => u.assetKey === idOrKey || u.id === idOrKey);
   if (repositoryUnit) {
     return { key: repositoryUnit.assetKey, url: normalizeAssetUrl(repositoryUnit.assetPath) };
+  }
+
+  const catalogUnit = UNITS_CATALOG.find(u => u.assetKey === idOrKey || u.id === idOrKey);
+  if (catalogUnit) {
+    return { key: catalogUnit.assetKey, url: normalizeAssetUrl(catalogUnit.assetPath) };
   }
 
   return undefined;
