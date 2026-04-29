@@ -899,8 +899,7 @@ export class Unit {
       return;
     }
 
-    // ✅ FIX: Для production Vite нужны абсолютные пути
-    const fixedAssetPath = assetPath.startsWith('/') ? assetPath : `/${assetPath}`;
+    const fixedAssetPath = assetPath.replace(/^\/+/, '').split('?')[0];
     this.scene.load.image(textureKey, fixedAssetPath);
     this.scene.load.once(Phaser.Loader.Events.COMPLETE, () => {
       if (this.scene.textures.exists(textureKey) && !this.unitSprite && this.sprite?.active) {

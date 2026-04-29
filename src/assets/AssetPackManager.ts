@@ -31,19 +31,7 @@ const normalizePath = (path: string): string =>
 
 const normalizeAssetUrl = (path: string): string => normalizePath(path).split('?')[0];
 
-const LEGACY_MAGMA_UNIT_ASSETS: Record<string, { key: string; url: string }> = {
-  magma_grunt: { key: 'magma_grunt', url: 'assets/units/magma/magma_ember_fang.png' },
-  magma_titan: { key: 'magma_titan', url: 'assets/units/magma/magma_obsidian_hulk.png' },
-  magma_scout: { key: 'magma_scout', url: 'assets/units/magma/magma_embershot.png' },
-  magma_inferno: { key: 'magma_inferno', url: 'assets/units/magma/magma_hellion.png' },
-};
-
 const findUnitAsset = (idOrKey: string): { key: string; url: string } | undefined => {
-  const legacyMagmaAsset = LEGACY_MAGMA_UNIT_ASSETS[idOrKey];
-  if (legacyMagmaAsset) {
-    return legacyMagmaAsset;
-  }
-
   const repositoryUnit = UNITS_REPOSITORY.find(u => u.assetKey === idOrKey || u.id === idOrKey);
   if (repositoryUnit) {
     return { key: repositoryUnit.assetKey, url: normalizeAssetUrl(repositoryUnit.assetPath) };
