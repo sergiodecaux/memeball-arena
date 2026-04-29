@@ -52,6 +52,7 @@ export class CollectionScene extends Phaser.Scene {
   private factionBg?: Phaser.GameObjects.Image;
   private fallbackManager!: FallbackManager;
   private missingTextureKeys = new Set<string>();
+  private isBackgroundUnitLoadStarted = false;
   
   // Навигация
   private swipeManager?: SwipeNavigationManager;
@@ -183,9 +184,33 @@ export class CollectionScene extends Phaser.Scene {
       await AssetPackManager.loadUnitAssets(this, unitIds);
       if (this.scene.isActive()) {
         this.renderUnitsGrid();
+        void this.loadRemainingUnitPngs(this.selectedFaction);
       }
     } catch (error) {
       console.warn('[CollectionScene] Failed to lazy-load unit PNGs:', error);
+    }
+  }
+
+  private async loadRemainingUnitPngs(excludeFaction: FactionId): Promise<void> {
+    if (this.isBackgroundUnitLoadStarted) {
+      return;
+    }
+
+    this.isBackgroundUnitLoadStarted = true;
+    const unitIds = FACTION_IDS
+      .filter((factionId) => factionId !== excludeFaction)
+      .flatMap((factionId) => getRepositoryUnitsByFaction(factionId).map((unit) => unit.id));
+    const batchSize = 10;
+
+    try {
+      for (let index = 0; index < unitIds.length && this.scene.isActive(); index += batchSize) {
+        await AssetPackManager.loadUnitAssets(this, unitIds.slice(index, index + batchSize));
+        if (index + batchSize < unitIds.length) {
+          await new Promise<void>((resolve) => this.time.delayedCall(40, () => resolve()));
+        }
+      }
+    } catch (error) {
+      console.warn('[CollectionScene] Failed to background-load unit PNGs:', error);
     }
   }
 

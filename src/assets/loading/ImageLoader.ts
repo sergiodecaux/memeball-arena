@@ -192,8 +192,8 @@ export function ensureSafeImageLoading(scene: Phaser.Scene): void {
 function safeLoadImage(scene: Phaser.Scene, key: string, url: string): boolean {
   ensureSafeImageLoading(scene);
 
-  // Проверяем что текстура ещё не загружена
-  if (scene.textures.exists(key)) {
+  // Fallback textures use the same keys, so only skip images that are truly loaded.
+  if (scene.textures.exists(key) && isRealImageLoaded(key)) {
     return false;
   }
   
@@ -322,6 +322,7 @@ export function loadImagesShop(scene: Phaser.Scene): void {
   loadCardAssets(scene);
   loadChestAssets(scene);
   loadRewardIcons(scene);
+  loadTournamentAccessAssets(scene);
   
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Shop image assets queued');
@@ -816,10 +817,10 @@ function loadChestAssets(scene: Phaser.Scene): void {
     const path = `assets/chests/${oldFile}`;
     
     // Загружаем под новыми ключами
-    if (!scene.textures.exists(`${newId}_512`)) {
+    if (!scene.textures.exists(`${newId}_512`) || !isRealImageLoaded(`${newId}_512`)) {
       scene.load.image(`${newId}_512`, path);
     }
-    if (!scene.textures.exists(`${newId}_256`)) {
+    if (!scene.textures.exists(`${newId}_256`) || !isRealImageLoaded(`${newId}_256`)) {
       scene.load.image(`${newId}_256`, path); // Используем тот же 512 файл
     }
   });
@@ -828,10 +829,10 @@ function loadChestAssets(scene: Phaser.Scene): void {
   const oldChests = ['chest_small', 'chest_medium', 'chest_large', 'chest_mystic'];
   oldChests.forEach(chestId => {
     const path512 = `assets/chests/${chestId}_512.png`;
-    if (!scene.textures.exists(`${chestId}_512`)) {
+    if (!scene.textures.exists(`${chestId}_512`) || !isRealImageLoaded(`${chestId}_512`)) {
       scene.load.image(`${chestId}_512`, path512);
     }
-    if (!scene.textures.exists(`${chestId}_256`)) {
+    if (!scene.textures.exists(`${chestId}_256`) || !isRealImageLoaded(`${chestId}_256`)) {
       scene.load.image(`${chestId}_256`, path512);
     }
   });
@@ -889,6 +890,15 @@ function loadRewardIcons(scene: Phaser.Scene): void {
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Queued reward icons (4 icons)');
   }
+}
+
+function loadTournamentAccessAssets(scene: Phaser.Scene): void {
+  safeLoadImage(scene, 'tournament_key_fragment_128', 'assets/ui/tournament/keys/tournament_key_fragment_128.png');
+  safeLoadImage(scene, 'tournament_key_full_256', 'assets/ui/tournament/keys/tournament_key_full_256.png');
+  safeLoadImage(scene, 'tournament_ticket_256x128', 'assets/ui/tournament/keys/tournament_ticket_256x128.png');
+  safeLoadImage(scene, 'tournament_key_fragment', 'assets/ui/tournament/keys/tournament_key_fragment_128.png');
+  safeLoadImage(scene, 'tournament_key_full', 'assets/ui/tournament/keys/tournament_key_full_256.png');
+  safeLoadImage(scene, 'tournament_ticket', 'assets/ui/tournament/keys/tournament_ticket_256x128.png');
 }
 
 /**

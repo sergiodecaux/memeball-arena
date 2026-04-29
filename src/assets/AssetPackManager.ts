@@ -198,11 +198,26 @@ export class AssetPackManager {
         { key: 'chest_large_512', url: 'assets/chests/chest_large_512.png' },
         { key: 'chest_mystic_256', url: 'assets/chests/chest_mystic_512.png' },
         { key: 'chest_mystic_512', url: 'assets/chests/chest_mystic_512.png' },
+        { key: 'chest_stellar_256', url: 'assets/chests/chest_small_512.png' },
+        { key: 'chest_stellar_512', url: 'assets/chests/chest_small_512.png' },
+        { key: 'chest_nebula_256', url: 'assets/chests/chest_medium_512.png' },
+        { key: 'chest_nebula_512', url: 'assets/chests/chest_medium_512.png' },
+        { key: 'chest_nova_256', url: 'assets/chests/chest_large_512.png' },
+        { key: 'chest_nova_512', url: 'assets/chests/chest_large_512.png' },
+        { key: 'chest_cosmic_256', url: 'assets/chests/chest_mystic_512.png' },
+        { key: 'chest_cosmic_512', url: 'assets/chests/chest_mystic_512.png' },
         // Reward icons
         { key: 'reward_coins_256', url: 'assets/ui/rewards/reward_coins_256.png' },
         { key: 'reward_crystals_256', url: 'assets/ui/rewards/reward_crystals_256.png' },
         { key: 'reward_cards_256', url: 'assets/ui/rewards/reward_cards_256.png' },
         { key: 'reward_fragments_256', url: 'assets/ui/rewards/reward_fragments_256.png' },
+        // Tournament access icons used by the shop keys tab and chest previews
+        { key: 'tournament_key_fragment_128', url: 'assets/ui/tournament/keys/tournament_key_fragment_128.png' },
+        { key: 'tournament_key_full_256', url: 'assets/ui/tournament/keys/tournament_key_full_256.png' },
+        { key: 'tournament_ticket_256x128', url: 'assets/ui/tournament/keys/tournament_ticket_256x128.png' },
+        { key: 'tournament_key_fragment', url: 'assets/ui/tournament/keys/tournament_key_fragment_128.png' },
+        { key: 'tournament_key_full', url: 'assets/ui/tournament/keys/tournament_key_full_256.png' },
+        { key: 'tournament_ticket', url: 'assets/ui/tournament/keys/tournament_ticket_256x128.png' },
         // ⚠️ REMOVED: Mystic caps - textures not loading properly
         // Cap collections and fragments removed
       ],
