@@ -5,8 +5,10 @@ import { BallTextures } from '../assets/textures/BallTextures';
 import { FieldTextures } from '../assets/textures/FieldTextures';
 import { AvatarTextures } from '../assets/textures/AvatarTextures';
 import { playerData } from '../data/PlayerData';
-import { loadImages } from '../assets/loading/ImageLoader';
 import { CARDS_CATALOG, CardDefinition } from '../data/CardsCatalog';
+import { CampaignGenerator } from '../assets/generation/CampaignGenerator';
+import { FactionGenerator } from '../assets/generation/FactionGenerator';
+import { UIGenerator } from '../assets/generation/UIGenerator';
 
 export class BootScene extends Phaser.Scene {
   private static readonly LOADING_TIMEOUT_MS = 120_000;
@@ -45,45 +47,14 @@ export class BootScene extends Phaser.Scene {
 
     this.createLoadingScreen();
 
-    this.load.on('progress', (value: number) => {
-      this.updateProgress(value);
-    });
-
-    this.load.on('loaderror', (file: Phaser.Loader.File) => {
-      this.loadErrorCount += 1;
-      console.warn('[BootScene] Failed to load:', file.key);
-      // #region agent log
-      this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H1', location: 'BootScene.ts:preload:loaderror', message: 'Loader file failed', data: { key: file.key, type: file.type, url: (file as any).url }, timestamp: Date.now() });
-      // #endregion
-    });
-
-    this.load.on('complete', () => {
-      console.log('[BootScene] Assets loaded');
-      this.clearLoadingTimeout();
-      this.queuedAssetCount = this.getQueuedAssetCount();
-      if (this.hasCriticalLoadingFailure()) {
-        this.showCriticalErrorModal('Слишком много файлов не загрузилось. Попробуйте перезапустить игру.');
-      }
-      // #region agent log
-      this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H2', location: 'BootScene.ts:preload:complete', message: 'Loader complete event', data: { totalComplete: (this.load as any).totalComplete, totalFailed: (this.load as any).totalFailed, totalToLoad: (this.load as any).totalToLoad }, timestamp: Date.now() });
-      // #endregion
-    });
-
-    try {
-      loadImages(this);
-    } catch (e) {
-      this.criticalErrorCount += 1;
-      console.error('[BootScene] Loading error:', e);
-    }
-
     this.queuedAssetCount = this.getQueuedAssetCount();
-    this.installLoadingTimeout();
     this.loadVersionMeta();
   }
 
   create(): void {
     console.log('[BootScene] create started');
 
+    this.generateAllFallbacksSafely();
     this.generateTexturesSafely();
     this.ensureCriticalTextureFallbacks();
     this.ensureCardTextureFallbacks();
@@ -366,6 +337,18 @@ export class BootScene extends Phaser.Scene {
   }
 
   private ensureCriticalTextureFallbacks(): void {
+    if (!this.textures.exists('logo')) {
+      this.generateSimpleTexture('logo', 256, 256, '#061a2a', '#00d9ff', 'GL');
+    }
+
+    if (!this.textures.exists('ui_home_bg')) {
+      this.generateSimpleTexture('ui_home_bg', 1080, 1920, '#050505', '#1d4ed8', 'GALAXY');
+    }
+
+    if (!this.textures.exists('ui_scoreboard')) {
+      this.generateSimpleTexture('ui_scoreboard', 600, 100, '#101827', '#6be6ff', '0 : 0');
+    }
+
     if (!this.textures.exists('ball_plasma')) {
       const g = this.add.graphics().setVisible(false);
       g.fillStyle(0x4f46e5, 1);
@@ -378,6 +361,91 @@ export class BootScene extends Phaser.Scene {
       g.destroy();
       console.warn('[BootScene] Generated fallback texture for ball_plasma');
     }
+  }
+
+  private generateSimpleTexture(
+    key: string,
+    width: number,
+    height: number,
+    background: string,
+    accent: string,
+    label: string
+  ): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    const gradient = ctx.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, accent);
+    gradient.addColorStop(0.35, background);
+    gradient.addColorStop(1, '#000000');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(4, Math.round(Math.min(width, height) * 0.025));
+    ctx.strokeRect(ctx.lineWidth / 2, ctx.lineWidth / 2, width - ctx.lineWidth, height - ctx.lineWidth);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = `bold ${Math.max(24, Math.round(Math.min(width, height) * 0.18))}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, width / 2, height / 2);
+
+    this.textures.addCanvas(key, canvas);
+  }
+
+  private generateAllFallbacksSafely(): void {
+    const tasks: Array<{ name: string; run: () => void }> = [
+      {
+        name: 'UIGenerator',
+        run: () => {
+          const uiGenerator = new UIGenerator(this);
+          uiGenerator.generateMetalRingTexture();
+          uiGenerator.generateAuraTexture();
+          uiGenerator.generateSelectedRingTexture();
+          uiGenerator.generateScoreboardFallback();
+          uiGenerator.generatePortraitFallbacks();
+          uiGenerator.generateEmotionPortraitFallbacks();
+          uiGenerator.generateFactionParticleTextures();
+        },
+      },
+      {
+        name: 'FactionGenerator',
+        run: () => {
+          const factionGenerator = new FactionGenerator(this);
+          factionGenerator.generateFactionFallbacks();
+          factionGenerator.generateUnitFallbacks();
+          factionGenerator.generateUnitsRepositoryFallbacks();
+          factionGenerator.generateArenaFallbacks();
+          factionGenerator.generateFactionArtFallbacks();
+          factionGenerator.generateFactionUIBackgroundFallbacks();
+        },
+      },
+      {
+        name: 'CampaignGenerator',
+        run: () => {
+          const campaignGenerator = new CampaignGenerator(this);
+          campaignGenerator.generateCampaignMapFallbacks();
+          campaignGenerator.generateStarFallbacks();
+          campaignGenerator.generateCampaignChapterBackgroundFallbacks();
+          campaignGenerator.generateBossFallbacks();
+        },
+      },
+    ];
+
+    tasks.forEach(({ name, run }) => {
+      try {
+        run();
+      } catch (error) {
+        console.warn(`[BootScene] ${name} fallback generation failed:`, error);
+      }
+    });
   }
 
   private ensureCardTextureFallbacks(): void {
