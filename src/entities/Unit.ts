@@ -15,6 +15,7 @@ import {
 import { PlayerNumber, CapUpgrades } from '../types';
 import { playerData } from '../data/PlayerData';
 import { getUnit, UnitData } from '../data/UnitsCatalog';
+import { getUnitById as getRepositoryUnit, UnitData as RepositoryUnitData } from '../data/UnitsRepository';
 import { VFXManager } from '../managers/VFXManager';
 import { getMysticCapById } from '../data/CapCollectionCatalog';
 import { PassiveManager } from '../systems/PassiveManager';
@@ -146,8 +147,9 @@ export class Unit {
     if (options?.capClass) {
       this.capClass = options.capClass;
     } else {
-      const unitData = getUnit(this.unitId);
-      this.capClass = unitData?.capClass || this.detectClassFromId(this.unitId);
+      const catalogUnit = getUnit(this.unitId);
+      const repositoryUnit = catalogUnit ? undefined : getRepositoryUnit(this.unitId);
+      this.capClass = catalogUnit?.capClass || (repositoryUnit?.role as CapClass | undefined) || this.detectClassFromId(this.unitId);
     }
     
     this.stats = { ...CAP_CLASSES[this.capClass] };
@@ -974,8 +976,34 @@ export class Unit {
   private getUnitData(): UnitData | undefined {
     let unitData = getUnit(this.unitId);
     if (unitData) return unitData;
+
+    const repositoryUnit = getRepositoryUnit(this.unitId);
+    if (repositoryUnit) return this.toCatalogUnitData(repositoryUnit);
+
     const generatedId = this.generateLegacyUnitId();
-    return getUnit(generatedId);
+    unitData = getUnit(generatedId);
+    if (unitData) return unitData;
+
+    const generatedRepositoryUnit = getRepositoryUnit(generatedId);
+    return generatedRepositoryUnit ? this.toCatalogUnitData(generatedRepositoryUnit) : undefined;
+  }
+
+  private toCatalogUnitData(unit: RepositoryUnitData): UnitData {
+    return {
+      id: unit.id,
+      factionId: unit.factionId,
+      name: unit.name,
+      title: unit.title,
+      capClass: unit.role as CapClass,
+      rarity: unit.rarity,
+      isStarter: Boolean(unit.isStarter),
+      price: unit.shopPrice ? { coins: unit.shopPrice } : {},
+      assetKey: unit.assetKey,
+      assetPath: unit.assetPath,
+      description: unit.description,
+      stats: unit.stats,
+      specialAbility: unit.specialAbility,
+    };
   }
 
   private generateLegacyUnitId(): string {
