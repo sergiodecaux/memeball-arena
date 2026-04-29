@@ -13,6 +13,7 @@ import { FACTION_UI, getUIFactionByGameFaction } from '../constants/factionUiCon
 import { logInfo, logWarn, logError } from '../utils/ProductionLogger';
 import { AssetPackManager } from '../assets/AssetPackManager';
 import { getUnitsByFaction } from '../data/UnitsRepository';
+import { loadImagesBoot, loadImagesTactics } from '../assets/loading/ImageLoader';
 
 interface MatchPreparationData {
   matchContext: 'league' | 'tournament' | 'casual';
@@ -98,6 +99,11 @@ export class MatchPreparationScene extends Phaser.Scene {
     this.prepTimeRemaining = 300;
     
     this.factionCards.clear();
+  }
+
+  preload(): void {
+    loadImagesBoot(this);
+    loadImagesTactics(this);
   }
 
   create(): void {

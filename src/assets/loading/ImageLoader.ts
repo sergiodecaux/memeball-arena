@@ -330,6 +330,34 @@ export function loadImagesShop(scene: Phaser.Scene): void {
 }
 
 /**
+ * Loads unit repository images used by collection/repository screens.
+ * Keep this lighter than loadImagesShop: no chests/boosters/audio-only visuals.
+ */
+export function loadImagesRepository(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+
+  loadCapCollectionAssets(scene);
+  loadFactionBackgrounds(scene);
+  loadFactionTokens(scene);
+  loadRewardIcons(scene);
+}
+
+/**
+ * Loads images used by the tactics/team screen.
+ */
+export function loadImagesTactics(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+
+  loadCapCollectionAssets(scene);
+  loadFactionTokens(scene);
+  loadFactionArenas(scene);
+  loadBallSkins(scene);
+  loadRewardIcons(scene);
+  loadCardAssets(scene);
+  loadTournamentAssets(scene);
+}
+
+/**
  * Loads all images (main entry point - loads everything)
  * Split functions (loadImagesBoot, etc.) are available for future lazy loading
  */
@@ -836,17 +864,10 @@ function loadCapCollectionAssets(scene: Phaser.Scene): void {
       assetPath = assetPath.split('?')[0];
     }
     
-    const hdKey = `${unit.assetKey}_512`;
     const baseKey = unit.assetKey;
-    
-    // Загружаем HD версию
-    if (!scene.textures.exists(hdKey) || !isRealImageLoaded(hdKey)) {
-      scene.load.image(hdKey, assetPath);
-      loadedCount++;
-    }
-    
-    // ВАЖНО: Загружаем также под базовым ключом (без _512)
-    // Это нужно для ShopScene который использует unit.assetKey
+
+    // ВАЖНО: грузим один реальный PNG на фишку. Двойная загрузка base + _512
+    // удваивает память в магазине/репозитории и может валить мобильный WebView.
     if (!scene.textures.exists(baseKey) || !isRealImageLoaded(baseKey)) {
       scene.load.image(baseKey, assetPath);
       loadedCount++;

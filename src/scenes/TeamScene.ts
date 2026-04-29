@@ -60,6 +60,7 @@ import {
   CardRarity,
 } from '../data/CardsCatalog';
 import { TOURNAMENT_KEY_KEYS } from '../config/assetKeys';
+import { loadImagesTactics } from '../assets/loading/ImageLoader';
 // ⚠️ REMOVED: MYSTIC_CAPS - старая система коллекций убрана
 
 // ✅ ДОБАВЛЕНО: Константа для зоны свайпа
@@ -114,6 +115,10 @@ export class TeamScene extends Phaser.Scene {
       this.highlightUnitId = fromRegistry || null;
       if (fromRegistry) this.registry.remove('team_highlight_unit');
     }
+  }
+
+  preload(): void {
+    loadImagesTactics(this);
   }
 
   create(): void {

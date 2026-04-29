@@ -16,6 +16,7 @@ import { TextureMemoryManager } from '../managers/TextureMemoryManager';
 import { BattlePassUnitPreview } from '../ui/previews/BattlePassUnitPreview';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { createText } from '../utils/TextFactory';
+import { loadImagesRepository } from '../assets/loading/ImageLoader';
 
 /**
  * Предотвращает нативные события браузера на pointer событии
@@ -72,6 +73,10 @@ export class CollectionScene extends Phaser.Scene {
   
   constructor() {
     super({ key: 'CollectionScene' });
+  }
+
+  preload(): void {
+    loadImagesRepository(this);
   }
 
   create(): void {
