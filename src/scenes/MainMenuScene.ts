@@ -26,8 +26,8 @@ import { BattlePassBanner } from '../ui/menu/BattlePassBanner';
 import { versionChecker, VersionInfo } from '../utils/VersionChecker';
 import { UpdateNotificationOverlay } from '../ui/UpdateNotificationOverlay';
 import { globalCleanup } from '../utils/GlobalCleanup';
-import { loadImagesBoot, loadImagesMenu } from '../assets/loading/ImageLoader';
-import { loadAudioMenu } from '../assets/loading/AudioLoader';
+import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
+import { loadAudioBoot } from '../assets/loading/AudioLoader';
 
 export class MainMenuScene extends Phaser.Scene {
   private s: number = 1;
@@ -53,9 +53,14 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   preload(): void {
-    loadImagesBoot(this);
-    loadImagesMenu(this);
-    loadAudioMenu(this);
+    ensureSafeImageLoading(this);
+
+    // Keep the first menu frame light on mobile. Heavy menu/match assets are
+    // loaded by their scenes so WebView does not show a black screen here.
+    this.load.image('logo', 'assets/images/logo.webp');
+    this.load.image('ui_home_bg', 'assets/ui/backgrounds/home_bg.webp');
+    this.load.image('ui_scoreboard', 'assets/ui/scoreboard.png');
+    loadAudioBoot(this);
 
     // Локальная подгрузка иконок главного меню (хранятся в public/assets/ui/main)
     this.load.image('icon_repository_sci', 'assets/ui/main/icon_repository_sci.png');
