@@ -320,6 +320,7 @@ export function loadImagesShop(scene: Phaser.Scene): void {
   // setupErrorHandler(scene); // ❌ УДАЛЕНО — обработка ошибок в BootScene.preload()
   
   loadCardAssets(scene);
+  loadBoosterAssets(scene);
   loadChestAssets(scene);
   loadRewardIcons(scene);
   loadTournamentAccessAssets(scene);
@@ -411,14 +412,23 @@ function loadCardAssets(scene: Phaser.Scene): void {
   const framesPath = 'assets/cards/frames';
 
   // Только рамки карточек (shared UI)
-  scene.load.image('frame_common', `${framesPath}/frame_common.png`);
-  scene.load.image('frame_rare', `${framesPath}/frame_rare.png`);
-  scene.load.image('frame_epic', `${framesPath}/frame_epic.png`);
-  scene.load.image('card_back', `${framesPath}/card_back.png`);
+  safeLoadImage(scene, 'frame_common', `${framesPath}/frame_common.png`);
+  safeLoadImage(scene, 'frame_rare', `${framesPath}/frame_rare.png`);
+  safeLoadImage(scene, 'frame_epic', `${framesPath}/frame_epic.png`);
+  safeLoadImage(scene, 'card_back', `${framesPath}/card_back.png`);
   
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Card frame assets queued (4 frames)');
   }
+}
+
+function loadBoosterAssets(scene: Phaser.Scene): void {
+  safeLoadImage(scene, 'booster_tactical', 'assets/ui/boosters/booster_tactical.png');
+  safeLoadImage(scene, 'booster_magma', 'assets/ui/boosters/booster_magma.png');
+  safeLoadImage(scene, 'booster_cyborg', 'assets/ui/boosters/booster_cyborg.png');
+  safeLoadImage(scene, 'booster_void', 'assets/ui/boosters/booster_void.png');
+  safeLoadImage(scene, 'booster_insect', 'assets/ui/boosters/booster_insect.png');
+  safeLoadImage(scene, 'booster_faction', 'assets/ui/boosters/booster_tactical.png');
 }
 
 /**

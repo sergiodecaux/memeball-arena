@@ -127,9 +127,11 @@ export class ShopScene extends Phaser.Scene {
     this.createContentArea();
     this.renderContent();
     this.setupScrolling();
-    this.time.delayedCall(50, () => {
-      void this.loadShopUnitPngs();
-    });
+    if (this.currentTab === 'units') {
+      this.time.delayedCall(50, () => {
+        void this.loadShopUnitPngs();
+      });
+    }
     
     // ✅ Инициализация свайп-навигации
     this.swipeManager = new SwipeNavigationManager(this, {
@@ -140,25 +142,21 @@ export class ShopScene extends Phaser.Scene {
 
   private async loadShopUnitPngs(): Promise<void> {
     const currentFaction = playerData.getFaction() || FACTION_IDS[0];
-    const priorityUnits = [
+    const unitIds = [...new Set([
       ...getPremiumUnits().map((unit) => unit.id),
       ...getShopUnitsFromRepository(currentFaction).map((unit) => unit.id),
-    ];
-    const restUnits = FACTION_IDS
-      .filter((factionId) => factionId !== currentFaction)
-      .flatMap((factionId) => getShopUnitsFromRepository(factionId).map((unit) => unit.id));
-    const unitIds = [...new Set([...priorityUnits, ...restUnits])];
-    const batchSize = 10;
+    ])];
+    const batchSize = 6;
 
     try {
       for (let index = 0; index < unitIds.length && this.scene.isActive(); index += batchSize) {
         await AssetPackManager.loadUnitAssets(this, unitIds.slice(index, index + batchSize));
-        if (this.scene.isActive()) {
+        if (this.scene.isActive() && this.currentTab === 'units') {
           this.renderContent();
         }
 
         if (index + batchSize < unitIds.length) {
-          await new Promise<void>((resolve) => this.time.delayedCall(40, () => resolve()));
+          await new Promise<void>((resolve) => this.time.delayedCall(90, () => resolve()));
         }
       }
     } catch (error) {
