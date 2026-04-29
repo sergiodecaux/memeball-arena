@@ -70,6 +70,7 @@ export class ShopScene extends Phaser.Scene {
   private currentTab: ShopTab = 'teams';
   private scrollY = 0;
   private maxScrollY = 0;
+  private tabsContainer?: Phaser.GameObjects.Container;
   private contentContainer!: Phaser.GameObjects.Container;
   private coinsText!: Phaser.GameObjects.Text;
   private crystalsText!: Phaser.GameObjects.Text;
@@ -314,6 +315,9 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private createTabs(): void {
+    this.tabsContainer?.destroy();
+    this.tabsContainer = this.add.container(0, 0).setDepth(89);
+
     const { width } = this.cameras.main;
     const colors = getColors();
     const fonts = getFonts();
@@ -330,15 +334,16 @@ export class ShopScene extends Phaser.Scene {
     const tabH = 42;
     const y = 105 + this.topInset;
 
-    this.add.graphics().setDepth(89)
+    const tabsBg = this.add.graphics()
       .fillStyle(0x000000, 0.5)
       .fillRoundedRect(10, y - 3, width - 20, tabH + 6, 22);
+    this.tabsContainer.add(tabsBg);
 
     tabs.forEach((tab, i) => {
       const x = 12 + i * (tabW + 2);
       const isActive = this.currentTab === tab.id;
 
-      const bg = this.add.graphics().setDepth(90);
+      const bg = this.add.graphics();
       if (isActive) {
         bg.fillStyle(colors.uiAccent, 1);
         bg.fillRoundedRect(x, y, tabW, tabH, 20);
@@ -356,11 +361,13 @@ export class ShopScene extends Phaser.Scene {
         fontFamily: fonts.tech,
         color: isActive ? '#000000' : '#9ca3af', 
         fontStyle: 'bold',
-      }).setOrigin(0.5).setDepth(90);
+      }).setOrigin(0.5);
       tabText.setResolution(2);
+      this.tabsContainer.add([bg, tabText]);
 
       const hit = this.add.rectangle(x + tabW / 2, y + tabH / 2, tabW, tabH, 0, 0)
-        .setInteractive({ useHandCursor: true }).setDepth(90);
+        .setInteractive({ useHandCursor: true });
+      this.tabsContainer.add(hit);
 
       hit.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         preventNativeEvent(pointer);
@@ -370,7 +377,13 @@ export class ShopScene extends Phaser.Scene {
           hapticSelection();
           this.currentTab = tab.id;
           this.scrollY = 0;
-          this.scene.restart();
+          this.createTabs();
+          this.renderContent();
+          if (this.currentTab === 'units') {
+            this.time.delayedCall(50, () => {
+              void this.loadShopUnitPngs();
+            });
+          }
         }
       });
     });

@@ -593,12 +593,6 @@ export class AssetPackManager {
    * Вызывать перед матчем или при просмотре деталей юнита.
    */
   static async loadUnitAssets(scene: Phaser.Scene, unitKeysOrIds: string[]): Promise<void> {
-    if (scene.load.isLoading()) {
-      await new Promise<void>((resolve) => {
-        scene.load.once('complete', () => resolve());
-      });
-    }
-
     ensureSafeImageLoading(scene);
     const assetsToLoad: Array<{ key: string; url: string }> = [];
     

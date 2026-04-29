@@ -192,8 +192,16 @@ export function ensureSafeImageLoading(scene: Phaser.Scene): void {
 function safeLoadImage(scene: Phaser.Scene, key: string, url: string): boolean {
   ensureSafeImageLoading(scene);
 
-  // Fallback textures use the same keys, so only skip images that are truly loaded.
-  if (scene.textures.exists(key) && isRealImageLoaded(key)) {
+  if (scene.textures.exists(key) && !isRealImageLoaded(key)) {
+    try {
+      scene.textures.remove(key);
+      fallbackImageKeys.delete(key);
+    } catch (error) {
+      console.warn(`[ImageLoader] Could not remove fallback before loading "${key}"`, error);
+    }
+  }
+
+  if (scene.textures.exists(key)) {
     return false;
   }
   
