@@ -16,8 +16,9 @@ import { TextureMemoryManager } from '../managers/TextureMemoryManager';
 import { BattlePassUnitPreview } from '../ui/previews/BattlePassUnitPreview';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { createText } from '../utils/TextFactory';
-import { loadImagesRepository } from '../assets/loading/ImageLoader';
+import { isRealImageLoaded, loadImagesRepository } from '../assets/loading/ImageLoader';
 import { AssetPackManager } from '../assets/AssetPackManager';
+import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 
 /**
  * Предотвращает нативные события браузера на pointer событии
@@ -52,6 +53,9 @@ export class CollectionScene extends Phaser.Scene {
   private factionBg?: Phaser.GameObjects.Image;
   private fallbackManager!: FallbackManager;
   private missingTextureKeys = new Set<string>();
+  private unitPngLoadToken = 0;
+  /** Инкремент при каждом renderUnitsGrid — отменяет отложенные createBatch от предыдущего прохода */
+  private unitsGridRenderGen = 0;
   
   // Навигация
   private swipeManager?: SwipeNavigationManager;
@@ -176,28 +180,19 @@ export class CollectionScene extends Phaser.Scene {
       return;
     }
 
-    const units = getRepositoryUnitsByFaction(this.selectedFaction);
+    const selectedFaction = this.selectedFaction;
+    const loadToken = ++this.unitPngLoadToken;
+    const units = getRepositoryUnitsByFaction(selectedFaction);
     const unitIds = units.map((unit) => unit.id);
 
     try {
       await AssetPackManager.loadUnitAssets(this, unitIds);
-      if (this.scene.isActive()) {
+      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
         this.renderUnitsGrid();
       }
     } catch (error) {
       console.warn('[CollectionScene] Failed to lazy-load unit PNGs:', error);
     }
-  }
-
-  private getBestUnitTextureKey(unit: Pick<RepoUnitData, 'id' | 'assetKey'>): string | null {
-    const candidates = [
-      `${unit.assetKey}_512`,
-      unit.assetKey,
-      `${unit.id}_512`,
-      unit.id,
-    ];
-
-    return candidates.find((key) => this.textures.exists(key)) || null;
   }
   
   /**
@@ -488,9 +483,7 @@ export class CollectionScene extends Phaser.Scene {
         this.updateFactionBackground();
         this.renderUnitsGrid();
         this.createFactionTabs(); // Перерисовываем табы
-        this.time.delayedCall(50, () => {
-          void this.loadVisibleUnitPngs();
-        });
+        void this.loadVisibleUnitPngs();
       }
     });
 
@@ -554,8 +547,12 @@ export class CollectionScene extends Phaser.Scene {
     // Создаем карточки батчами для оптимизации
     const batchSize = 6; // Создаем по 6 карточек за раз
     let currentIndex = 0;
+    const gridGen = ++this.unitsGridRenderGen;
 
     const createBatch = () => {
+      if (gridGen !== this.unitsGridRenderGen) {
+        return;
+      }
       const batchEnd = Math.min(currentIndex + batchSize, sortedUnits.length);
       
       // ✅ ДОБАВИТЬ: Счётчики для отладки
@@ -664,7 +661,7 @@ export class CollectionScene extends Phaser.Scene {
     // Изображение юнита (всегда показываем, но затемняем если не открыт)
     const textureKey = unit.assetKey;
     const hdKey = `${unit.assetKey}_512`;
-    const bestTextureKey = this.getBestUnitTextureKey(unit);
+    const bestTextureKey = getRealUnitTextureKey(this, unit);
     
     const addUnitImage = (keyToUse: string) => {
       try {
@@ -1004,7 +1001,7 @@ export class CollectionScene extends Phaser.Scene {
     
     const textureKey = unit.assetKey;
     const hdKey = `${textureKey}_512`;
-    const bestTextureKey = this.getBestUnitTextureKey(unit);
+    const bestTextureKey = getRealUnitTextureKey(this, unit);
 
     // Пытаемся использовать текстуру (assetKey/id, включая возможные HD-алиасы)
     let imageAdded = false;

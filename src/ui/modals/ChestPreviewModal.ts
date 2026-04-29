@@ -15,6 +15,7 @@ import { getNonBattlePassUnits, UnitData, RARITY_COLORS, getDisplayName } from '
 import { getAllCards, CardDefinition } from '../../data/CardsCatalog';
 import { getColors, getFonts, hexToString } from '../../config/themes';
 import { AudioManager } from '../../managers/AudioManager';
+import { getRealUnitTextureKey } from '../../utils/TextureHelpers';
 
 /**
  * Предотвращает нативные события браузера на pointer событии
@@ -557,13 +558,7 @@ export class ChestPreviewModal {
         container.add(cardName);
       }
     } else if (data.type === 'unit') {
-      // Юниты - проверяем HD ключ и базовый ключ
-      const hdKey = `${data.assetKey}_512`;
-      const baseKey = data.assetKey;
-      
-      // Проверяем сначала HD ключ, потом базовый
-      const textureKey = this.scene.textures.exists(hdKey) ? hdKey :
-                         this.scene.textures.exists(baseKey) ? baseKey : null;
+      const textureKey = getRealUnitTextureKey(this.scene, { id: data.id, assetKey: data.assetKey });
       
       if (textureKey) {
         const img = this.scene.add.image(0, -5, textureKey);
@@ -583,7 +578,7 @@ export class ChestPreviewModal {
         container.add(icon);
         
         if (import.meta.env.DEV) {
-          console.warn(`[ChestPreviewModal] Unit texture not found: ${data.assetKey} (tried ${hdKey} and ${baseKey})`);
+          console.warn(`[ChestPreviewModal] Real unit texture not found: ${data.assetKey} (id=${data.id})`);
         }
       }
     } else {

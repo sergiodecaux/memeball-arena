@@ -9,6 +9,8 @@ import { UnitUnlockCelebration } from '../ui/UnitUnlockCelebration';
 import { getFonts } from '../config/themes';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { CHESTS_CATALOG, CHEST_ID_MIGRATION } from '../data/ChestsCatalog';
+import { AssetPackManager } from '../assets/AssetPackManager';
+import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 
 // ✅ Константа для зоны свайпа
 const BATTLE_PASS_SWIPE_EDGE_ZONE = 60;
@@ -64,6 +66,7 @@ export class BattlePassScene extends Phaser.Scene {
   // Protection flags
   private isCreating: boolean = false;
   private isDestroyed: boolean = false;
+  private loadingUnitRewardIds = new Set<string>();
 
   // Event subscriptions
   private bpEventCallbacks: { event: string; callback: Function }[] = [];
@@ -653,6 +656,20 @@ export class BattlePassScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * После догрузки PNG наград уже созданные контейнеры тиров не пересоздаются
+   * (updateVisibleTiers пропускает tier при visibleTierNodes.has). Сносим видимые узлы и строим заново.
+   */
+  private rebuildVisibleBattlePassTierNodes(): void {
+    if (this.isDestroyed || !this.scrollContainer?.active) return;
+    this.visibleTierNodes.forEach((node) => {
+      if (node?.active) node.destroy(true);
+    });
+    this.visibleTierNodes.clear();
+    this.lastVisibleRange = { start: -1, end: -1 };
+    this.updateVisibleTiers();
+  }
+
   private handleResize(): void {
     if (this.isDestroyed) return;
     
@@ -674,19 +691,28 @@ export class BattlePassScene extends Phaser.Scene {
   /**
    * Получает лучший доступный ключ текстуры (HD или базовый)
    */
-  private getBestTextureKey(assetKey: string): string | null {
-    const hdKey = `${assetKey}_512`;
-    
-    // Приоритет: HD версия > базовая версия
-    if (this.textures.exists(hdKey)) {
-      return hdKey;
+  private requestBattlePassUnitTexture(unitId: string): void {
+    if (this.loadingUnitRewardIds.has(unitId)) {
+      return;
     }
-    
-    if (this.textures.exists(assetKey)) {
-      return assetKey;
+
+    const unit = getUnitById(unitId);
+    if (!unit || getRealUnitTextureKey(this, unit)) {
+      return;
     }
-    
-    return null;
+
+    this.loadingUnitRewardIds.add(unitId);
+    void AssetPackManager.loadUnitAssets(this, [unitId])
+      .then(() => {
+        this.loadingUnitRewardIds.delete(unitId);
+        if (this.scene.isActive() && !this.isDestroyed) {
+          this.rebuildVisibleBattlePassTierNodes();
+        }
+      })
+      .catch((error) => {
+        this.loadingUnitRewardIds.delete(unitId);
+        console.warn('[BattlePassScene] Failed to lazy-load unit reward PNG:', error);
+      });
   }
 
   private createRewardNode(
@@ -833,12 +859,15 @@ export class BattlePassScene extends Phaser.Scene {
     if (reward.type === 'unit' && reward.itemId) {
       const unit = getUnitById(reward.itemId);
       if (unit) {
-        const textureKey = this.getBestTextureKey(unit.assetKey);
+        const textureKey = getRealUnitTextureKey(this, unit);
         if (textureKey && this.textures.exists(textureKey)) {
           const unitImg = this.add.image(w / 2, iconY, textureKey);
           unitImg.setDisplaySize(unitIconSize, unitIconSize);
           unitImg.setAlpha(iconAlpha);
           container.add(unitImg);
+        } else {
+          this.requestBattlePassUnitTexture(unit.id);
+          container.add(this.add.text(w / 2, iconY, '🎯', { fontSize: `${34 * s}px` }).setOrigin(0.5).setAlpha(iconAlpha));
         }
       }
     } else {
@@ -1081,7 +1110,8 @@ export class BattlePassScene extends Phaser.Scene {
          // Unit logic (simplified for popup)
          const unit = getUnitById(reward.itemId);
          if(unit) {
-             const texture = this.getBestTextureKey(unit.assetKey);
+             const texture = getRealUnitTextureKey(this, unit);
+             if (!texture) this.requestBattlePassUnitTexture(unit.id);
              if(texture) popup.add(this.add.image(0, iconY, texture).setDisplaySize(iconSize, iconSize));
          }
     } else {

@@ -4,6 +4,7 @@
 import Phaser from 'phaser';
 import { getFonts } from '../../config/themes';
 import { getDisplayName } from '../../data/UnitsRepository';
+import { getRealUnitTextureKey } from '../../utils/TextureHelpers';
 
 const RARITY_COLORS: Record<string, number> = {
   common: 0x9ca3af, rare: 0x3b82f6, epic: 0xa855f7, legendary: 0xf59e0b,
@@ -20,23 +21,6 @@ export class BattlePassUnitPreview {
     this.scene = scene;
     this.unit = unit;
     this.onGoToBattlePass = onGoToBattlePass;
-  }
-
-  /**
-   * Получает лучший доступный ключ текстуры (HD или базовый)
-   */
-  private getBestTextureKey(assetKey: string): string | null {
-    const hdKey = `${assetKey}_512`;
-    
-    if (this.scene.textures.exists(hdKey)) {
-      return hdKey;
-    }
-    
-    if (this.scene.textures.exists(assetKey)) {
-      return assetKey;
-    }
-    
-    return null;
   }
 
   show(): void {
@@ -94,8 +78,11 @@ export class BattlePassUnitPreview {
       repeat: -1,
     });
     
-    // PNG юнита
-    const textureKey = this.getBestTextureKey(this.unit.assetKey);
+    // PNG юнита (только реальное изображение, как в магазине)
+    const textureKey =
+      this.unit?.id && this.unit?.assetKey
+        ? getRealUnitTextureKey(this.scene, { id: this.unit.id, assetKey: this.unit.assetKey })
+        : null;
     
     if (textureKey) {
       const unitImage = this.scene.add.image(0, imageY, textureKey);

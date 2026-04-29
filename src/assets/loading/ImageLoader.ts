@@ -332,6 +332,8 @@ export function loadImagesShop(scene: Phaser.Scene): void {
   loadChestAssets(scene);
   loadRewardIcons(scene);
   loadTournamentAccessAssets(scene);
+  loadFactionTokens(scene);
+  loadAvatars(scene);
   
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Shop image assets queued');

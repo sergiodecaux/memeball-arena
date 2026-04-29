@@ -986,14 +986,20 @@ export class MatchPreparationScene extends Phaser.Scene {
       // Показываем лоадер
       this.showToast('Подготовка бойцов...');
       
-      // Получаем все юниты обеих фракций
+      // Получаем все юниты обеих фракций (репозиторий = карточки в UI),
+      // плюс состав и владение — иначе каталожные стартовые фишки вне репозитория остаются без PNG.
       const playerUnits = getUnitsByFaction(finalPlayerFaction);
       const opponentUnits = getUnitsByFaction(finalOpponentFaction);
       
-      // Собираем все ID юнитов
       const allUnitIds = [
-        ...playerUnits.map(u => u.id),
-        ...opponentUnits.map(u => u.id),
+        ...new Set([
+          ...playerUnits.map(u => u.id),
+          ...opponentUnits.map(u => u.id),
+          ...playerData.getTeamUnits(finalPlayerFaction).filter(Boolean),
+          ...playerData.getTeamUnits(finalOpponentFaction).filter(Boolean),
+          ...playerData.getOwnedUnits(finalPlayerFaction).map(o => o.id),
+          ...playerData.getOwnedUnits(finalOpponentFaction).map(o => o.id),
+        ]),
       ];
       
       // Загружаем текстуры юнитов

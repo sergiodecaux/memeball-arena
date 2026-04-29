@@ -13,6 +13,7 @@ import { AudioManager } from '../../../managers/AudioManager';
 import { hapticImpact, hapticSelection } from '../../../utils/Haptics';
 import { tgApp } from '../../../utils/TelegramWebApp';
 import { createRoleIcon } from '../../ClassIcons';
+import { getRealUnitTextureKey } from '../../../utils/TextureHelpers';
 
 export interface OfferDisplayCallbacks {
   onOfferClaimed: () => void;
@@ -376,8 +377,11 @@ export class OfferDisplaySystem {
       }
     } else if (offer.type === 'unit_pack' && offer.unitIds && offer.unitIds.length > 0) {
       const units = OffersManager.getOfferUnits(offer);
-      if (units.length > 0 && this.scene.textures.exists(units[0].assetKey)) {
-        const icon = this.scene.add.image(iconX, iconY, units[0].assetKey);
+      const first = units[0];
+      const packUnitKey =
+        first?.id && first?.assetKey ? getRealUnitTextureKey(this.scene, { id: first.id, assetKey: first.assetKey }) : null;
+      if (packUnitKey) {
+        const icon = this.scene.add.image(iconX, iconY, packUnitKey);
         icon.setDisplaySize(Math.round(iconSize), Math.round(iconSize));
         card.add(icon);
       } else {
@@ -1162,10 +1166,12 @@ export class OfferDisplaySystem {
       delay: index * 200,
     });
 
-    // Иконка юнита
-    if (unit.assetKey && this.scene.textures.exists(unit.assetKey)) {
+    // Иконка юнита (реальный PNG)
+    const unitTex =
+      unit.id && unit.assetKey ? getRealUnitTextureKey(this.scene, { id: unit.id, assetKey: unit.assetKey }) : null;
+    if (unitTex) {
       // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
-      const icon = this.scene.add.image(0, iconY, unit.assetKey).setDisplaySize(Math.round(69 * s), Math.round(69 * s));
+      const icon = this.scene.add.image(0, iconY, unitTex).setDisplaySize(Math.round(69 * s), Math.round(69 * s));
       card.add(icon);
 
       this.scene.tweens.add({

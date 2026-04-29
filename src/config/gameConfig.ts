@@ -3,64 +3,68 @@ import { BootScene } from '../scenes/BootScene';
 import { MainMenuScene } from '../scenes/MainMenuScene';
 import { GameScene } from '../scenes/GameScene';
 import { MatchVSScene } from '../scenes/MatchVSScene';
-// import { LeakGuardPlugin } from '../plugins/LeakGuardPlugin';
-// import { tgApp } from '../utils/TelegramWebApp';
-// ⚡ Остальные сцены импортируются динамически через SceneLoader
 
 export const DESIGN_WIDTH = 390;
 export const DESIGN_HEIGHT = 844;
 
-// Упрощаем, без проверки производительности
-const isLowEnd = false;
+function getMobileGameSize() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  return {
+    width: Math.max(320, Math.min(width, 1920)),
+    height: Math.max(480, Math.min(height, 1080)),
+  };
+}
+
+const { width, height } = getMobileGameSize();
 
 export const gameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'game-container',
-  width: DESIGN_WIDTH,
-  height: DESIGN_HEIGHT,
-  backgroundColor: '#050505', // Унифицировано с Telegram theme-color
+  width,
+  height,
+  backgroundColor: '#050505',
   physics: {
     default: 'matter',
     matter: {
       gravity: { x: 0, y: 0 },
       debug: false,
+      enableSleeping: true,
     },
   },
   scene: [
-    BootScene,        // Core: Загрузка ассетов
-    MainMenuScene,    // Core: Главное меню
-    GameScene,        // Core: Игровая сцена
-    MatchVSScene,    // Core: VS экран перед матчем
-    // Остальные сцены загружаются динамически через SceneLoader
+    BootScene,
+    MainMenuScene,
+    GameScene,
+    MatchVSScene,
   ],
   scale: {
-    mode: Phaser.Scale.RESIZE, // ИЗМЕНЕНО: Был FIT. RESIZE лучше для TWA.
-    parent: 'game-container',
-    width: '100%',
-    height: '100%',
+    mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  // ОПТИМИЗАЦИЯ РЕНДЕРА (зависит от класса производительности)
   render: {
     pixelArt: false,
-    antialias: !isLowEnd, // Отключаем сглаживание на слабых устройствах
-    antialiasGL: !isLowEnd,
-    powerPreference: 'default',
-    batchSize: isLowEnd ? 1024 : 2048,
-    maxTextures: isLowEnd ? 2 : 4,
+    antialias: true,
+    antialiasGL: true,
+    powerPreference: 'high-performance',
+    batchSize: 2048,
+    maxTextures: 8,
+    roundPixels: true,
+    transparent: false,
+    clearBeforeRender: true,
   },
-  
-  // ОПТИМИЗАЦИЯ FPS (зависит от класса производительности)
   fps: {
-    target: isLowEnd ? 30 : 60, // 30 FPS для слабых андроидов
-    min: 30, // ✅ Разрешаем падение FPS вместо крашей
-    forceSetTimeOut: true, // Стабильнее для таймингов на мобилках
+    target: 60,
+    min: 30,
+    forceSetTimeOut: false,
+    smoothStep: true,
   },
-  
   input: {
     activePointers: 3,
     touch: {
-      capture: true,  // Захватывать touch события
+      target: null,
+      capture: true,
     },
   },
   dom: {
@@ -68,23 +72,25 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   },
   disableContextMenu: true,
   banner: false,
-  // plugins: {
-  //   scene: [
-  //     {
-  //       key: 'LeakGuard',
-  //       plugin: LeakGuardPlugin,
-  //       mapping: 'leakGuard',
-  //       start: true,
-  //     },
-  //   ],
-  // },
   callbacks: {
     preBoot: (game) => {
-      // Дополнительная защита при загрузке
       if (game.canvas) {
         game.canvas.style.touchAction = 'none';
       }
-    }
+    },
+    postBoot: (game) => {
+      console.log('[Game] Booted successfully');
+
+      const handleResize = () => {
+        const size = getMobileGameSize();
+        game.scale.resize(size.width, size.height);
+      };
+
+      window.addEventListener('resize', handleResize);
+      window.addEventListener('orientationchange', () => {
+        setTimeout(handleResize, 100);
+      });
+    },
   },
 };
 
@@ -92,16 +98,8 @@ export const getScale = (game: Phaser.Game) => {
   return game.scale.displaySize.width / DESIGN_WIDTH;
 };
 
-/**
- * Применить пользовательский масштаб экрана
- */
 export const applyScreenScale = (game: Phaser.Game, scale: number) => {
-  const baseWidth = DESIGN_WIDTH;
-  const baseHeight = DESIGN_HEIGHT;
-
-  // Уменьшаем базовый размер = игра становится больше на экране
-  const newWidth = Math.round(baseWidth / scale);
-  const newHeight = Math.round(baseHeight / scale);
-
+  const newWidth = Math.round(DESIGN_WIDTH / scale);
+  const newHeight = Math.round(DESIGN_HEIGHT / scale);
   game.scale.setGameSize(newWidth, newHeight);
 };

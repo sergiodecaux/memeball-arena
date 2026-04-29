@@ -4,6 +4,12 @@
  */
 
 import Phaser from 'phaser';
+import { isRealImageLoaded } from '../assets/loading/ImageLoader';
+
+type UnitTextureRef = string | {
+  id?: string;
+  assetKey: string;
+};
 
 /**
  * Получает ключ текстуры юнита (проверяет HD и базовый ключ)
@@ -25,6 +31,21 @@ export function getUnitTextureKey(scene: Phaser.Scene, assetKey: string): string
   }
   
   return null;
+}
+
+/**
+ * Получает ключ реального PNG юнита, игнорируя процедурные/canvas fallback-текстуры.
+ */
+export function getRealUnitTextureKey(scene: Phaser.Scene, unit: UnitTextureRef): string | null {
+  const assetKey = typeof unit === 'string' ? unit : unit.assetKey;
+  const id = typeof unit === 'string' ? undefined : unit.id;
+  const candidates = [
+    `${assetKey}_512`,
+    assetKey,
+    ...(id ? [`${id}_512`, id] : []),
+  ];
+
+  return candidates.find((key) => scene.textures.exists(key) && isRealImageLoaded(key)) || null;
 }
 
 /**
@@ -59,7 +80,7 @@ export function createUnitImage(
   assetKey: string,
   displaySize?: number
 ): Phaser.GameObjects.Image | null {
-  const textureKey = getUnitTextureKey(scene, assetKey);
+  const textureKey = getRealUnitTextureKey(scene, assetKey);
   
   if (!textureKey) {
     if (import.meta.env.DEV) {

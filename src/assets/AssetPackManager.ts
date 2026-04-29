@@ -595,6 +595,7 @@ export class AssetPackManager {
   static async loadUnitAssets(scene: Phaser.Scene, unitKeysOrIds: string[]): Promise<void> {
     ensureSafeImageLoading(scene);
     const assetsToLoad: Array<{ key: string; url: string }> = [];
+    const debugUnitRecords: Array<{ idOrKey: string; faction: string; key?: string; url?: string; found: boolean; textureExists?: boolean; realLoaded?: boolean; queued: boolean }> = [];
     
     // Фильтруем уникальные ключи
     const uniqueKeys = [...new Set(unitKeysOrIds)];
@@ -602,6 +603,7 @@ export class AssetPackManager {
     uniqueKeys.forEach(idOrKey => {
       const unitAsset = findUnitAsset(idOrKey);
       if (!unitAsset) {
+        debugUnitRecords.push({ idOrKey, faction: idOrKey.split('_')[0] || 'unknown', found: false, queued: false });
         if (import.meta.env.DEV) {
           console.warn(`[AssetPackManager] Unit asset not found for "${idOrKey}"`);
         }
@@ -609,9 +611,22 @@ export class AssetPackManager {
       }
 
       const key = unitAsset.key;
+      const textureExists = scene.textures.exists(key);
+      const realLoaded = isRealImageLoaded(key);
+      const shouldQueue = !textureExists || !realLoaded;
+      debugUnitRecords.push({
+        idOrKey,
+        faction: key.split('_')[0] || 'unknown',
+        key,
+        url: unitAsset.url,
+        found: true,
+        textureExists,
+        realLoaded,
+        queued: shouldQueue,
+      });
       
       // Проверяем, загружена ли уже текстура
-      if (!scene.textures.exists(key) || !isRealImageLoaded(key)) {
+      if (shouldQueue) {
         assetsToLoad.push({ key, url: unitAsset.url });
       }
       
@@ -656,7 +671,9 @@ export class AssetPackManager {
       assetsToLoad.forEach(asset => {
         scene.load.image(asset.key, asset.url);
         // Используем once для каждого файла, так надежнее чем общий complete при параллельных загрузках
-        scene.load.once(`filecomplete-image-${asset.key}`, () => checkComplete(asset.key));
+        scene.load.once(`filecomplete-image-${asset.key}`, () => {
+          checkComplete(asset.key);
+        });
       });
 
       scene.load.start();

@@ -6,6 +6,7 @@ import { battlePassManager } from '../../managers/BattlePassManager';
 import { getCurrentSeason, getXPProgress, formatTimeRemaining } from '../../data/BattlePassData';
 import { getFonts } from '../../config/themes';
 import { getUnitById } from '../../data/UnitsRepository';
+import { getRealUnitTextureKey } from '../../utils/TextureHelpers';
 
 export class BattlePassBanner {
   private scene: Phaser.Scene;
@@ -35,23 +36,6 @@ export class BattlePassBanner {
     this.height = height;
     this.s = scale;
     this.onTap = onTap;
-  }
-
-  /**
-   * Получает лучший доступный ключ текстуры (HD или базовый)
-   */
-  private getBestTextureKey(assetKey: string): string | null {
-    const hdKey = `${assetKey}_512`;
-    
-    if (this.scene.textures.exists(hdKey)) {
-      return hdKey;
-    }
-    
-    if (this.scene.textures.exists(assetKey)) {
-      return assetKey;
-    }
-    
-    return null;
   }
 
   create(): Phaser.GameObjects.Container {
@@ -172,7 +156,9 @@ export class BattlePassBanner {
     const featuredContainer = this.scene.add.container(leftX, bottomY);
     
     const featuredUnit = getUnitById(season.featuredUnitId);
-    const featuredTextureKey = featuredUnit ? this.getBestTextureKey(featuredUnit.assetKey) : null;
+    const featuredTextureKey = featuredUnit
+      ? getRealUnitTextureKey(this.scene, { id: featuredUnit.id, assetKey: featuredUnit.assetKey })
+      : null;
     
     if (featuredTextureKey) {
       // PNG юнита

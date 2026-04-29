@@ -8,6 +8,7 @@ import { LevelReward, generateUnitChoices } from '../data/LevelRewards';
 import { UNITS_REPOSITORY } from '../data/UnitsRepository';
 import { playerData } from '../data/PlayerData';
 import { FACTIONS, FactionId } from '../constants/gameConstants';
+import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 
 export type LevelUpType = 'player' | 'faction';
 
@@ -410,15 +411,9 @@ export class LevelUpOverlay {
         choices.slice(0, 3).forEach((id, i) => {
           const unit = UNITS_REPOSITORY.find(u => u.id === id);
           const offset = (i - 1) * 18;
-          // Попробуем несколько вариантов ключа текстуры
-          const highResKey = `${id}_512`;
-          const lowResKey = id;
-          
-          if (unit && this.scene.textures.exists(highResKey)) {
-            const img = this.scene.add.image(offset, 0, highResKey).setDisplaySize(42, 42);
-            stack.add(img);
-          } else if (unit && this.scene.textures.exists(lowResKey)) {
-            const img = this.scene.add.image(offset, 0, lowResKey).setDisplaySize(42, 42);
+          const textureKey = unit ? getRealUnitTextureKey(this.scene, unit) : null;
+          if (textureKey) {
+            const img = this.scene.add.image(offset, 0, textureKey).setDisplaySize(42, 42);
             stack.add(img);
           } else {
             const txt = this.scene.add.text(offset, 0, '?', { fontSize: '28px', color: '#fff' }).setOrigin(0.5);

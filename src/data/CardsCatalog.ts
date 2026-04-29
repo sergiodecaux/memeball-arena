@@ -33,7 +33,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Creates a slowing zone that reduces enemy movement speed.',
     rarity: 'common',
     targetType: 'point',
-    assetPath: '/assets/cards/icons/magma_lava.png',
+    assetPath: 'assets/cards/icons/magma_lava.png',
     price: 50,
   },
   magma_molten: {
@@ -43,7 +43,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Ball stuns enemies on contact for a short duration.',
     rarity: 'rare',
     targetType: 'none',
-    assetPath: '/assets/cards/icons/magma_molten.png',
+    assetPath: 'assets/cards/icons/magma_molten.png',
     price: 100,
   },
   magma_meteor: {
@@ -53,7 +53,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Explosive impact at target point, creates a crater obstacle.',
     rarity: 'epic',
     targetType: 'point',
-    assetPath: '/assets/cards/icons/magma_meteor.png',
+    assetPath: 'assets/cards/icons/magma_meteor.png',
     price: 200,
   },
 
@@ -65,7 +65,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Creates a protective barrier that repels the ball.',
     rarity: 'common',
     targetType: 'unit_self',
-    assetPath: '/assets/cards/icons/cyborg_shield.png',
+    assetPath: 'assets/cards/icons/cyborg_shield.png',
     price: 50,
   },
   cyborg_tether: {
@@ -75,7 +75,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Links the ball to the unit with a magnetic force.',
     rarity: 'rare',
     targetType: 'unit_self',
-    assetPath: '/assets/cards/icons/cyborg_tether.png',
+    assetPath: 'assets/cards/icons/cyborg_tether.png',
     price: 100,
   },
   cyborg_barrier: {
@@ -85,7 +85,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Creates a bouncing wall at target location.',
     rarity: 'epic',
     targetType: 'point',
-    assetPath: '/assets/cards/icons/cyborg_barrier.png',
+    assetPath: 'assets/cards/icons/cyborg_barrier.png',
     price: 200,
   },
 
@@ -97,7 +97,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Instantly swaps positions of two allied units.',
     rarity: 'common',
     targetType: 'unit_ally_pair',
-    assetPath: '/assets/cards/icons/void_swap.png',
+    assetPath: 'assets/cards/icons/void_swap.png',
     price: 50,
   },
   void_ghost: {
@@ -107,7 +107,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Unit becomes ethereal, ignoring obstacles but still hitting the ball.',
     rarity: 'rare',
     targetType: 'unit_self',
-    assetPath: '/assets/cards/icons/void_ghost.png',
+    assetPath: 'assets/cards/icons/void_ghost.png',
     price: 100,
   },
   void_wormhole: {
@@ -117,7 +117,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Creates two teleport portals on the field.',
     rarity: 'epic',
     targetType: 'point',
-    assetPath: '/assets/cards/icons/void_wormhole.png',
+    assetPath: 'assets/cards/icons/void_wormhole.png',
     price: 200,
   },
 
@@ -129,7 +129,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Poisons enemy on contact, slowing their actions.',
     rarity: 'common',
     targetType: 'unit_self',
-    assetPath: '/assets/cards/icons/insect_toxin.png',
+    assetPath: 'assets/cards/icons/insect_toxin.png',
     price: 50,
   },
   insect_mimic: {
@@ -139,7 +139,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Spawns a fake decoy ball at target location.',
     rarity: 'rare',
     targetType: 'point',
-    assetPath: '/assets/cards/icons/insect_mimic.png',
+    assetPath: 'assets/cards/icons/insect_mimic.png',
     price: 100,
   },
   insect_parasite: {
@@ -149,7 +149,7 @@ export const CARDS_CATALOG: Record<string, CardDefinition> = {
     description: 'Take temporary control of an enemy unit.',
     rarity: 'epic',
     targetType: 'unit_enemy',
-    assetPath: '/assets/cards/icons/insect_parasite.png',
+    assetPath: 'assets/cards/icons/insect_parasite.png',
     price: 200,
   },
 };

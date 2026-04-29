@@ -37,6 +37,7 @@ import { openChest, applyRewardsToPlayer, summarizeRewards, RewardItem, RewardSu
 import { UNITS_REPOSITORY } from '../data/UnitsRepository';
 import { tgApp } from '../utils/TelegramWebApp';
 import { loadImagesShop } from '../assets/loading/ImageLoader';
+import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 import { loadAudioShop } from '../assets/loading/AudioLoader';
 import { AssetPackManager } from '../assets/AssetPackManager';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
@@ -156,7 +157,8 @@ export class ShopScene extends Phaser.Scene {
 
     try {
       for (let index = 0; index < unitIds.length && this.scene.isActive(); index += batchSize) {
-        await AssetPackManager.loadUnitAssets(this, unitIds.slice(index, index + batchSize));
+        const batch = unitIds.slice(index, index + batchSize);
+        await AssetPackManager.loadUnitAssets(this, batch);
         if (this.scene.isActive() && this.currentTab === 'units') {
           this.renderContent();
         }
@@ -168,17 +170,6 @@ export class ShopScene extends Phaser.Scene {
     } catch (error) {
       console.warn('[ShopScene] Failed to lazy-load shop unit PNGs:', error);
     }
-  }
-
-  private getBestUnitTextureKey(unit: Pick<AnyUnitData, 'id' | 'assetKey'>): string | null {
-    const candidates = [
-      `${unit.assetKey}_512`,
-      unit.assetKey,
-      `${unit.id}_512`,
-      unit.id,
-    ];
-
-    return candidates.find((key) => this.textures.exists(key)) || null;
   }
 
   shutdown(): void {
@@ -753,7 +744,7 @@ export class ShopScene extends Phaser.Scene {
 
     // ========== ИКОНКА ЮНИТА (слева, как у обычных) ==========
     const iconX = 60, iconY = 70, iconSize = 100;
-    const textureKey = this.getBestUnitTextureKey(unit);
+    const textureKey = getRealUnitTextureKey(this, unit);
     
     if (textureKey) {
       // Glow эффект для owned
@@ -1112,7 +1103,7 @@ export class ShopScene extends Phaser.Scene {
       container.add(overlay);
       
       const iconX = 60, iconY = 70;
-      const textureKey = this.getBestUnitTextureKey(unit);
+      const textureKey = getRealUnitTextureKey(this, unit);
       if (textureKey) {
         // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
         const img = this.add.image(iconX, iconY, textureKey)
@@ -1142,7 +1133,7 @@ export class ShopScene extends Phaser.Scene {
 
     // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
     const iconX = 60, iconY = 70, iconSize = 100;
-    const textureKey = this.getBestUnitTextureKey(unit);
+    const textureKey = getRealUnitTextureKey(this, unit);
 
     if (textureKey) {
       if (isOwned) {
@@ -3624,12 +3615,10 @@ export class ShopScene extends Phaser.Scene {
       // Для полной разблокировки юнита используем текстуру юнита
       const unitData = UNITS_REPOSITORY.find(u => u.id === capId);
       if (unitData) {
-        const hdKey = `${unitData.assetKey}_512`;
-        const baseKey = unitData.assetKey;
-        
-        // Проверяем сначала HD ключ, потом базовый
-        const textureKey = this.textures.exists(hdKey) ? hdKey :
-                           this.textures.exists(baseKey) ? baseKey : null;
+        const textureKey = getRealUnitTextureKey(this, {
+          id: unitData.id,
+          assetKey: unitData.assetKey,
+        });
         
         if (textureKey) {
           const icon = this.add.image(0, -8, textureKey).setDisplaySize(64, 64);
@@ -3864,14 +3853,11 @@ export class ShopScene extends Phaser.Scene {
     bg.strokeRoundedRect(-tileSize / 2, -tileSize / 2, tileSize, tileSize, 12);
     container.add(bg);
 
-    // Иконка юнита
-    // ✅ FIX: Проверяем сначала HD ключ (текстуры загружаются под этим ключом), потом базовый
-    const hdKey = `${unitData.assetKey}_512`;
-    const baseKey = unitData.assetKey;
-    
-    // Проверяем сначала HD ключ, потом базовый
-    const textureKey = this.textures.exists(hdKey) ? hdKey :
-                       this.textures.exists(baseKey) ? baseKey : null;
+    // Иконка юнита (только реальный PNG, без canvas-fallback)
+    const textureKey = getRealUnitTextureKey(this, {
+      id: unitData.id,
+      assetKey: unitData.assetKey,
+    });
     
     if (textureKey) {
       const icon = this.add.image(0, -12, textureKey).setDisplaySize(70, 70);
@@ -3882,7 +3868,7 @@ export class ShopScene extends Phaser.Scene {
       container.add(fallbackIcon);
       
       if (import.meta.env.DEV) {
-        console.warn(`[ShopScene] ⚠️ Texture not found: "${baseKey}" (tried ${hdKey} and ${baseKey}, unitId="${unitId}")`);
+        console.warn(`[ShopScene] ⚠️ Real unit texture not found for unitId="${unitId}" (assetKey="${unitData.assetKey}")`);
       }
     }
 

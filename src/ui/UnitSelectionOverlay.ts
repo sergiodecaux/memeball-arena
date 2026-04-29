@@ -5,6 +5,7 @@ import { AudioManager } from '../managers/AudioManager';
 import { UNITS_REPOSITORY, UnitData, getDisplayName } from '../data/UnitsRepository';
 import { FACTIONS } from '../constants/gameConstants';
 import { TEAM_LAYOUT, fitText, fitImage, getSafeArea } from './layout/TeamSceneLayout';
+import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 
 /**
  * UnitSelectionOverlay - красивое меню выбора юнита в стиле Mobile Legends
@@ -376,8 +377,8 @@ export class UnitSelectionOverlay extends Phaser.GameObjects.Container {
     this.cardContainer.add(imageBg);
 
     // PNG юнита
-    const unitKey = `${unit.id}_512`;
-    if (this.scene.textures.exists(unitKey)) {
+    const unitKey = getRealUnitTextureKey(this.scene, unit);
+    if (unitKey) {
       const unitImg = this.scene.add.image(0, unitImageY, unitKey);
       
       // ✅ Используем fitImage для правильного масштабирования с учетом pop-out

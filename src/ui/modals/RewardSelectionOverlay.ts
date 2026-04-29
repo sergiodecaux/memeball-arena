@@ -8,6 +8,7 @@ import { FACTIONS, FactionId } from '../../constants/gameConstants';
 import { eventBus, GameEvents } from '../../core/EventBus';
 import { AudioManager } from '../../managers/AudioManager';
 import { hapticImpact } from '../../utils/Haptics';
+import { getRealUnitTextureKey } from '../../utils/TextureHelpers';
 
 /**
  * Цвета фракций для обводки карточек и баров статов
@@ -309,8 +310,8 @@ export class RewardSelectionOverlay {
     container.add(avatarBg);
 
     // Попытка загрузить текстуру юнита
-    const textureKey = unitData.assetKey;
-    if (this.scene.textures.exists(textureKey)) {
+    const textureKey = getRealUnitTextureKey(this.scene, unitData);
+    if (textureKey) {
       const avatar = this.scene.add.image(x, y, textureKey);
       avatar.setDisplaySize(avatarRadius * 2, avatarRadius * 2);
       avatar.setOrigin(0.5);

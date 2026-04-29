@@ -19,6 +19,7 @@ import { getUnitById as getRepositoryUnit, UnitData as RepositoryUnitData } from
 import { VFXManager } from '../managers/VFXManager';
 import { getMysticCapById } from '../data/CapCollectionCatalog';
 import { PassiveManager } from '../systems/PassiveManager';
+import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 
 export interface UnitOptions {
   factionId?: FactionId;
@@ -1063,6 +1064,12 @@ export class Unit {
    */
   private getBestTextureKey(unitData?: UnitData): string | undefined {
     if (!unitData) return undefined;
+    const realTextureKey = getRealUnitTextureKey(this.scene, unitData);
+    if (realTextureKey) {
+      console.log(`[Unit] Using real texture: ${realTextureKey}`);
+      return realTextureKey;
+    }
+
     const baseKey = unitData.assetKey || unitData.id;
     const hdKey = `${baseKey}_512`;
     

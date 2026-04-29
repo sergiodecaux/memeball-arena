@@ -62,6 +62,7 @@ import {
 import { TOURNAMENT_KEY_KEYS } from '../config/assetKeys';
 import { loadImagesTactics } from '../assets/loading/ImageLoader';
 import { AssetPackManager } from '../assets/AssetPackManager';
+import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 // ⚠️ REMOVED: MYSTIC_CAPS - старая система коллекций убрана
 
 // ✅ ДОБАВЛЕНО: Константа для зоны свайпа
@@ -177,9 +178,13 @@ export class TeamScene extends Phaser.Scene {
 
   private async loadTacticsUnitPngs(): Promise<void> {
     const faction = playerData.getFaction() || DEFAULT_FACTION;
+    // Резервы могут включать стартовых/каталожных юнитов вне UnitsRepository — иначе PNG не в очереди loader.
     const unitIds = [
-      ...playerData.getTeamUnits(faction),
-      ...getRepositoryUnitsByFaction(faction).map((unit) => unit.id),
+      ...new Set<string>([
+        ...playerData.getTeamUnits(faction),
+        ...getRepositoryUnitsByFaction(faction).map((unit) => unit.id),
+        ...playerData.getOwnedUnits(faction).map((o) => o.id),
+      ]),
     ];
 
     try {
@@ -951,9 +956,14 @@ export class TeamScene extends Phaser.Scene {
 
     if (unit) {
       try {
+        const textureKey = getRealUnitTextureKey(this, unit);
         // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
-        const img = this.add.image(0, 0, unit.assetKey).setDisplaySize(r * 1.75, r * 1.75);
-        c.add(img);
+        if (textureKey) {
+          const img = this.add.image(0, 0, textureKey).setDisplaySize(r * 1.75, r * 1.75);
+          c.add(img);
+        } else {
+          c.add(this.add.text(0, 0, (index + 1).toString(), { fontSize: `${r * 0.8}px`, color: '#fff' }).setOrigin(0.5));
+        }
         c.add(this.add.text(0, r + 10, getClassIcon(unit.capClass), { fontSize: '12px' }).setOrigin(0.5));
       } catch {
         c.add(this.add.text(0, 0, (index + 1).toString(), { fontSize: `${r * 0.8}px`, color: '#fff' }).setOrigin(0.5));
@@ -1160,10 +1170,13 @@ export class TeamScene extends Phaser.Scene {
             circle.setStrokeStyle(unitIcon.circleStrokeWidth, getClassColor(unit.capClass));
             slot.add(circle);
 
-            // ✅ Используем fitImage для правильного масштабирования
-            const img = this.add.image(0, unitIcon.offsetY, unit.assetKey);
-            fitImage(img, unitIcon.size);
-            slot.add(img);
+            const textureKey = getRealUnitTextureKey(this, unit);
+            if (textureKey) {
+              // ✅ Используем fitImage для правильного масштабирования
+              const img = this.add.image(0, unitIcon.offsetY, textureKey);
+              fitImage(img, unitIcon.size);
+              slot.add(img);
+            }
 
             slot.add(
               this.add.text(0, layout.classIcon.offsetY, getClassIcon(unit.capClass), {
@@ -1888,10 +1901,15 @@ export class TeamScene extends Phaser.Scene {
     // Иконка юнита
     const iconSize = size * layout.unitIcon.sizeRatio;
     try {
-      const img = this.add.image(0, layout.unitIcon.offsetY, unit.assetKey);
-      // ✅ Используем fitImage для правильного масштабирования
-      fitImage(img, iconSize);
-      c.add(img);
+      const textureKey = getRealUnitTextureKey(this, unit);
+      if (textureKey) {
+        const img = this.add.image(0, layout.unitIcon.offsetY, textureKey);
+        // ✅ Используем fitImage для правильного масштабирования
+        fitImage(img, iconSize);
+        c.add(img);
+      } else {
+        c.add(this.add.text(0, layout.unitIcon.offsetY, '?', { fontSize: '32px', color: '#ffffff' }).setOrigin(0.5));
+      }
     } catch {
       c.add(this.add.text(0, layout.unitIcon.offsetY, '?', { fontSize: '32px', color: '#ffffff' }).setOrigin(0.5));
     }
@@ -2524,9 +2542,14 @@ export class TeamScene extends Phaser.Scene {
 
     // Иконка юнита
     try {
+      const textureKey = getRealUnitTextureKey(this, unit);
       // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
-      const img = this.add.image(iconX, iconY, unit.assetKey).setDisplaySize(62, 62);
-      c.add(img);
+      if (textureKey) {
+        const img = this.add.image(iconX, iconY, textureKey).setDisplaySize(62, 62);
+        c.add(img);
+      } else {
+        c.add(this.add.text(iconX, iconY, '?', { fontSize: '24px', color: '#ffffff' }).setOrigin(0.5));
+      }
     } catch {
       c.add(this.add.text(iconX, iconY, '?', { fontSize: '24px', color: '#ffffff' }).setOrigin(0.5));
     }

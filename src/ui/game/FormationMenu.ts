@@ -10,6 +10,7 @@ import { getCapSkin, CAP_SKINS, getRoleIcon, getRoleColor } from '../../data/Ski
 import { AudioManager } from '../../managers/AudioManager';
 import { FactionId, FACTIONS } from '../../constants/gameConstants';
 import { getUnit, getClassColor, getClassIcon } from '../../data/UnitsCatalog';
+import { getRealUnitTextureKey } from '../../utils/TextureHelpers';
 
 export interface FormationMenuCallbacks {
   onSelect: (formation: Formation) => void;
@@ -247,9 +248,14 @@ export class FormationMenu {
 
     if (unit) {
       try {
+        const textureKey = getRealUnitTextureKey(this.scene, unit);
         // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
-        const img = this.scene.add.image(0, 0, unit.assetKey).setDisplaySize(r * 1.75, r * 1.75);
-        container.add(img);
+        if (textureKey) {
+          const img = this.scene.add.image(0, 0, textureKey).setDisplaySize(r * 1.75, r * 1.75);
+          container.add(img);
+        } else {
+          container.add(this.scene.add.text(0, 0, (index + 1).toString(), { fontSize: `${r * 0.8}px`, color: '#fff' }).setOrigin(0.5));
+        }
         container.add(this.scene.add.text(0, r + 10, getClassIcon(unit.capClass), { fontSize: '12px' }).setOrigin(0.5));
       } catch {
         container.add(this.scene.add.text(0, 0, (index + 1).toString(), { fontSize: `${r * 0.8}px`, color: '#fff' }).setOrigin(0.5));
@@ -327,9 +333,10 @@ export class FormationMenu {
 
     // Изображение юнита
     try {
-      if (this.scene.textures.exists(unit.assetKey)) {
+      const textureKey = getRealUnitTextureKey(this.scene, unit);
+      if (textureKey) {
         // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
-        const img = this.scene.add.image(0, 0, unit.assetKey).setDisplaySize(radius * 2.0, radius * 2.0);
+        const img = this.scene.add.image(0, 0, textureKey).setDisplaySize(radius * 2.0, radius * 2.0);
         container.add(img);
       } else {
         // Fallback: цветной круг
