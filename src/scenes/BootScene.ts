@@ -9,7 +9,7 @@ import { loadAudio } from '../assets/loading/AudioLoader';
 import { loadImages } from '../assets/loading/ImageLoader';
 
 export class BootScene extends Phaser.Scene {
-  private static readonly LOADING_TIMEOUT_MS = 30_000;
+  private static readonly LOADING_TIMEOUT_MS = 120_000;
   private static readonly CRITICAL_FAILURE_THRESHOLD = 0.5;
   private static readonly REQUIRED_TEXTURE_KEYS = ['logo', 'ui_home_bg', 'ball_plasma', 'ui_scoreboard'];
 
@@ -152,14 +152,18 @@ export class BootScene extends Phaser.Scene {
     const barWidth = Math.min(300, width * 0.7);
     const percent = Math.round(value * 100);
 
-    if (this.loadingBar) {
-      this.loadingBar.clear();
-      this.loadingBar.fillStyle(0x00f2ff, 1);
-      this.loadingBar.fillRect(centerX - barWidth / 2, centerY + 10, barWidth * value, 20);
-    }
+    try {
+      if (this.loadingBar) {
+        this.loadingBar.clear();
+        this.loadingBar.fillStyle(0x00f2ff, 1);
+        this.loadingBar.fillRect(centerX - barWidth / 2, centerY + 10, barWidth * value, 20);
+      }
 
-    if (this.progressText) {
-      this.progressText.setText(`${percent}%`);
+      if (this.progressText) {
+        this.progressText.setText(`${percent}%`);
+      }
+    } catch (error) {
+      console.warn('[BootScene] Failed to update loading UI, skipping frame:', error);
     }
 
     if (typeof (window as any).updateLoadingProgress === 'function') {
@@ -263,12 +267,13 @@ export class BootScene extends Phaser.Scene {
   private installLoadingTimeout(): void {
     this.clearLoadingTimeout();
     this.loadTimeoutEvent = this.time.delayedCall(BootScene.LOADING_TIMEOUT_MS, () => {
-      console.warn('[BootScene] Loading timed out, forcing transition');
-      this.hideLoadingScreen();
-      if (!this.hasCriticalLoadingFailure()) {
-        this.navigateToNextScene();
-      } else {
-        this.showCriticalErrorModal('Загрузка заняла слишком много времени и завершилась с ошибками.');
+      console.warn('[BootScene] Loading is taking too long; waiting for loader completion');
+      if (this.loadingText) {
+        try {
+          this.loadingText.setText('Загрузка дольше обычного... Пожалуйста, подождите');
+        } catch {
+          // Ignore UI update errors: loader can still finish successfully.
+        }
       }
     });
   }
