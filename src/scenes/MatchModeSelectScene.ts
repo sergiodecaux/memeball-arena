@@ -11,6 +11,8 @@ import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { isWeekend } from '../utils/WeekUtils';
 import { LeagueTier, getLeagueTierOrder } from '../types/league';
 import { safeSceneStart } from '../utils/SceneHelpers';
+import { loadImagesBoot } from '../assets/loading/ImageLoader';
+import { loadAudioMenu } from '../assets/loading/AudioLoader';
 
 // ========== ТИПЫ ==========
 
@@ -128,6 +130,11 @@ export class MatchModeSelectScene extends Phaser.Scene {
   
   constructor() {
     super({ key: 'MatchModeSelectScene' });
+  }
+
+  preload(): void {
+    loadImagesBoot(this);
+    loadAudioMenu(this);
   }
   
   shutdown(): void {

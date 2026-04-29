@@ -7,6 +7,7 @@ import { UNITS_CATALOG } from '../data/UnitsCatalog';
 import { FACTION_ARENAS, FACTION_IDS, FACTIONS } from '../constants/gameConstants';
 import { LoadingOverlay } from '../ui/LoadingOverlay';
 import { UI_ICONS } from '../ui/Icons';
+import { ensureSafeImageLoading, isRealImageLoaded } from './loading/ImageLoader';
 
 type PackName = 'core' | 'shop' | 'match' | 'campaign' | 'initialLoad' | 'rareContent';
 
@@ -364,6 +365,8 @@ export class AssetPackManager {
       });
     }
 
+    ensureSafeImageLoading(scene);
+
     // If already loaded, resolve immediately
     if (this.isLoaded(packName)) {
       if (overlay) {
@@ -384,8 +387,8 @@ export class AssetPackManager {
     scene.load.maxParallelDownloads = 4;
 
     // Build queue lists only for assets not yet loaded
-    const imagesToLoad = pack.images.filter(({ key }) => !scene.textures.exists(key));
-    const audioToLoad = pack.audio.filter(({ key }) => !scene.cache.audio.exists(key));
+    const imagesToLoad = pack.images.filter(({ key }) => !scene.textures.exists(key) || !isRealImageLoaded(key));
+    const audioToLoad = pack.audio.filter(({ key }) => !(scene.cache as any).audio?.exists?.(key) && !scene.cache.audio.has(key));
 
     // If nothing to load, mark loaded and exit early (prevents unnecessary loader start)
     if (imagesToLoad.length === 0 && audioToLoad.length === 0) {
@@ -558,6 +561,7 @@ export class AssetPackManager {
    * Вызывать перед матчем или при просмотре деталей юнита.
    */
   static async loadUnitAssets(scene: Phaser.Scene, unitKeysOrIds: string[]): Promise<void> {
+    ensureSafeImageLoading(scene);
     const assetsToLoad: Array<{ key: string; url: string }> = [];
     
     // Фильтруем уникальные ключи
@@ -571,7 +575,7 @@ export class AssetPackManager {
       const key = unit.assetKey;
       
       // Проверяем, загружена ли уже текстура
-      if (!scene.textures.exists(key)) {
+      if (!scene.textures.exists(key) || !isRealImageLoaded(key)) {
         // Vite fix: убираем начальный слэш
         const url = unit.assetPath.startsWith('/') ? unit.assetPath.substring(1) : unit.assetPath;
         assetsToLoad.push({ key, url });
@@ -627,7 +631,7 @@ export class AssetPackManager {
     unitKeys: string[],
     overlay?: LoadingOverlay
   ): Promise<void> {
-    const missing = unitKeys.filter(key => !scene.textures.exists(key));
+    const missing = unitKeys.filter(key => !scene.textures.exists(key) || !isRealImageLoaded(key));
     
     if (missing.length === 0) {
       console.log('[AssetPackManager] All units already loaded');

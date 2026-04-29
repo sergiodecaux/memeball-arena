@@ -26,6 +26,8 @@ import { BattlePassBanner } from '../ui/menu/BattlePassBanner';
 import { versionChecker, VersionInfo } from '../utils/VersionChecker';
 import { UpdateNotificationOverlay } from '../ui/UpdateNotificationOverlay';
 import { globalCleanup } from '../utils/GlobalCleanup';
+import { loadImagesBoot, loadImagesMenu } from '../assets/loading/ImageLoader';
+import { loadAudioMenu } from '../assets/loading/AudioLoader';
 
 export class MainMenuScene extends Phaser.Scene {
   private s: number = 1;
@@ -51,6 +53,10 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   preload(): void {
+    loadImagesBoot(this);
+    loadImagesMenu(this);
+    loadAudioMenu(this);
+
     // Локальная подгрузка иконок главного меню (хранятся в public/assets/ui/main)
     this.load.image('icon_repository_sci', 'assets/ui/main/icon_repository_sci.png');
     this.load.image('icon_tasks_sci', 'assets/ui/main/icon_tasks_sci.png');

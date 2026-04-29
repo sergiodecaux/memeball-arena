@@ -17,6 +17,7 @@ import { getColors, hexToString, getFonts, TYPOGRAPHY, applyTextShadow } from '.
 import { AudioManager } from '../managers/AudioManager';
 import { hapticSelection, hapticImpact } from '../utils/Haptics';
 import MissionPreviewOverlay from '../ui/game/MissionPreviewOverlay';
+import { loadImagesCampaign } from '../assets/loading/ImageLoader';
 
 interface LevelNode {
   levelId: string;
@@ -83,7 +84,7 @@ export class CampaignSelectScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // Assets already loaded in Boot, nothing to do
+    loadImagesCampaign(this);
   }
 
   create(): void {

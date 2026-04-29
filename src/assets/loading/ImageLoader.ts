@@ -19,20 +19,190 @@ import {
   AIM_ASSIST_OFF_ICON,
 } from '../../config/assetKeys';
 
+const IMAGE_LOADER_PATCH_FLAG = '__image_loader_patch_installed__';
+const IMAGE_FALLBACK_WIDTH = 8;
+const IMAGE_FALLBACK_HEIGHT = 8;
+const realImageKeys = new Set<string>();
+const fallbackImageKeys = new Set<string>();
+
+function getBaseUrlPrefix(): string {
+  const baseUrl = import.meta.env.BASE_URL || '/';
+  return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+}
+
+function normalizeAssetPath(path: string): string {
+  const trimmed = path.trim();
+
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  // Remote/data/blob URLs should remain untouched.
+  if (/^(https?:\/\/|data:|blob:)/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('/assets/')) {
+    return trimmed.substring(1);
+  }
+
+  return trimmed;
+}
+
+function toResolvedUrl(path: string): string {
+  if (/^(https?:\/\/|data:|blob:)/i.test(path)) {
+    return path;
+  }
+
+  return new URL(path, window.location.origin + getBaseUrlPrefix()).toString();
+}
+
+function ensureFallbackTexture(scene: Phaser.Scene, key: string): void {
+  if (!key || scene.textures.exists(key)) {
+    return;
+  }
+
+  try {
+    const fallbackCanvas = scene.textures.createCanvas(key, IMAGE_FALLBACK_WIDTH, IMAGE_FALLBACK_HEIGHT);
+    const ctx = fallbackCanvas.getContext();
+
+    ctx.fillStyle = '#ff00ff';
+    ctx.fillRect(0, 0, IMAGE_FALLBACK_WIDTH, IMAGE_FALLBACK_HEIGHT);
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, IMAGE_FALLBACK_WIDTH / 2, IMAGE_FALLBACK_HEIGHT / 2);
+    ctx.fillRect(IMAGE_FALLBACK_WIDTH / 2, IMAGE_FALLBACK_HEIGHT / 2, IMAGE_FALLBACK_WIDTH / 2, IMAGE_FALLBACK_HEIGHT / 2);
+    fallbackCanvas.refresh();
+    fallbackImageKeys.add(key);
+
+    console.warn(`[ImageLoader] Fallback texture generated for "${key}"`);
+  } catch (error) {
+    console.error(`[ImageLoader] Failed to generate fallback texture for "${key}"`, error);
+  }
+}
+
+function prepareImageKeyForRealAsset(scene: Phaser.Scene, key: string): boolean {
+  if (!key || !scene.textures.exists(key)) {
+    return true;
+  }
+
+  if (realImageKeys.has(key)) {
+    return false;
+  }
+
+  try {
+    scene.textures.remove(key);
+    fallbackImageKeys.delete(key);
+    return true;
+  } catch (error) {
+    console.warn(`[ImageLoader] Could not replace fallback texture "${key}"`, error);
+    return false;
+  }
+}
+
+export function isRealImageLoaded(key: string): boolean {
+  return realImageKeys.has(key);
+}
+
+export function ensureSafeImageLoading(scene: Phaser.Scene): void {
+  const loader = scene.load as Phaser.Loader.LoaderPlugin & {
+    [IMAGE_LOADER_PATCH_FLAG]?: boolean;
+    __originalImageLoader__?: Phaser.Loader.LoaderPlugin['image'];
+  };
+
+  if (loader[IMAGE_LOADER_PATCH_FLAG]) {
+    return;
+  }
+
+  const originalImage = loader.image.bind(loader);
+  loader.__originalImageLoader__ = originalImage;
+
+  loader.on('filecomplete', (key: string, type: string) => {
+    if (type === 'image') {
+      realImageKeys.add(key);
+      fallbackImageKeys.delete(key);
+    }
+  });
+
+  loader.image = ((key: string | Phaser.Types.Loader.FileTypes.ImageFileConfig | Phaser.Types.Loader.FileTypes.ImageFileConfig[], url?: string, xhrSettings?: Phaser.Types.Loader.XHRSettingsObject) => {
+    try {
+      if (Array.isArray(key)) {
+        const normalizedBatch = key
+          .map((item) => ({
+            ...item,
+            url: typeof item.url === 'string' ? normalizeAssetPath(item.url) : item.url,
+          }))
+          .filter((item) => prepareImageKeyForRealAsset(scene, item.key));
+        if (normalizedBatch.length === 0) {
+          return loader;
+        }
+        return originalImage(normalizedBatch, url, xhrSettings);
+      }
+
+      if (typeof key === 'object' && key !== null) {
+        if (!prepareImageKeyForRealAsset(scene, key.key)) {
+          return loader;
+        }
+        const normalizedConfig = {
+          ...key,
+          url: typeof key.url === 'string' ? normalizeAssetPath(key.url) : key.url,
+        };
+        if (typeof normalizedConfig.url === 'string') {
+          console.log(`[ImageLoader] Queue image: key="${normalizedConfig.key}", url="${toResolvedUrl(normalizedConfig.url)}"`);
+        }
+        return originalImage(normalizedConfig, url, xhrSettings);
+      }
+
+      const normalizedUrl = typeof url === 'string' ? normalizeAssetPath(url) : url;
+      const imageKey = key as string;
+      if (!prepareImageKeyForRealAsset(scene, imageKey)) {
+        return loader;
+      }
+      if (typeof normalizedUrl === 'string') {
+        console.log(`[ImageLoader] Queue image: key="${imageKey}", url="${toResolvedUrl(normalizedUrl)}"`);
+      }
+      return originalImage(imageKey, normalizedUrl, xhrSettings);
+    } catch (error) {
+      const keyName = typeof key === 'string' ? key : (Array.isArray(key) ? 'batch' : key.key);
+      console.error(`[ImageLoader] Failed to queue image "${keyName}"`, error);
+      if (typeof key === 'string') {
+        ensureFallbackTexture(scene, key);
+      } else if (key && !Array.isArray(key)) {
+        ensureFallbackTexture(scene, key.key);
+      }
+      return loader;
+    }
+  }) as Phaser.Loader.LoaderPlugin['image'];
+
+  loader.on('loaderror', (file: Phaser.Loader.File) => {
+    if (file?.type !== 'image') {
+      return;
+    }
+    console.warn(
+      `[ImageLoader] loaderror key="${file.key}" src="${file.src || file.url || 'unknown'}"`,
+    );
+    ensureFallbackTexture(scene, file.key);
+  });
+
+  loader[IMAGE_LOADER_PATCH_FLAG] = true;
+}
+
 /**
  * Безопасная загрузка изображения — проверяет дубликаты
  */
 function safeLoadImage(scene: Phaser.Scene, key: string, url: string): boolean {
+  ensureSafeImageLoading(scene);
+
   // Проверяем что текстура ещё не загружена
   if (scene.textures.exists(key)) {
     return false;
   }
   
   try {
-    scene.load.image(key, url);
+    scene.load.image(key, normalizeAssetPath(url));
     return true;
   } catch (e) {
     console.warn(`[ImageLoader] Failed to queue: ${key}`, e);
+    ensureFallbackTexture(scene, key);
     return false;
   }
 }
@@ -51,6 +221,8 @@ function setupErrorHandler(scene: Phaser.Scene): void {
  * Loads minimal images required for boot (logo, menu background)
  */
 export function loadImagesBoot(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Loading boot image assets...');
   }
@@ -69,6 +241,8 @@ export function loadImagesBoot(scene: Phaser.Scene): void {
  * Loads images required for Main Menu (if not already in boot)
  */
 export function loadImagesMenu(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Loading menu image assets...');
   }
@@ -88,6 +262,8 @@ export function loadImagesMenu(scene: Phaser.Scene): void {
  * Loads images required for gameplay (units, arenas, ball skins)
  */
 export function loadImagesGameplay(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Loading gameplay image assets...');
   }
@@ -113,6 +289,8 @@ export function loadImagesGameplay(scene: Phaser.Scene): void {
  * Loads images required for campaign (map, chapter backgrounds, bosses, portraits)
  */
 export function loadImagesCampaign(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Loading campaign image assets...');
   }
@@ -133,6 +311,8 @@ export function loadImagesCampaign(scene: Phaser.Scene): void {
  * Loads images required for shop (cards, chests, cap collections, reward icons)
  */
 export function loadImagesShop(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Loading shop image assets...');
   }
@@ -154,6 +334,8 @@ export function loadImagesShop(scene: Phaser.Scene): void {
  * Split functions (loadImagesBoot, etc.) are available for future lazy loading
  */
 export function loadImages(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+
   if (import.meta.env.DEV) {
     console.log('[ImageLoader] Loading all image assets...');
   }

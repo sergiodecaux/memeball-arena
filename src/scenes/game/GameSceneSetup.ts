@@ -19,6 +19,7 @@ import { LevelConfig, ChapterConfig } from '../../types/CampaignTypes';
 import { getChapter } from '../../data/CampaignData';
 import { MultiplayerManager } from '../../managers/MultiplayerManager';
 import { AssetPackManager } from '../../assets/AssetPackManager';
+import { isRealImageLoaded } from '../../assets/loading/ImageLoader';
 import { LoadingOverlay } from '../../ui/LoadingOverlay';
 import { getUnit, TUTORIAL_LEGENDARY_UNITS } from '../../data/UnitsCatalog';
 import { getUnitById as getRepositoryUnit, UNITS_REPOSITORY } from '../../data/UnitsRepository';
@@ -73,6 +74,9 @@ export class GameSceneSetup {
 
     // 5. Рассчитываем границы поля
     const fieldBounds = this.calculateFieldBounds(state.fieldScale);
+
+    // 5.5. Догружаем реальные PNG для поля, мяча и общих матчевых UI.
+    await this.ensureStaticMatchAssetsLoaded();
 
     // 6. Создаём рендерер поля
     const fieldRenderer = this.createFieldRenderer(fieldBounds, state);
@@ -368,6 +372,17 @@ export class GameSceneSetup {
     }
   }
 
+  private async ensureStaticMatchAssetsLoaded(): Promise<void> {
+    const miniOverlay = new LoadingOverlay(this.scene);
+    miniOverlay.setText('Загрузка матча…');
+
+    try {
+      await AssetPackManager.ensure(this.scene, 'match', miniOverlay);
+    } finally {
+      miniOverlay.destroy();
+    }
+  }
+
   // ============================================================
   // ПОЛЕ И СУЩНОСТИ
   // ============================================================
@@ -529,7 +544,7 @@ export class GameSceneSetup {
     }
 
     // Проверяем, нужна ли догрузка
-    const missing = uniqueKeys.filter(k => !this.scene.textures.exists(k));
+    const missing = uniqueKeys.filter(k => !this.scene.textures.exists(k) || !isRealImageLoaded(k));
     
     if (missing.length === 0) {
       console.log('[GameSceneSetup] All unit assets already loaded');

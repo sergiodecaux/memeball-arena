@@ -3,6 +3,7 @@
 import Phaser from 'phaser';
 import { UIFactionId } from '../constants/factionUiConfig';
 import { globalCleanup } from '../utils/GlobalCleanup';
+import { ensureAudioLoaded, isAudioLoaded } from '../assets/loading/AudioLoader';
 
 export class AudioManager {
   private static instance: AudioManager;
@@ -28,6 +29,22 @@ export class AudioManager {
   private pendingMusicKey: string | null = null;
 
   private constructor() {}
+
+  private hasAudio(key: string): boolean {
+    return Boolean(this.scene && isAudioLoaded(this.scene, key));
+  }
+
+  private loadAudioThen(key: string, onLoaded: () => void): void {
+    if (!this.scene) {
+      return;
+    }
+
+    void ensureAudioLoaded(this.scene, key).then((loaded) => {
+      if (loaded) {
+        onLoaded();
+      }
+    });
+  }
 
   public static getInstance(): AudioManager {
     if (!AudioManager.instance) {
@@ -171,6 +188,11 @@ export class AudioManager {
   public playResultMusic(key: 'sfx_win' | 'sfx_lose' | 'sfx_draw'): void {
     if (!this.isSoundEnabled) return;
 
+    if (!this.hasAudio(key)) {
+      this.loadAudioThen(key, () => this.playResultMusic(key));
+      return;
+    }
+
     // Останавливаем предыдущую музыку результата
     this.stopResultMusic();
 
@@ -251,6 +273,11 @@ export class AudioManager {
     }
     
     // Другой трек или текущий не играет — останавливаем старый
+    if (!this.hasAudio(key)) {
+      this.loadAudioThen(key, () => this.playMusic(key));
+      return;
+    }
+
     this.stopMusic();
     
     try {
@@ -289,6 +316,11 @@ export class AudioManager {
     }
 
     if (this.ambience && this.ambience.isPlaying) return;
+
+    if (!this.hasAudio(key)) {
+      this.loadAudioThen(key, () => this.playAmbience(key));
+      return;
+    }
 
     try {
       if (this.scene && this.scene.sound) {
@@ -331,6 +363,11 @@ export class AudioManager {
     // Но если пользователь уже взаимодействовал, инициализируем AudioContext
     if (!this.audioContextReady) {
       this.audioContextReady = true; // Разрешаем для SFX (они короткие и по действию пользователя)
+    }
+
+    if (!this.hasAudio(key)) {
+      this.loadAudioThen(key, () => this.playSFX(key, config));
+      return;
     }
 
     try {
@@ -384,6 +421,10 @@ export class AudioManager {
 
   public playUIClick() {
     if (!this.isSoundEnabled || !this.scene?.sound) return;
+    if (!this.hasAudio('ui_click')) {
+      this.loadAudioThen('ui_click', () => this.playUIClick());
+      return;
+    }
     try {
       this.scene.sound.play('ui_click', { volume: 0.8, loop: false });
     } catch {
@@ -395,6 +436,10 @@ export class AudioManager {
 
   public playUISwoosh() {
     if (!this.isSoundEnabled || !this.scene?.sound) return;
+    if (!this.hasAudio('ui_swoosh')) {
+      this.loadAudioThen('ui_swoosh', () => this.playUISwoosh());
+      return;
+    }
     try {
       this.scene.sound.play('ui_swoosh', { volume: 0.8, loop: false });
     } catch {
@@ -434,9 +479,7 @@ export class AudioManager {
     // Сначала глушим любые хвосты прошлых фракционных звуков
     this.stopFactionSelectSounds();
 
-    const hasKey =
-      (this.scene.cache as any).audio?.exists?.(key) ??
-      this.scene.cache.audio.has(key);
+    const hasKey = this.hasAudio(key);
 
     console.log('[AudioManager] playFactionSelect', factionId, 'exists=', hasKey);
 
@@ -444,6 +487,7 @@ export class AudioManager {
       if (hasKey) {
         this.scene.sound.play(key, { volume: 0.9, loop: false });
       } else {
+        this.loadAudioThen(key, () => this.playFactionSelect(factionId));
         // fallback — мягкий swoosh
         this.scene.sound.play('sfx_swish', { volume: 0.8, loop: false });
       }
@@ -473,6 +517,11 @@ export class AudioManager {
    */
   public playPackReveal(volume: number = 0.75) {
     if (!this.isSoundEnabled || !this.scene?.sound) return;
+
+    if (!this.hasAudio('sfx_pack_reveal')) {
+      this.loadAudioThen('sfx_pack_reveal', () => this.playPackReveal(volume));
+      return;
+    }
 
     // Если уже что-то играло — глушим и чистим
     this.stopPackReveal();

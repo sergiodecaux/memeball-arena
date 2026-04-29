@@ -4,6 +4,19 @@ import Phaser from 'phaser';
 
 // Флаг для предотвращения повторной установки обработчика
 let errorHandlerSetup = false;
+const canSendAgentLogs = (): boolean => Boolean(window.DEV_MODE);
+
+function sendAgentLog(payload: unknown): void {
+  if (!canSendAgentLogs()) {
+    return;
+  }
+
+  fetch('http://127.0.0.1:7362/ingest/422d027d-7908-442f-94c4-876b2618395d', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e0960d' },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
 
 function setupAudioErrorHandler(scene: Phaser.Scene): void {
   if (errorHandlerSetup) return;
@@ -25,9 +38,112 @@ function setupAudioErrorHandler(scene: Phaser.Scene): void {
  * ✅ FIX: Helper для генерации абсолютных путей к аудиофайлам из public/
  * Файлы в public/ должны загружаться через абсолютные пути для корректной работы в production
  */
-function getAudioPath(relativePath: string): string {
-  // Для файлов в public/ используем абсолютные пути от корня домена
-  return relativePath.startsWith('/') ? relativePath : `/assets/audio/${relativePath}`;
+export function getAudioPath(relativePath: string): string {
+  const normalizedRelative = relativePath.replace(/^\/+/, '');
+  const baseUrl = import.meta.env.BASE_URL || './';
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  return `${normalizedBase}assets/audio/${normalizedRelative}`;
+}
+
+type AudioUrl = string | string[];
+
+const audioAssets: Record<string, AudioUrl> = {
+  sfx_click: getAudioPath('sfx/ui_click.mp3'),
+  ui_click: [getAudioPath('ui_click.ogg'), getAudioPath('ui_click.mp3')],
+  bgm_menu: getAudioPath('bgm/menu_theme.mp3'),
+  sfx_swish: getAudioPath('sfx/swish.mp3'),
+  ui_swoosh: [getAudioPath('ui_swoosh.ogg'), getAudioPath('ui_swoosh.mp3')],
+  fx_magma_select: [getAudioPath('fx_magma_select.ogg'), getAudioPath('fx_magma_select.mp3')],
+  fx_cyborg_select: [getAudioPath('ui_click.ogg'), getAudioPath('ui_click.mp3')],
+  fx_void_select: [getAudioPath('fx_void_select.ogg'), getAudioPath('fx_void_select.mp3')],
+  fx_terran_select: [getAudioPath('fx_terran_select.ogg'), getAudioPath('fx_terran_select.mp3')],
+  bgm_vs_theme: getAudioPath('bgm/vs_theme.mp3'),
+  bgm_match: getAudioPath('bgm/stadium_ambience.mp3'),
+  sfx_kick: getAudioPath('sfx/kick.mp3'),
+  sfx_clack: getAudioPath('sfx/collision.mp3'),
+  sfx_bounce: getAudioPath('sfx/wall_hit.mp3'),
+  sfx_post: getAudioPath('sfx/post.mp3'),
+  sfx_net: getAudioPath('sfx/net.mp3'),
+  sfx_goal: getAudioPath('sfx/goal.mp3'),
+  sfx_whistle: getAudioPath('sfx/whistle.mp3'),
+  sfx_win: getAudioPath('sfx/win.mp3'),
+  sfx_lose: getAudioPath('sfx/lose.mp3'),
+  sfx_goal_crowd: getAudioPath('voice/goal_crowd.mp3'),
+  sfx_flame_burst: getAudioPath('voice/flame_burst.mp3'),
+  sfx_whoosh: getAudioPath('sfx/whoosh.mp3'),
+  sfx_impact_heavy: getAudioPath('sfx/impact_heavy.mp3'),
+  sfx_pack_open: [getAudioPath('ui/sfx_pack_open.ogg'), getAudioPath('ui/sfx_pack_open.mp3')],
+  sfx_pack_reveal: [getAudioPath('ui/sfx_pack_reveal.ogg'), getAudioPath('ui/sfx_pack_reveal.mp3')],
+  sfx_card_pop: [getAudioPath('ui/sfx_card_pop.ogg'), getAudioPath('ui/sfx_card_pop.mp3')],
+  sfx_cash: getAudioPath('sfx/cash.mp3'),
+  voice_welcome: getAudioPath('voice/voice_welcome.mp3'),
+  voice_vs: getAudioPath('voice/voice_vs.mp3'),
+  voice_fight: getAudioPath('voice/voice_fight.mp3'),
+  voice_goal: getAudioPath('voice/voice_goal.mp3'),
+  voice_scream: getAudioPath('voice/voice_scream.mp3'),
+  voice_dominating: getAudioPath('voice/voice_dominating.mp3'),
+  voice_victory: getAudioPath('voice/voice_win.mp3'),
+  voice_defeat: getAudioPath('voice/voice_lose.mp3'),
+  voice_magma: getAudioPath('voice/voice_magma.mp3'),
+  voice_cyborg: getAudioPath('voice/voice_cyborg.mp3'),
+  voice_void: getAudioPath('voice/voice_void.mp3'),
+  voice_insect: getAudioPath('voice/voice_insect.mp3'),
+};
+
+const pendingAudioLoads = new Map<string, Promise<boolean>>();
+
+export function isAudioLoaded(scene: Phaser.Scene, key: string): boolean {
+  return Boolean((scene.cache as any).audio?.exists?.(key) ?? scene.cache.audio.has(key));
+}
+
+export function ensureAudioLoaded(scene: Phaser.Scene, key: string): Promise<boolean> {
+  if (isAudioLoaded(scene, key)) {
+    return Promise.resolve(true);
+  }
+
+  const url = audioAssets[key];
+  if (!url) {
+    return Promise.resolve(false);
+  }
+
+  const pending = pendingAudioLoads.get(key);
+  if (pending) {
+    return pending;
+  }
+
+  setupAudioErrorHandler(scene);
+
+  const promise = new Promise<boolean>((resolve) => {
+    const cleanup = () => {
+      scene.load.off(`filecomplete-audio-${key}`, onComplete);
+      scene.load.off('loaderror', onError);
+      pendingAudioLoads.delete(key);
+    };
+
+    const onComplete = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    const onError = (file: Phaser.Loader.File) => {
+      if (file.key !== key) {
+        return;
+      }
+      cleanup();
+      resolve(false);
+    };
+
+    scene.load.once(`filecomplete-audio-${key}`, onComplete);
+    scene.load.on('loaderror', onError);
+    scene.load.audio(key, url);
+
+    if (!scene.load.isLoading()) {
+      scene.load.start();
+    }
+  });
+
+  pendingAudioLoads.set(key, promise);
+  return promise;
 }
 
 /**
@@ -215,6 +331,9 @@ export function loadAudio(scene: Phaser.Scene): void {
   if (import.meta.env.DEV) {
     console.log('[AudioLoader] Loading all audio assets...');
   }
+  // #region agent log
+  sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H1', location: 'AudioLoader.ts:loadAudio', message: 'Audio load queued with base path', data: { baseUrl: import.meta.env.BASE_URL, sampleUiSwoosh: getAudioPath('ui_swoosh.mp3'), sampleSfxKick: getAudioPath('sfx/kick.mp3') }, timestamp: Date.now() });
+  // #endregion
 
   // Установить обработчик ошибок
   setupAudioErrorHandler(scene);

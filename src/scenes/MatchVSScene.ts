@@ -5,6 +5,8 @@ import Phaser from 'phaser';
 import { FactionId, FACTIONS } from '../constants/gameConstants';
 import { AudioManager } from '../managers/AudioManager';
 import { playerData } from '../data/PlayerData';
+import { loadImagesBoot } from '../assets/loading/ImageLoader';
+import { loadAudioVS } from '../assets/loading/AudioLoader';
 
 export interface MatchVSSceneData {
   matchContext: 'league' | 'tournament' | 'casual' | 'campaign' | 'freeplay';
@@ -27,6 +29,11 @@ export class MatchVSScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'MatchVSScene' });
+  }
+
+  preload(): void {
+    loadImagesBoot(this);
+    loadAudioVS(this);
   }
 
   init(data?: MatchVSSceneData): void {

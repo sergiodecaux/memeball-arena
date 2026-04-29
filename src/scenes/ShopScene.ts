@@ -36,6 +36,8 @@ import { getAllChests, getChestById, getChestByIdCompat, ChestData } from '../da
 import { openChest, applyRewardsToPlayer, summarizeRewards, RewardItem, RewardSummary } from '../data/ChestLoot';
 import { UNITS_REPOSITORY } from '../data/UnitsRepository';
 import { tgApp } from '../utils/TelegramWebApp';
+import { loadImagesShop } from '../assets/loading/ImageLoader';
+import { loadAudioShop } from '../assets/loading/AudioLoader';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { TOURNAMENT_KEY_KEYS } from '../config/assetKeys';
 import { ChestPreviewModal } from '../ui/modals/ChestPreviewModal';
@@ -107,7 +109,8 @@ export class ShopScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // Assets already loaded in Boot, nothing to do
+    loadImagesShop(this);
+    loadAudioShop(this);
   }
 
   create(): void {
