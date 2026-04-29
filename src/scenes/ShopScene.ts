@@ -143,9 +143,14 @@ export class ShopScene extends Phaser.Scene {
 
   private async loadShopUnitPngs(): Promise<void> {
     const currentFaction = playerData.getFaction() || FACTION_IDS[0];
+    const sortedFactions = [...FACTION_IDS].sort((a, b) =>
+      a === currentFaction ? -1 : b === currentFaction ? 1 : 0
+    );
     const unitIds = [...new Set([
       ...getPremiumUnits().map((unit) => unit.id),
-      ...getShopUnitsFromRepository(currentFaction).map((unit) => unit.id),
+      ...sortedFactions.flatMap((factionId) =>
+        getShopUnitsFromRepository(factionId).map((unit) => unit.id)
+      ),
     ])];
     const batchSize = 6;
 
