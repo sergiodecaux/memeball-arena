@@ -5,8 +5,8 @@ import { BallTextures } from '../assets/textures/BallTextures';
 import { FieldTextures } from '../assets/textures/FieldTextures';
 import { AvatarTextures } from '../assets/textures/AvatarTextures';
 import { playerData } from '../data/PlayerData';
-import { loadAudio } from '../assets/loading/AudioLoader';
 import { loadImages } from '../assets/loading/ImageLoader';
+import { CARDS_CATALOG, CardDefinition } from '../data/CardsCatalog';
 
 export class BootScene extends Phaser.Scene {
   private static readonly LOADING_TIMEOUT_MS = 120_000;
@@ -76,13 +76,6 @@ export class BootScene extends Phaser.Scene {
       console.error('[BootScene] Loading error:', e);
     }
 
-    try {
-      loadAudio(this);
-    } catch (e) {
-      this.criticalErrorCount += 1;
-      console.error('[BootScene] Loading error:', e);
-    }
-
     this.queuedAssetCount = this.getQueuedAssetCount();
     this.installLoadingTimeout();
     this.loadVersionMeta();
@@ -93,6 +86,7 @@ export class BootScene extends Phaser.Scene {
 
     this.generateTexturesSafely();
     this.ensureCriticalTextureFallbacks();
+    this.ensureCardTextureFallbacks();
     // #region agent log
     this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H3', location: 'BootScene.ts:create:afterTextureGen', message: 'Boot create reached', data: { hasBallPlasma: this.textures.exists('ball_plasma'), hasMainMenuScene: this.scene.get('MainMenuScene') !== undefined }, timestamp: Date.now() });
     // #endregion
@@ -384,6 +378,69 @@ export class BootScene extends Phaser.Scene {
       g.destroy();
       console.warn('[BootScene] Generated fallback texture for ball_plasma');
     }
+  }
+
+  private ensureCardTextureFallbacks(): void {
+    Object.values(CARDS_CATALOG).forEach((card) => {
+      const key = `card_${card.id}`;
+      if (this.textures.exists(key)) {
+        return;
+      }
+
+      this.generateCardFallbackTexture(key, card);
+    });
+  }
+
+  private generateCardFallbackTexture(key: string, card: CardDefinition): void {
+    const width = 256;
+    const height = 356;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    const colors: Record<string, { bg: string; accent: string; symbol: string }> = {
+      magma: { bg: '#3a1208', accent: '#ff6b35', symbol: 'M' },
+      cyborg: { bg: '#061a2a', accent: '#00d9ff', symbol: 'C' },
+      void: { bg: '#18072f', accent: '#b45cff', symbol: 'V' },
+      insect: { bg: '#082414', accent: '#52ff66', symbol: 'I' },
+    };
+    const theme = colors[card.factionId] ?? colors.magma;
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    gradient.addColorStop(0, theme.accent);
+    gradient.addColorStop(0.18, theme.bg);
+    gradient.addColorStop(1, '#050505');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = theme.accent;
+    ctx.lineWidth = 8;
+    ctx.strokeRect(8, 8, width - 16, height - 16);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath();
+    ctx.arc(width / 2, 126, 70, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 76px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(theme.symbol, width / 2, 126);
+
+    ctx.font = 'bold 22px Arial';
+    ctx.fillText(card.name, width / 2, 250);
+
+    ctx.font = '16px Arial';
+    ctx.fillStyle = theme.accent;
+    ctx.fillText(card.rarity.toUpperCase(), width / 2, 292);
+
+    this.textures.addCanvas(key, canvas);
   }
 
   private sendAgentLog(payload: unknown): void {
