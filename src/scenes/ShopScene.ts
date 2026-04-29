@@ -139,19 +139,42 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private async loadShopUnitPngs(): Promise<void> {
-    const unitIds = [
+    const currentFaction = playerData.getFaction() || FACTION_IDS[0];
+    const priorityUnits = [
       ...getPremiumUnits().map((unit) => unit.id),
-      ...FACTION_IDS.flatMap((factionId) => getShopUnitsFromRepository(factionId).map((unit) => unit.id)),
+      ...getShopUnitsFromRepository(currentFaction).map((unit) => unit.id),
     ];
+    const restUnits = FACTION_IDS
+      .filter((factionId) => factionId !== currentFaction)
+      .flatMap((factionId) => getShopUnitsFromRepository(factionId).map((unit) => unit.id));
+    const unitIds = [...new Set([...priorityUnits, ...restUnits])];
+    const batchSize = 10;
 
     try {
-      await AssetPackManager.loadUnitAssets(this, unitIds);
-      if (this.scene.isActive()) {
-        this.renderContent();
+      for (let index = 0; index < unitIds.length && this.scene.isActive(); index += batchSize) {
+        await AssetPackManager.loadUnitAssets(this, unitIds.slice(index, index + batchSize));
+        if (this.scene.isActive()) {
+          this.renderContent();
+        }
+
+        if (index + batchSize < unitIds.length) {
+          await new Promise<void>((resolve) => this.time.delayedCall(40, () => resolve()));
+        }
       }
     } catch (error) {
       console.warn('[ShopScene] Failed to lazy-load shop unit PNGs:', error);
     }
+  }
+
+  private getBestUnitTextureKey(unit: Pick<AnyUnitData, 'id' | 'assetKey'>): string | null {
+    const candidates = [
+      `${unit.assetKey}_512`,
+      unit.assetKey,
+      `${unit.id}_512`,
+      unit.id,
+    ];
+
+    return candidates.find((key) => this.textures.exists(key)) || null;
   }
 
   shutdown(): void {
@@ -714,11 +737,12 @@ export class ShopScene extends Phaser.Scene {
 
     // ========== ИКОНКА ЮНИТА (слева, как у обычных) ==========
     const iconX = 60, iconY = 70, iconSize = 100;
+    const textureKey = this.getBestUnitTextureKey(unit);
     
-    if (this.textures.exists(unit.assetKey)) {
+    if (textureKey) {
       // Glow эффект для owned
       if (isOwned) {
-        const glow = this.add.image(iconX, iconY, unit.assetKey)
+        const glow = this.add.image(iconX, iconY, textureKey)
           .setDisplaySize(iconSize + 24, iconSize + 24)
           .setTint(rarityColor)
           .setAlpha(0.4)
@@ -738,7 +762,7 @@ export class ShopScene extends Phaser.Scene {
       }
       
       // Основное изображение
-      const unitImg = this.add.image(iconX, iconY, unit.assetKey)
+      const unitImg = this.add.image(iconX, iconY, textureKey)
         .setDisplaySize(iconSize, iconSize)
         .setAlpha(isOwned ? 1 : 0.75);
       container.add(unitImg);
@@ -1072,9 +1096,10 @@ export class ShopScene extends Phaser.Scene {
       container.add(overlay);
       
       const iconX = 60, iconY = 70;
-      if (this.textures.exists(unit.assetKey)) {
+      const textureKey = this.getBestUnitTextureKey(unit);
+      if (textureKey) {
         // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
-        const img = this.add.image(iconX, iconY, unit.assetKey)
+        const img = this.add.image(iconX, iconY, textureKey)
           .setDisplaySize(88, 88)
           .setAlpha(0.35)
           .setTint(0x888888);
@@ -1101,16 +1126,17 @@ export class ShopScene extends Phaser.Scene {
 
     // ✅ Увеличенный размер для pop-out (рога/шлемы выходят за круг)
     const iconX = 60, iconY = 70, iconSize = 100;
+    const textureKey = this.getBestUnitTextureKey(unit);
 
-    if (this.textures.exists(unit.assetKey)) {
+    if (textureKey) {
       if (isOwned) {
-        const glow = this.add.image(iconX, iconY, unit.assetKey)
+        const glow = this.add.image(iconX, iconY, textureKey)
           .setDisplaySize(iconSize + 20, iconSize + 20)
           .setTint(faction.color).setAlpha(0.35).setBlendMode(Phaser.BlendModes.ADD);
         container.add(glow);
         this.tweens.add({ targets: glow, alpha: 0.15, scale: 1.1, duration: 1500, yoyo: true, repeat: -1 });
       }
-      container.add(this.add.image(iconX, iconY, unit.assetKey)
+      container.add(this.add.image(iconX, iconY, textureKey)
         .setDisplaySize(iconSize, iconSize)
         .setAlpha(isOwned ? 1 : 0.8));
     }

@@ -188,6 +188,17 @@ export class CollectionScene extends Phaser.Scene {
       console.warn('[CollectionScene] Failed to lazy-load unit PNGs:', error);
     }
   }
+
+  private getBestUnitTextureKey(unit: Pick<RepoUnitData, 'id' | 'assetKey'>): string | null {
+    const candidates = [
+      `${unit.assetKey}_512`,
+      unit.assetKey,
+      `${unit.id}_512`,
+      unit.id,
+    ];
+
+    return candidates.find((key) => this.textures.exists(key)) || null;
+  }
   
   /**
    * Пытается обеспечить наличие текстуры: лог, генерация fallback
@@ -651,13 +662,9 @@ export class CollectionScene extends Phaser.Scene {
     container.add(cardGraphics);
 
     // Изображение юнита (всегда показываем, но затемняем если не открыт)
-    // ✅ ИСПРАВЛЕНО: Используем unit.id вместо unit.assetKey, так как ImageLoader загружает по id
-    // ⚠️ FIX: Используем unit.assetKey вместо unit.id, так как они могут отличаться!
     const textureKey = unit.assetKey;
-    // Получаем лучший ключ текстуры (HD или базовый)
     const hdKey = `${unit.assetKey}_512`;
-    const bestTextureKey = this.textures.exists(hdKey) ? hdKey : 
-                           this.textures.exists(unit.assetKey) ? unit.assetKey : null;
+    const bestTextureKey = this.getBestUnitTextureKey(unit);
     
     const addUnitImage = (keyToUse: string) => {
       try {
@@ -995,22 +1002,16 @@ export class CollectionScene extends Phaser.Scene {
     // Изображение юнита (большое, всегда в полном цвете в модалке)
     const imageSize = 200;
     
-    // ✅ FIX: Используем unit.assetKey для совместимости с ImageLoader и BootScene алиасами
     const textureKey = unit.assetKey;
     const hdKey = `${textureKey}_512`;
-    
-    // Пытаемся использовать текстуру (сначала базовую, потом HD)
+    const bestTextureKey = this.getBestUnitTextureKey(unit);
+
+    // Пытаемся использовать текстуру (assetKey/id, включая возможные HD-алиасы)
     let imageAdded = false;
-    if (this.textures.exists(textureKey)) {
-      const unitImage = this.add.image(0, yOffset + imageSize / 2, textureKey);
+    if (bestTextureKey) {
+      const unitImage = this.add.image(0, yOffset + imageSize / 2, bestTextureKey);
       unitImage.setDisplaySize(imageSize, imageSize);
       unitImage.setAlpha(1); // Всегда полный цвет в модалке
-      this.modalContainer.add(unitImage);
-      imageAdded = true;
-    } else if (this.textures.exists(hdKey)) {
-      const unitImage = this.add.image(0, yOffset + imageSize / 2, hdKey);
-      unitImage.setDisplaySize(imageSize, imageSize);
-      unitImage.setAlpha(1);
       this.modalContainer.add(unitImage);
       imageAdded = true;
     }

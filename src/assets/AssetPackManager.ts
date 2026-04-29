@@ -614,27 +614,34 @@ export class AssetPackManager {
     return new Promise((resolve) => {
       let loadedCount = 0;
       const total = assetsToLoad.length;
+      const pendingKeys = new Set(assetsToLoad.map(asset => asset.key));
 
       // Обработчик одного файла
-      const checkComplete = () => {
+      const checkComplete = (key: string) => {
+        if (!pendingKeys.delete(key)) {
+          return;
+        }
+
         loadedCount++;
         if (loadedCount >= total) {
+          scene.load.off('loaderror', handleLoadError);
           resolve();
         }
       };
 
+      const handleLoadError = (file: Phaser.Loader.File) => {
+        if (pendingKeys.has(file.key)) {
+          console.warn(`[AssetPackManager] Failed to load unit: ${file.key}`);
+          checkComplete(file.key); // Считаем как выполненное, чтобы не зависнуть
+        }
+      };
+
+      scene.load.on('loaderror', handleLoadError);
+
       assetsToLoad.forEach(asset => {
         scene.load.image(asset.key, asset.url);
         // Используем once для каждого файла, так надежнее чем общий complete при параллельных загрузках
-        scene.load.once(`filecomplete-image-${asset.key}`, checkComplete);
-        
-        // Обработка ошибок для конкретного файла
-        scene.load.once(`loaderror`, (file: Phaser.Loader.File) => {
-          if (file.key === asset.key) {
-            console.warn(`[AssetPackManager] Failed to load unit: ${asset.key}`);
-            checkComplete(); // Считаем как выполненное, чтобы не зависнуть
-          }
-        });
+        scene.load.once(`filecomplete-image-${asset.key}`, () => checkComplete(asset.key));
       });
 
       scene.load.start();
