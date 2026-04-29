@@ -321,7 +321,6 @@ export function loadImagesShop(scene: Phaser.Scene): void {
   
   loadCardAssets(scene);
   loadChestAssets(scene);
-  loadCapCollectionAssets(scene);
   loadRewardIcons(scene);
   
   if (import.meta.env.DEV) {
@@ -336,7 +335,6 @@ export function loadImagesShop(scene: Phaser.Scene): void {
 export function loadImagesRepository(scene: Phaser.Scene): void {
   ensureSafeImageLoading(scene);
 
-  loadCapCollectionAssets(scene);
   loadFactionBackgrounds(scene);
   loadFactionTokens(scene);
   loadRewardIcons(scene);
@@ -348,7 +346,6 @@ export function loadImagesRepository(scene: Phaser.Scene): void {
 export function loadImagesTactics(scene: Phaser.Scene): void {
   ensureSafeImageLoading(scene);
 
-  loadCapCollectionAssets(scene);
   loadFactionTokens(scene);
   loadFactionArenas(scene);
   loadBallSkins(scene);

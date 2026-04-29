@@ -38,6 +38,7 @@ import { UNITS_REPOSITORY } from '../data/UnitsRepository';
 import { tgApp } from '../utils/TelegramWebApp';
 import { loadImagesShop } from '../assets/loading/ImageLoader';
 import { loadAudioShop } from '../assets/loading/AudioLoader';
+import { AssetPackManager } from '../assets/AssetPackManager';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { TOURNAMENT_KEY_KEYS } from '../config/assetKeys';
 import { ChestPreviewModal } from '../ui/modals/ChestPreviewModal';
@@ -126,12 +127,31 @@ export class ShopScene extends Phaser.Scene {
     this.createContentArea();
     this.renderContent();
     this.setupScrolling();
+    this.time.delayedCall(50, () => {
+      void this.loadShopUnitPngs();
+    });
     
     // ✅ Инициализация свайп-навигации
     this.swipeManager = new SwipeNavigationManager(this, {
       onBack: () => this.handleBack(),
     });
     this.swipeManager.enable();
+  }
+
+  private async loadShopUnitPngs(): Promise<void> {
+    const unitIds = [
+      ...getPremiumUnits().map((unit) => unit.id),
+      ...FACTION_IDS.flatMap((factionId) => getShopUnitsFromRepository(factionId).map((unit) => unit.id)),
+    ];
+
+    try {
+      await AssetPackManager.loadUnitAssets(this, unitIds);
+      if (this.scene.isActive()) {
+        this.renderContent();
+      }
+    } catch (error) {
+      console.warn('[ShopScene] Failed to lazy-load shop unit PNGs:', error);
+    }
   }
 
   shutdown(): void {

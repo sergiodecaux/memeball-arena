@@ -17,6 +17,7 @@ import { BattlePassUnitPreview } from '../ui/previews/BattlePassUnitPreview';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { createText } from '../utils/TextFactory';
 import { loadImagesRepository } from '../assets/loading/ImageLoader';
+import { AssetPackManager } from '../assets/AssetPackManager';
 
 /**
  * Предотвращает нативные события браузера на pointer событии
@@ -139,6 +140,10 @@ export class CollectionScene extends Phaser.Scene {
         }).setOrigin(0.5);
         this.contentContainer.add(errorText);
       }
+
+      this.time.delayedCall(50, () => {
+        void this.loadVisibleUnitPngs();
+      });
       
       // Скролл
       this.setupScroll();
@@ -163,6 +168,24 @@ export class CollectionScene extends Phaser.Scene {
       } catch (fallbackError) {
         console.error('[CollectionScene] Failed to return to MainMenuScene:', fallbackError);
       }
+    }
+  }
+
+  private async loadVisibleUnitPngs(): Promise<void> {
+    if (!this.selectedFaction || !this.scene.isActive()) {
+      return;
+    }
+
+    const units = getRepositoryUnitsByFaction(this.selectedFaction);
+    const unitIds = units.map((unit) => unit.id);
+
+    try {
+      await AssetPackManager.loadUnitAssets(this, unitIds);
+      if (this.scene.isActive()) {
+        this.renderUnitsGrid();
+      }
+    } catch (error) {
+      console.warn('[CollectionScene] Failed to lazy-load unit PNGs:', error);
     }
   }
   
@@ -454,6 +477,9 @@ export class CollectionScene extends Phaser.Scene {
         this.updateFactionBackground();
         this.renderUnitsGrid();
         this.createFactionTabs(); // Перерисовываем табы
+        this.time.delayedCall(50, () => {
+          void this.loadVisibleUnitPngs();
+        });
       }
     });
 

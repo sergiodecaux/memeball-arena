@@ -61,6 +61,7 @@ import {
 } from '../data/CardsCatalog';
 import { TOURNAMENT_KEY_KEYS } from '../config/assetKeys';
 import { loadImagesTactics } from '../assets/loading/ImageLoader';
+import { AssetPackManager } from '../assets/AssetPackManager';
 // ⚠️ REMOVED: MYSTIC_CAPS - старая система коллекций убрана
 
 // ✅ ДОБАВЛЕНО: Константа для зоны свайпа
@@ -167,8 +168,28 @@ export class TeamScene extends Phaser.Scene {
     
     // ✅ Теперь настраиваем скролл (после SwipeManager)
     this.setupInteractions();
+    this.time.delayedCall(50, () => {
+      void this.loadTacticsUnitPngs();
+    });
     
     console.log('[TeamScene] SwipeManager initialized and enabled');
+  }
+
+  private async loadTacticsUnitPngs(): Promise<void> {
+    const faction = playerData.getFaction() || DEFAULT_FACTION;
+    const unitIds = [
+      ...playerData.getTeamUnits(faction),
+      ...getRepositoryUnitsByFaction(faction).map((unit) => unit.id),
+    ];
+
+    try {
+      await AssetPackManager.loadUnitAssets(this, unitIds);
+      if (this.scene.isActive()) {
+        this.renderContent();
+      }
+    } catch (error) {
+      console.warn('[TeamScene] Failed to lazy-load tactics unit PNGs:', error);
+    }
   }
 
   private cleanupBeforeCreate(): void {
