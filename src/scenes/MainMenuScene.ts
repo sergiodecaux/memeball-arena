@@ -27,7 +27,7 @@ import { versionChecker, VersionInfo } from '../utils/VersionChecker';
 import { UpdateNotificationOverlay } from '../ui/UpdateNotificationOverlay';
 import { globalCleanup } from '../utils/GlobalCleanup';
 import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
-import { loadAudioBoot } from '../assets/loading/AudioLoader';
+import { loadAudioMenu } from '../assets/loading/AudioLoader';
 import { addAssetLoadingBackdrop, destroyAssetLoadingBackdrop } from '../ui/AssetsLoadingBackdrop';
 
 export class MainMenuScene extends Phaser.Scene {
@@ -66,7 +66,7 @@ export class MainMenuScene extends Phaser.Scene {
     this.load.image('logo', 'assets/images/logo.webp');
     this.load.image('ui_home_bg', 'assets/ui/backgrounds/home_bg.webp');
     this.load.image('ui_scoreboard', 'assets/ui/scoreboard.png');
-    loadAudioBoot(this);
+    loadAudioMenu(this);
 
     // Локальная подгрузка иконок главного меню (хранятся в public/assets/ui/main)
     this.load.image('icon_repository_sci', 'assets/ui/main/icon_repository_sci.png');
@@ -80,6 +80,18 @@ export class MainMenuScene extends Phaser.Scene {
     this.load.image('ui_rewards_crystals', 'assets/ui/icons/rewards/icon_currency_crystals.png');
     this.load.image('ui_settings_gear', 'assets/ui/icons/system/icon_settings_gear.png');
     this.load.image('ui_player_level', 'assets/ui/icons/player/icon_player_level.png');
+
+    /** Музыка меню после декодирования ассетов — не ждём отдельный экран */
+    const startMenuMusicEarly = (): void => {
+      try {
+        const audio = AudioManager.getInstance();
+        audio.init(this);
+        audio.playMusic('bgm_menu');
+      } catch {
+        //
+      }
+    };
+    this.load.once('complete', startMenuMusicEarly);
   }
 
   shutdown(): void {

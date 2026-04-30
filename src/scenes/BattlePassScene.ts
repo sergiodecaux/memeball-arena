@@ -71,6 +71,8 @@ export class BattlePassScene extends Phaser.Scene {
   // Event subscriptions
   private bpEventCallbacks: { event: string; callback: Function }[] = [];
 
+  private carouselFrameKey = -1;
+
   constructor() {
     super({ key: 'BattlePassScene' });
   }
@@ -233,14 +235,6 @@ export class BattlePassScene extends Phaser.Scene {
     const title = this.add.text(width / 2, 40 * s, 'БОЕВОЙ ПРОПУСК', {
       fontSize: `${28 * s}px`, fontFamily: fonts.tech, color: '#ffffff',
     }).setOrigin(0.5);
-    
-    // Глитч
-    this.time.addEvent({
-      delay: 3000, loop: true,
-      callback: () => {
-        this.tweens.add({ targets: title, x: title.x + Phaser.Math.Between(-3, 3), duration: 50, yoyo: true, repeat: 2 });
-      },
-    });
     
     const seasonNameRu = 'Галактические Легенды'; // Русское название сезона
     this.add.text(width / 2, 65 * s, seasonNameRu.toUpperCase(), {
@@ -503,10 +497,11 @@ export class BattlePassScene extends Phaser.Scene {
     // Используем scene.events.once('update') чтобы гарантировать, что все расчёты завершены
     this.events.once('update', () => {
       if (this.isDestroyed || !this.totalItemWidth) return;
-      
+
       const season = getCurrentSeason();
       const progress = battlePassManager.getProgress();
-      const initialEndTier = Math.min(12, season.maxTier);
+      /** Первичная отрисовка: запас дорожек, чтобы не было «дыр» при скролле */
+      const initialEndTier = Math.min(Math.max(Math.ceil(progress.currentTier / 12) * 14, 20), season.maxTier);
       
       for (let tier = 1; tier <= initialEndTier; tier++) {
         if (this.visibleTierNodes.has(tier)) continue;
@@ -515,7 +510,7 @@ export class BattlePassScene extends Phaser.Scene {
         if (!tierData) continue;
         
         const tierContainer = this.add.container(0, 0).setDepth(10);
-        const x = (tier - 1) * this.totalItemWidth + this.tierWidth / 2 + 20 * this.s;
+        const x = (tier - 1) * this.totalItemWidth + this.tierWidth / 2 + 30 * this.s;
 
         if (tierData.freeReward) {
           const freeNode = this.createRewardNode(
@@ -548,6 +543,8 @@ export class BattlePassScene extends Phaser.Scene {
       if (import.meta.env.DEV) {
         console.log(`[BattlePass] Initial force-load: ${this.visibleTierNodes.size} tiers`);
       }
+
+      this.updateVisibleTiers();
     });
   }
 
@@ -558,15 +555,16 @@ export class BattlePassScene extends Phaser.Scene {
 
     const { width } = this.scale;
     const season = getCurrentSeason();
-    
-    // ✅ ИСПРАВЛЕНО: Увеличенный буфер для предзагрузки (1.5 экрана в каждую сторону)
-    const bufferZone = width * 1.5;
-    const viewportLeft = -this.scrollX - bufferZone;
-    const viewportRight = -this.scrollX + width + bufferZone;
-    
-    // ✅ ИСПРАВЛЕНО: Симметричная формула расчёта диапазона
-    const startTier = Math.max(1, Math.floor(viewportLeft / this.totalItemWidth) + 1);
-    const endTier = Math.min(season.maxTier, Math.ceil(viewportRight / this.totalItemWidth));
+    const step = this.totalItemWidth;
+
+    /*
+     * Видимость тиров считается в координатах контента: scrollContainer.x = -scrollX.
+     * Тир занимает ~step px по горизонтали. Раньше использовался знак −scrollX, из‑за чего
+     * при любом горизонтальном скролле оставалось ~7 дорожек вместо догрузки 8–30.
+     */
+    const padTiers = Math.max(10, Math.ceil(width / Math.max(step, 1)) + 10);
+    const startTier = Math.max(1, Math.floor(this.scrollX / step) + 1 - padTiers);
+    const endTier = Math.min(season.maxTier, Math.ceil((this.scrollX + width) / step) + padTiers);
     
     // Пропускаем если диапазон не изменился
     if (startTier === this.lastVisibleRange.start && endTier === this.lastVisibleRange.end) {
@@ -610,7 +608,7 @@ export class BattlePassScene extends Phaser.Scene {
       if (!tierData) continue;
 
       const tierContainer = this.add.container(0, 0).setDepth(10);
-      const x = (tier - 1) * this.totalItemWidth + this.tierWidth / 2 + 20 * this.s;
+      const x = (tier - 1) * this.totalItemWidth + this.tierWidth / 2 + 30 * this.s;
 
       // FREE reward (верхняя дорожка)
       if (tierData.freeReward) {
@@ -1530,39 +1528,38 @@ export class BattlePassScene extends Phaser.Scene {
   }
 
   update(time: number, delta: number): void {
-    // 1. Tilt Effect
-    if (this.scrollContainer) {
-        const velocity = this.scrollX - this.prevScrollX;
-        this.prevScrollX = this.scrollX;
-        const targetSkew = Phaser.Math.Clamp(velocity * 0.05, -0.05, 0.05);
-        this.scrollContainer.rotation = Phaser.Math.Linear(this.scrollContainer.rotation, targetSkew, 0.1);
-
-        // 2. CAROUSEL SCALING EFFECT
-        const centerX = this.scale.width / 2;
-        const worldContainerX = this.scrollContainer.x;
-        
-        this.scrollContainer.each((child: any) => {
-            // Filter: Only apply to reward Containers (not Graphics like track lines)
-            if (child.type === 'Container') {
-                const childWorldX = worldContainerX + child.x;
-                const dist = Math.abs(centerX - childWorldX);
-                const maxDist = this.scale.width * 0.6; // Distance where scale is min
-                
-                // Calculate scale: 1.0 at center, 0.85 at edges
-                let targetScale = 1.0;
-                if (dist < maxDist) {
-                    // Cosine interpolation for smooth drop-off
-                    const ratio = dist / maxDist;
-                    targetScale = 0.85 + (0.15 * Math.cos(ratio * Math.PI / 2));
-                } else {
-                    targetScale = 0.85;
-                }
-                
-                // Apply scale smoothly
-                child.setScale(Phaser.Math.Linear(child.scaleX, targetScale, 0.2));
-            }
-        });
+    if (!this.scrollContainer?.active || this.visibleTierNodes.size === 0) {
+      return;
     }
+
+    const velocity = this.scrollX - this.prevScrollX;
+    this.prevScrollX = this.scrollX;
+    const targetSkew = Phaser.Math.Clamp(velocity * 0.035, -0.04, 0.04);
+    this.scrollContainer.rotation = Phaser.Math.Linear(this.scrollContainer.rotation, targetSkew, 0.12);
+
+    // Карусельный масштаб только для видимых ячеек (не каждый child scrollContainer → меньше лагов)
+    const centerX = this.scale.width / 2;
+    const worldContainerX = this.scrollContainer.x;
+    const maxDist = Math.max(this.scale.width * 0.5, 200 * this.s);
+    /** Реже апдейтим масштаб на слабом Telegram WebView */
+    const framePulse = Math.floor(time / 50);
+    const shouldPulse = framePulse !== this.carouselFrameKey;
+    this.carouselFrameKey = framePulse;
+    if (!shouldPulse && Math.abs(velocity) < 0.5) {
+      return;
+    }
+
+    this.visibleTierNodes.forEach((child) => {
+      if (!child?.active || child.type !== 'Container') return;
+      const childWorldX = worldContainerX + child.x;
+      const dist = Math.abs(centerX - childWorldX);
+      let targetScale = 0.92;
+      if (dist < maxDist) {
+        const ratio = dist / maxDist;
+        targetScale = 0.9 + 0.1 * Math.cos((ratio * Math.PI) / 2);
+      }
+      child.setScale(Phaser.Math.Linear(child.scaleX, targetScale, 0.35));
+    });
   }
 
   private onRewardClaimed(): void {

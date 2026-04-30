@@ -210,6 +210,16 @@ export function loadAudioMenu(scene: Phaser.Scene): void {
   }
 }
 
+/** SFX получения наград (квесты и т.п.: cash + pop). */
+export function loadAudioRewardClaim(scene: Phaser.Scene): void {
+  if (!isAudioLoaded(scene, 'sfx_cash')) {
+    scene.load.audio('sfx_cash', audioAssets.sfx_cash as string);
+  }
+  if (!isAudioLoaded(scene, 'sfx_card_pop')) {
+    scene.load.audio('sfx_card_pop', audioAssets.sfx_card_pop as string[]);
+  }
+}
+
 /**
  * Loads audio required for VS screen (before match)
  */

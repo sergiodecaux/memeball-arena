@@ -3,6 +3,8 @@
 import Phaser from 'phaser';
 import { playerData } from '../data/PlayerData';
 import { AVATAR_KEYS } from '../assets/textures/AvatarTextures';
+import { AudioManager } from '../managers/AudioManager';
+import { loadAudioMenu } from '../assets/loading/AudioLoader';
 
 export class ProfileSetupScene extends Phaser.Scene {
   private currentAvatarIndex = 0;
@@ -14,7 +16,14 @@ export class ProfileSetupScene extends Phaser.Scene {
     super({ key: 'ProfileSetupScene' });
   }
 
+  preload(): void {
+    loadAudioMenu(this);
+  }
+
   create(): void {
+    AudioManager.getInstance().init(this);
+    AudioManager.getInstance().playMusic('bgm_menu');
+
     const { width, height } = this.scale;
 
     this.cameras.main.setBackgroundColor(0x050816);

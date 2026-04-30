@@ -16,6 +16,7 @@ import { tgApp } from '../utils/TelegramWebApp';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { loadImagesMenu } from '../assets/loading/ImageLoader';
+import { loadAudioMenu } from '../assets/loading/AudioLoader';
 
 export class FactionSelectScene extends Phaser.Scene {
   private currentUIFaction: UIFactionId = 'magma';
@@ -57,6 +58,7 @@ export class FactionSelectScene extends Phaser.Scene {
 
   preload(): void {
     loadImagesMenu(this);
+    loadAudioMenu(this);
   }
 
   shutdown(): void {
@@ -108,7 +110,7 @@ export class FactionSelectScene extends Phaser.Scene {
     const audio = AudioManager.getInstance();
     audio.init(this);
     audio.stopAllSounds();
-    audio.stopMusic();
+    audio.playMusic('bgm_menu');
 
     this.factionIcons = new Map();
 
