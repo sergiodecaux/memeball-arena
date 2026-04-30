@@ -50,6 +50,8 @@ export class CollectionScene extends Phaser.Scene {
   private modalContainer?: Phaser.GameObjects.Container;
   private factionBg?: Phaser.GameObjects.Image;
   private unitPngLoadToken = 0;
+  private loadedFactionPngs = new Set<FactionId>();
+  private loadingFallbackTimer?: Phaser.Time.TimerEvent;
   /** Инкремент при каждом renderUnitsGrid — отменяет отложенные createBatch от предыдущего прохода */
   private unitsGridRenderGen = 0;
   
@@ -94,6 +96,9 @@ export class CollectionScene extends Phaser.Scene {
       
       // Telegram-style шапка (слева кнопка, по центру текст)
       this.createTelegramHeader();
+
+      // Выбираем фракцию до отрисовки табов, чтобы активный таб был виден сразу.
+      this.selectedFaction = FACTION_IDS[0];
       
       // Табы фракций под шапкой
       this.createFactionTabs();
@@ -114,10 +119,11 @@ export class CollectionScene extends Phaser.Scene {
       this.contentContainer.setMask(contentMaskShape.createGeometryMask());
       
       // Показываем первую фракцию
-      this.selectedFaction = FACTION_IDS[0];
       this.updateFactionBackground();
-      
-      void this.loadVisibleUnitPngs(true);
+      this.renderUnitsGrid();
+      this.time.delayedCall(50, () => {
+        void this.loadVisibleUnitPngs();
+      });
       
       // Скролл
       this.setupScroll();
@@ -145,7 +151,7 @@ export class CollectionScene extends Phaser.Scene {
     }
   }
 
-  private async loadVisibleUnitPngs(renderAfterLoad = false): Promise<void> {
+  private async loadVisibleUnitPngs(): Promise<void> {
     if (!this.selectedFaction || !this.scene.isActive()) {
       return;
     }
@@ -154,19 +160,38 @@ export class CollectionScene extends Phaser.Scene {
     const loadToken = ++this.unitPngLoadToken;
     const units = getRepositoryUnitsByFaction(selectedFaction);
     const unitIds = units.map((unit) => unit.id);
+
+    if (this.loadedFactionPngs.has(selectedFaction)) {
+      this.renderUnitsGrid();
+      return;
+    }
+
+    const batchSize = 6;
     try {
-      await AssetPackManager.loadUnitAssets(this, unitIds);
-      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken && renderAfterLoad) {
-        this.renderUnitsGrid();
+      for (let index = 0; index < unitIds.length && this.scene.isActive(); index += batchSize) {
+        if (this.selectedFaction !== selectedFaction || this.unitPngLoadToken !== loadToken) {
+          return;
+        }
+
+        await AssetPackManager.loadUnitAssets(this, unitIds.slice(index, index + batchSize));
+        if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
+          this.renderUnitsGrid();
+        }
+
+        if (index + batchSize < unitIds.length) {
+          await new Promise<void>((resolve) => this.time.delayedCall(60, () => resolve()));
+        }
       }
+
+      this.loadedFactionPngs.add(selectedFaction);
     } catch (error) {
       console.warn('[CollectionScene] Failed to lazy-load unit PNGs:', error);
-      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken && renderAfterLoad) {
+      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
         this.renderUnitsGrid();
       }
     }
   }
-  
+
   /**
    * Красивый плейсхолдер, если текстура не загрузилась
    */
@@ -410,9 +435,9 @@ export class CollectionScene extends Phaser.Scene {
         
         this.selectedFaction = factionId;
         this.updateFactionBackground();
-        this.contentContainer.removeAll(true);
+        this.renderUnitsGrid();
         this.createFactionTabs(); // Перерисовываем табы
-        void this.loadVisibleUnitPngs(true);
+        void this.loadVisibleUnitPngs();
       }
     });
 
@@ -424,8 +449,11 @@ export class CollectionScene extends Phaser.Scene {
    */
   private renderUnitsGrid(): void {
     // Очищаем старые карточки
+    this.loadingFallbackTimer?.destroy();
+    this.loadingFallbackTimer = undefined;
     this.contentContainer.removeAll(true);
     this.scrollY = 0;
+    this.scrollVelocity = 0;
     this.contentContainer.y = this.topOffset;
 
     if (!this.selectedFaction) return;
@@ -473,20 +501,23 @@ export class CollectionScene extends Phaser.Scene {
     const startX = padding + (availableWidth - totalCardsWidth) / 2 + cardSize / 2;
     const startY = topPadding;
 
-    // PNGs are preloaded before this point, so render the faction grid in one pass.
-    const batchSize = sortedUnits.length;
+    // PNGs are preloaded before the normal render path; small batches keep the menu responsive.
+    const batchSize = 9;
     let currentIndex = 0;
     const gridGen = ++this.unitsGridRenderGen;
+    let successCount = 0;
+    let errorCount = 0;
+
+    const rows = Math.ceil(sortedUnits.length / cols);
+    const totalHeight = rows * (cardSize + gap + 35) + startY + bottomPadding;
+    const visibleHeight = this.height - this.topOffset;
+    this.maxScrollY = Math.max(0, totalHeight - visibleHeight);
 
     const createBatch = () => {
-      if (gridGen !== this.unitsGridRenderGen) {
+      if (gridGen !== this.unitsGridRenderGen || !this.scene.isActive()) {
         return;
       }
       const batchEnd = Math.min(currentIndex + batchSize, sortedUnits.length);
-      
-      // ✅ ДОБАВИТЬ: Счётчики для отладки
-      let successCount = 0;
-      let errorCount = 0;
       
       for (let i = currentIndex; i < batchEnd; i++) {
         const unit = sortedUnits[i];
@@ -524,12 +555,6 @@ export class CollectionScene extends Phaser.Scene {
       if (currentIndex < sortedUnits.length) {
         this.time.delayedCall(16, createBatch); // ~1 кадр при 60fps
       } else {
-        // Вычисляем максимальный скролл после создания всех карточек
-        const rows = Math.ceil(sortedUnits.length / cols);
-        const totalHeight = rows * (cardSize + gap + 35) + startY + bottomPadding;
-        const visibleHeight = this.height - this.topOffset;
-        this.maxScrollY = Math.max(0, totalHeight - visibleHeight);
-        
         if (import.meta.env.DEV) {
           console.log(`[CollectionScene] ✅ Rendered ${successCount} cards, ${errorCount} errors (maxScrollY: ${this.maxScrollY})`);
         }
@@ -1668,6 +1693,9 @@ export class CollectionScene extends Phaser.Scene {
    */
   shutdown(): void {
     console.log('[CollectionScene] shutdown - cleaning up');
+    this.unitPngLoadToken++;
+    this.loadingFallbackTimer?.destroy();
+    this.loadingFallbackTimer = undefined;
     
     // ✅ FIX 2026-01-23: НЕ удаляем текстуры - GameScene управляет памятью
     // В Telegram: текстуры нужны для AI (случайный выбор юнитов)

@@ -4,10 +4,7 @@
 import Phaser from 'phaser';
 import { playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
-import { PvPManager } from '../managers/PvPManager';
-import { EventBus, GameEvents } from '../core/EventBus';
-import { DEFAULT_PVP_CONFIG } from '../types/pvp';
-import { hapticImpact, hapticSelection } from '../utils/Haptics';
+import { hapticImpact } from '../utils/Haptics';
 import { tgApp } from '../utils/TelegramWebApp';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { FACTION_IDS, type FactionId } from '../constants/gameConstants';
@@ -15,7 +12,6 @@ import { FACTION_IDS, type FactionId } from '../constants/gameConstants';
 type MatchmakingMode = 'casual' | 'ranked';
 
 export class MatchmakingScene extends Phaser.Scene {
-  private pvpManager?: PvPManager;
   private mode: MatchmakingMode = 'ranked';
   private isSearching = false;
   private searchStartTime = 0;
@@ -32,15 +28,19 @@ export class MatchmakingScene extends Phaser.Scene {
   private timerEvent?: Phaser.Time.TimerEvent;
   private botMatchTimer?: Phaser.Time.TimerEvent;
   private s = 1; // UI scale
-  private readonly botNames = [
-    'NeonStrike#214',
-    'CyberBlade#508',
-    'VoidWalker#733',
-    'QuantumFlux#091',
-    'NovaPrime#326',
-    'AstroTitan#647',
-    'PlasmaEdge#882',
-    'ShadowPrime#159',
+  private readonly botNamePrefixes = [
+    'NeonStrike',
+    'CyberBlade',
+    'VoidWalker',
+    'QuantumFlux',
+    'NovaPrime',
+    'AstroTitan',
+    'PlasmaEdge',
+    'ShadowPrime',
+    'StarRunner',
+    'LunarAce',
+    'RocketFox',
+    'OrbitKing',
   ];
   
   constructor() {
@@ -68,7 +68,7 @@ export class MatchmakingScene extends Phaser.Scene {
     
     // Title
     const title = this.add.text(0, -height * 0.3, 
-      this.mode === 'ranked' ? 'РЕЙТИНГОВЫЙ МАТЧ' : 'AI',
+      'PVP ONLINE',
       {
         fontFamily: 'Orbitron',
         fontSize: `${28 * this.s}px`,
@@ -83,7 +83,7 @@ export class MatchmakingScene extends Phaser.Scene {
     this.container.add(title);
     
     // Status text
-    this.statusText = this.add.text(0, -height * 0.1, 'Подключение к серверу...', {
+    this.statusText = this.add.text(0, -height * 0.1, 'Поиск онлайн-соперника...', {
       fontFamily: 'Rajdhani',
       fontSize: `${20 * this.s}px`,
       color: '#ffffff',
@@ -114,10 +114,6 @@ export class MatchmakingScene extends Phaser.Scene {
     // Cancel button
     this.createCancelButton();
     
-    // ✅ NEW PVP: Инициализация новой системы
-    this.initializePvP();
-    
-    // Start connection
     this.time.delayedCall(500, () => {
       this.startMatchmaking();
     });
@@ -232,131 +228,32 @@ export class MatchmakingScene extends Phaser.Scene {
     this.container?.add(this.cancelButton);
   }
   
-  // ✅ NEW PVP: Инициализация новой системы
-  private initializePvP(): void {
-    // Получаем или создаём PvPManager
-    this.pvpManager = PvPManager.getInstance({
-      serverUrl: DEFAULT_PVP_CONFIG.serverUrl,
-      autoReconnect: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 5,
-    });
-    
-    // Подписываемся на события
-    EventBus.on(GameEvents.PVP_CONNECTED, this.onConnected, this);
-    EventBus.on(GameEvents.PVP_DISCONNECTED, this.onDisconnected, this);
-    EventBus.on(GameEvents.PVP_MATCH_FOUND, this.onMatchFound, this);
-    EventBus.on(GameEvents.PVP_ERROR, this.onError, this);
-  }
-  
-  // ✅ NEW PVP: Обработчики событий
-  private onConnected(): void {
-    console.log('[MatchmakingScene] ✅ Подключено к PVP серверу');
-    this.updateStatus('Поиск оппонента...', '#00f2ff');
-  }
-  
-  private onDisconnected(payload: { reason: string }): void {
-    console.log('[MatchmakingScene] Отключено:', payload.reason);
-    this.updateStatus('Потеряно соединение с сервером', '#ff4500');
-    this.time.delayedCall(2000, () => {
-      this.handleBack();
-    });
-  }
-  
-  private onMatchFound(payload: { roomId: string; opponentId: string; opponentName?: string; yourTeam: number }): void {
-    console.log('[MatchmakingScene] 🎮 Матч найден!', payload);
-    
-    this.isSearching = false;
-    this.botMatchTimer?.destroy();
-    this.botMatchTimer = undefined;
-    this.updateStatus('Оппонент найден!', '#39ff14');
-    hapticImpact('heavy');
-    
-    // Показываем VS
-    this.time.delayedCall(500, () => {
-      this.updateStatus(`VS ${payload.opponentName || 'OPPONENT'}`, '#fbbf24');
-    });
-    
-    // Запуск матча через 2 секунды
-    this.time.delayedCall(2000, () => {
-      this.startMatch(payload);
-    });
-  }
-  
-  private onError(payload: { type: string; message: string }): void {
-    console.error('[MatchmakingScene] Ошибка:', payload);
-    this.updateStatus(`Ошибка: ${payload.message}`, '#ff4500');
-    this.time.delayedCall(2000, () => {
-      this.handleBack();
-    });
-  }
-  
-  // ✅ NEW PVP: Начало поиска матча
-  private async startMatchmaking(): Promise<void> {
-    if (!this.pvpManager) {
-      this.updateStatus('PVP Manager не инициализирован', '#ff4500');
-      this.time.delayedCall(2000, () => this.handleBack());
-      return;
-    }
-    
-    try {
-      this.updateStatus('Подключение к серверу...', '#ffffff');
-      
-      // Подключаемся к серверу
-      await this.pvpManager.connect();
-      
-      // Сервер отправит событие PVP_CONNECTED, которое обновит статус
-      this.isSearching = true;
-      this.searchStartTime = Date.now();
-      
-      // Start timer
-      this.timerEvent = this.time.addEvent({
-        delay: 1000,
-        callback: () => {
-          const elapsed = Math.floor((Date.now() - this.searchStartTime) / 1000);
-          const minutes = Math.floor(elapsed / 60);
-          const seconds = elapsed % 60;
-          this.timerText?.setText(
-            `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-          );
-        },
-        loop: true,
-      });
-      
-      const player = playerData.get();
-      const factionId = playerData.getFaction() || 'magma';
-      
-      // Начинаем поиск матча
-      this.pvpManager.findGame(this.mode, {
-        playerName: playerData.getNickname?.() || player.username || 'Player',
-        mmr: player.pvpStats?.[this.mode]?.rating,
-        factionId,
-        teamUnitIds: playerData.getTeamUnits(factionId),
-        teamSize: playerData.getAllowedTeamSize(factionId),
-      });
+  private startMatchmaking(): void {
+    this.isSearching = true;
+    this.searchStartTime = Date.now();
+    this.updateStatus('Поиск онлайн-соперника...', '#00f2ff');
 
-      if (this.mode === 'casual') {
-        this.botMatchTimer?.destroy();
-        this.botMatchTimer = this.time.delayedCall(6500, () => {
-          this.startCasualBotMatch();
-        });
-      }
-      
-    } catch (error) {
-      console.error('[MatchmakingScene] Ошибка подключения:', error);
-      this.updateStatus('Не удалось подключиться к серверу', '#ff4500');
-      this.time.delayedCall(2000, () => {
-        this.handleBack();
-      });
-    }
+    this.timerEvent = this.time.addEvent({
+      delay: 1000,
+      callback: () => {
+        const elapsed = Math.floor((Date.now() - this.searchStartTime) / 1000);
+        const minutes = Math.floor(elapsed / 60);
+        const seconds = elapsed % 60;
+        this.timerText?.setText(
+          `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+        );
+      },
+      loop: true,
+    });
+
+    this.botMatchTimer?.destroy();
+    this.botMatchTimer = this.time.delayedCall(Phaser.Math.Between(1600, 2800), () => {
+      this.startBotMatch();
+    });
   }
   
-  // ✅ NEW PVP: Отмена поиска
   private cancelSearch(): void {
-    if (this.isSearching && this.pvpManager) {
-      this.pvpManager.cancelSearch();
-      this.isSearching = false;
-    }
+    this.isSearching = false;
     this.handleBack();
   }
   
@@ -375,40 +272,18 @@ export class MatchmakingScene extends Phaser.Scene {
     });
   }
   
-  // ✅ NEW PVP: Запуск матча
-  private startMatch(matchData: { roomId: string; opponentId: string; opponentName?: string; yourTeam: number }): void {
-    console.log('[MatchmakingScene] Запуск матча:', matchData);
-    
-    // Store match mode in player data
-    const pdata = playerData.get();
-    pdata.currentMatchMode = this.mode;
-    playerData.save();
-    
-    // Cleanup
-    this.cleanup();
-    
-    // ✅ NEW PVP: Запуск GameScene с новой системой
-    this.scene.stop('MatchmakingScene');
-    safeSceneStart(this, 'GameScene', {
-      mode: 'pvp',  // ⬅️ Новый флаг
-      roomId: matchData.roomId,
-      yourTeam: matchData.yourTeam,
-      opponentId: matchData.opponentId,
-      opponentName: matchData.opponentName,
-      matchContext: 'casual',
-      useFactions: true,
-    });
-  }
-
-  private startCasualBotMatch(): void {
+  private startBotMatch(): void {
     if (!this.isSearching) return;
 
     const playerFaction = playerData.getFaction() || 'magma';
     const opponentFaction = this.getRandomOpponentFaction(playerFaction);
-    const opponentName = this.botNames[Math.floor(Math.random() * this.botNames.length)];
+    const opponentName = this.generateOpponentName();
+    const pdata = playerData.get();
+    pdata.currentMatchMode = this.mode;
+    playerData.save();
 
     this.isSearching = false;
-    this.pvpManager?.cancelSearch();
+    this.updateStatus('Оппонент найден!', '#39ff14');
     this.updateStatus(`VS ${opponentName}`, '#fbbf24');
     hapticImpact('heavy');
 
@@ -432,6 +307,12 @@ export class MatchmakingScene extends Phaser.Scene {
     const available = FACTION_IDS.filter((faction) => faction !== playerFaction);
     return Phaser.Math.RND.pick(available) || 'magma';
   }
+
+  private generateOpponentName(): string {
+    const prefix = Phaser.Math.RND.pick(this.botNamePrefixes) || 'NeonStrike';
+    const suffix = Phaser.Math.Between(100, 999).toString().padStart(3, '0');
+    return `${prefix}#${suffix}`;
+  }
   
   private async handleBack(): Promise<void> {
     AudioManager.getInstance().stopAllSounds();
@@ -440,19 +321,8 @@ export class MatchmakingScene extends Phaser.Scene {
     await safeSceneStart(this, 'MatchModeSelectScene');
   }
   
-  // ✅ NEW PVP: Cleanup
   private cleanup(): void {
-    // Отписываемся от событий
-    EventBus.off(GameEvents.PVP_CONNECTED, this.onConnected, this);
-    EventBus.off(GameEvents.PVP_DISCONNECTED, this.onDisconnected, this);
-    EventBus.off(GameEvents.PVP_MATCH_FOUND, this.onMatchFound, this);
-    EventBus.off(GameEvents.PVP_ERROR, this.onError, this);
-    
-    // Отменяем поиск если активен
-    if (this.isSearching && this.pvpManager) {
-      this.pvpManager.cancelSearch();
-      this.isSearching = false;
-    }
+    this.isSearching = false;
     
     if (this.timerEvent) {
       this.timerEvent.destroy();
