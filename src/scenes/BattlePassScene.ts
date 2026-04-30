@@ -11,6 +11,8 @@ import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { CHESTS_CATALOG, CHEST_ID_MIGRATION } from '../data/ChestsCatalog';
 import { AssetPackManager } from '../assets/AssetPackManager';
 import { getRealUnitTextureKey } from '../utils/TextureHelpers';
+import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
+import { loadAudioMenu, loadAudioRewardClaim } from '../assets/loading/AudioLoader';
 
 // ✅ Константа для зоны свайпа
 const BATTLE_PASS_SWIPE_EDGE_ZONE = 60;
@@ -73,8 +75,21 @@ export class BattlePassScene extends Phaser.Scene {
 
   private carouselFrameKey = -1;
 
+  /** Нижняя граница блока прогресса — начало зоны горизонтального скролла наград */
+  private scrollAreaStartY = 0;
+
   constructor() {
     super({ key: 'BattlePassScene' });
+  }
+
+  preload(): void {
+    ensureSafeImageLoading(this);
+    if (!this.textures.exists('ui_rewards_coins')) {
+      this.load.image('ui_rewards_coins', 'assets/ui/icons/rewards/icon_currency_coins.png');
+      this.load.image('ui_rewards_crystals', 'assets/ui/icons/rewards/icon_currency_crystals.png');
+    }
+    loadAudioMenu(this);
+    loadAudioRewardClaim(this);
   }
 
   create(): void {
@@ -146,23 +161,27 @@ export class BattlePassScene extends Phaser.Scene {
 
   private createBackground(): void {
     const { width, height } = this.scale;
+    const maxDim = Math.max(width, height);
 
-    // 1. Deep Space Base
-    const bg = this.add.graphics();
-    bg.fillGradientStyle(0x020617, 0x020617, 0x0f172a, 0x0f172a, 1);
-    bg.fillRect(0, 0, width, height);
+    this.add.rectangle(width / 2, height / 2, width + 16, height + 16, 0x080c14, 1);
 
-    // ✅ ОПТИМИЗАЦИЯ: Используем текстуру вместо множества линий
-    const gridSize = 40 * this.s;
-    const gridKey = 'bp_grid_texture';
+    const glow = this.add.graphics();
+    glow.fillStyle(0x7c3aed, 0.1);
+    glow.fillCircle(maxDim * 0.06, height * 0.16, maxDim * 0.52);
+    glow.fillStyle(0x0891b2, 0.08);
+    glow.fillCircle(width - maxDim * 0.02, height * 0.42, maxDim * 0.48);
+    glow.fillStyle(0xfbbf24, 0.04);
+    glow.fillCircle(width * 0.48, height * 0.95, maxDim * 0.38);
+    glow.setBlendMode(Phaser.BlendModes.ADD);
 
+    const gridSize = 48 * this.s;
+    const gridKey = 'bp_grid_texture_v2';
     if (!this.textures.exists(gridKey)) {
       const gridCanvas = document.createElement('canvas');
       gridCanvas.width = Math.ceil(gridSize);
       gridCanvas.height = Math.ceil(gridSize);
       const ctx = gridCanvas.getContext('2d')!;
-      
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.05)';
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.04)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(0, 0);
@@ -170,23 +189,18 @@ export class BattlePassScene extends Phaser.Scene {
       ctx.moveTo(0, 0);
       ctx.lineTo(0, gridCanvas.height);
       ctx.stroke();
-      
       this.textures.addCanvas(gridKey, gridCanvas);
     }
 
-    // Создаём tileSprite вместо множества линий
-    const grid = this.add.tileSprite(0, 0, width, height, gridKey);
-    grid.setOrigin(0, 0);
-    grid.setAlpha(1);
+    const grid = this.add.tileSprite(0, 0, width, height, gridKey).setOrigin(0, 0).setAlpha(0.85);
 
-    // 3. Vignette (Darker corners)
-    const vignette = this.add.graphics();
-    vignette.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.8, 0.8, 0, 0); // Top corners dark
-    vignette.fillRect(0, 0, width, height / 4);
-    
+    const vignetteTop = this.add.graphics();
+    vignetteTop.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.65, 0.65, 0, 0);
+    vignetteTop.fillRect(0, 0, width, height * 0.22);
+
     const vignetteBottom = this.add.graphics();
-    vignetteBottom.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.8, 0.8); // Bottom corners dark
-    vignetteBottom.fillRect(0, height - (height / 4), width, height / 4);
+    vignetteBottom.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.55, 0.55);
+    vignetteBottom.fillRect(0, height - height * 0.28, width, height * 0.28);
   }
 
   private createParticles(): void {
@@ -218,73 +232,102 @@ export class BattlePassScene extends Phaser.Scene {
     const fonts = getFonts();
     const season = getCurrentSeason();
     const progress = battlePassManager.getProgress();
-    
+
+    const headerH = 102 * s;
+
     const hBg = this.add.graphics();
-    hBg.fillStyle(0x0f0a1e, 0.9);
-    hBg.fillRect(0, 0, width, 100 * s);
-    
-    for (let i = 0; i < 30; i++) {
-      const col = Phaser.Display.Color.Interpolate.ColorWithColor(
-        Phaser.Display.Color.ValueToColor(0xa855f7),
-        Phaser.Display.Color.ValueToColor(0x00f2ff), 30, i
-      );
-      hBg.fillStyle(Phaser.Display.Color.GetColor(col.r, col.g, col.b), 1);
-      hBg.fillRect(i * (width / 30), 96 * s, width / 30 + 1, 4 * s);
-    }
-    
-    const title = this.add.text(width / 2, 40 * s, 'БОЕВОЙ ПРОПУСК', {
-      fontSize: `${28 * s}px`, fontFamily: fonts.tech, color: '#ffffff',
-    }).setOrigin(0.5);
-    
-    const seasonNameRu = 'Галактические Легенды'; // Русское название сезона
-    this.add.text(width / 2, 65 * s, seasonNameRu.toUpperCase(), {
-      fontSize: `${12 * s}px`, fontFamily: fonts.primary, color: '#a855f7', letterSpacing: 4,
-    }).setOrigin(0.5);
-    
-    const tierBadge = this.add.container(width / 2, 85 * s);
+    hBg.fillGradientStyle(0x0a0f1c, 0x101827, 0x080c14, 0x080c14, 0.98, 0.98, 0.98, 0.98);
+    hBg.fillRect(0, 0, width, headerH);
+    hBg.fillStyle(season.themeColor, 0.08);
+    hBg.fillRect(0, 0, width, 48 * s);
+    hBg.lineStyle(3, 0xfbbf24, 0.45);
+    hBg.lineBetween(0, headerH, width, headerH);
+    hBg.lineStyle(1, 0x22d3ee, 0.35);
+    hBg.lineBetween(0, headerH - 2, width, headerH - 2);
+
+    this.add
+      .text(width / 2, 38 * s, 'БОЕВОЙ ПРОПУСК', {
+        fontSize: `${22 * s}px`,
+        fontFamily: fonts.tech,
+        color: '#fff6dc',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5);
+
+    const seasonLine = season.name.toUpperCase();
+    this.add
+      .text(width / 2, 62 * s, seasonLine, {
+        fontSize: `${11 * s}px`,
+        fontFamily: fonts.primary,
+        color: '#e9d5ff',
+        letterSpacing: 3,
+      })
+      .setOrigin(0.5);
+
+    const tierBadge = this.add.container(width / 2, 86 * s);
     const tierBg = this.add.graphics();
-    tierBg.fillStyle(0x1e1b4b, 1);
-    tierBg.fillRoundedRect(-50 * s, -12 * s, 100 * s, 24 * s, 12 * s);
-    tierBg.lineStyle(2, 0x00f2ff, 0.5);
-    tierBg.strokeRoundedRect(-50 * s, -12 * s, 100 * s, 24 * s, 12 * s);
+    tierBg.fillStyle(0x1a1528, 0.95);
+    tierBg.fillRoundedRect(-58 * s, -13 * s, 116 * s, 26 * s, 12 * s);
+    tierBg.lineStyle(1.5, 0xfbbf24, 0.75);
+    tierBg.strokeRoundedRect(-58 * s, -13 * s, 116 * s, 26 * s, 12 * s);
     tierBadge.add(tierBg);
-    tierBadge.add(this.add.text(0, 0, `TIER ${progress.currentTier} / ${season.maxTier}`, {
-      fontSize: `${11 * s}px`, fontFamily: fonts.tech, color: '#00f2ff',
-    }).setOrigin(0.5));
-    
-    this.timerText = this.add.text(width - 20 * s, 30 * s, '', {
-      fontSize: `${12 * s}px`, fontFamily: fonts.primary, color: '#f87171',
+    tierBadge.add(
+      this.add
+        .text(0, 0, `УР. ${progress.currentTier} / ${season.maxTier}`, {
+          fontSize: `${11 * s}px`,
+          fontFamily: fonts.tech,
+          color: '#fde68a',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5)
+    );
+
+    this.timerText = this.add.text(width - 16 * s, 22 * s, '', {
+      fontSize: `${11 * s}px`,
+      fontFamily: fonts.tech,
+      color: '#fca5a5',
     }).setOrigin(1, 0);
     this.updateTimer();
-    
+
     if (progress.isPremium) {
-      const premBadge = this.add.container(width - 20 * s, 55 * s);
+      const premBadge = this.add.container(width - 16 * s, 52 * s);
       const premBg = this.add.graphics();
-      premBg.fillStyle(0xffd700, 0.2);
-      premBg.fillRoundedRect(-55 * s, -10 * s, 55 * s, 20 * s, 10 * s);
-      premBg.lineStyle(1, 0xffd700, 1);
-      premBg.strokeRoundedRect(-55 * s, -10 * s, 55 * s, 20 * s, 10 * s);
+      premBg.fillGradientStyle(0xfef3c7, 0xfbbf24, 0xd97706, 0xb45309, 1);
+      premBg.fillRoundedRect(-62 * s, -11 * s, 62 * s, 22 * s, 11 * s);
+      premBg.lineStyle(1, 0xfffbeb, 0.9);
+      premBg.strokeRoundedRect(-62 * s, -11 * s, 62 * s, 22 * s, 11 * s);
       premBadge.add(premBg);
-      premBadge.add(this.add.text(-27 * s, 0, '👑 PREMIUM', { fontSize: `${9 * s}px`, color: '#ffd700' }).setOrigin(0.5));
+      premBadge.add(
+        this.add
+          .text(-31 * s, 0, 'PREMIUM', {
+            fontSize: `${8 * s}px`,
+            fontFamily: fonts.tech,
+            color: '#1a0f08',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5)
+      );
     }
-    
-    // ✅ ДОБАВЛЕНО: Декоративные линии по бокам заголовка
-    const lineLeft = this.add.graphics();
-    lineLeft.lineStyle(2, 0xa855f7, 0.6);
-    lineLeft.lineBetween(20 * s, 40 * s, width / 2 - 80 * s, 40 * s);
-    
-    const lineRight = this.add.graphics();
-    lineRight.lineStyle(2, 0x00f2ff, 0.6);
-    lineRight.lineBetween(width / 2 + 80 * s, 40 * s, width - 20 * s, 40 * s);
-    
-    // Анимация линий
-    this.tweens.add({
-      targets: [lineLeft, lineRight],
-      alpha: { from: 0.6, to: 0.2 },
-      duration: 1500,
-      yoyo: true,
-      repeat: -1,
-    });
+  }
+
+  /** Единые координаты панели прогресса (для дорожки наград и updateProgressBar). */
+  private getBattlePassProgressBarLayout(): {
+    sectionY: number;
+    sectionHeight: number;
+    barX: number;
+    barY: number;
+    barHeight: number;
+  } {
+    const s = this.s;
+    const sectionY = 102 * s;
+    const sectionHeight = 132 * s;
+    return {
+      sectionY,
+      sectionHeight,
+      barX: 28 * s,
+      barY: sectionY + 86 * s,
+      barHeight: 18 * s,
+    };
   }
 
   private createProgressSection(): void {
@@ -294,121 +337,94 @@ export class BattlePassScene extends Phaser.Scene {
     const progress = battlePassManager.getProgress();
     const season = getCurrentSeason();
     const xpInfo = getXPProgress(progress.currentXP, progress.currentTier);
+    const ly = this.getBattlePassProgressBarLayout();
+    const { sectionY, sectionHeight, barX, barY, barHeight } = ly;
 
-    const sectionY = 100 * s;
-    const sectionHeight = 130 * s; // Slightly taller
-
-    // Container
     this.progressSectionContainer = this.add.container(0, 0);
 
-    // === 1. Main Panel Background (Tech Style) ===
     const panelBg = this.add.graphics();
-    // Dark Hex/Tech background
-    panelBg.fillGradientStyle(0x0f172a, 0x0f172a, 0x1e293b, 0x1e293b, 1);
-    panelBg.fillRoundedRect(15 * s, sectionY, width - 30 * s, sectionHeight, 20 * s);
-    
-    // Cyber Border
-    panelBg.lineStyle(2, 0x38bdf8, 0.5);
-    panelBg.strokeRoundedRect(15 * s, sectionY, width - 30 * s, sectionHeight, 20 * s);
-    
-    // Accent Line at top
-    panelBg.lineStyle(4, 0x38bdf8, 1);
-    panelBg.beginPath();
-    panelBg.moveTo(40 * s, sectionY);
-    panelBg.lineTo(width - 40 * s, sectionY);
-    panelBg.strokePath();
+    panelBg.fillGradientStyle(0x111b2e, 0x141e35, 0x0c1220, 0x101828, 1, 1, 1, 1);
+    panelBg.fillRoundedRect(14 * s, sectionY, width - 28 * s, sectionHeight, 18 * s);
+    panelBg.lineStyle(2, 0xfbbf24, 0.82);
+    panelBg.strokeRoundedRect(14 * s, sectionY, width - 28 * s, sectionHeight, 18 * s);
+    panelBg.lineStyle(1, 0x22d3ee, 0.38);
+    panelBg.strokeRoundedRect(16 * s, sectionY + 2 * s, width - 32 * s, sectionHeight - 4 * s, 16 * s);
+
+    panelBg.fillStyle(season.themeColor, 0.12);
+    panelBg.fillRoundedRect(18 * s, sectionY + 4 * s, width - 36 * s, 36 * s, 12 * s);
 
     this.progressSectionContainer.add(panelBg);
 
-    // === 2. Header Texts ===
-    // Season Name
-    const seasonText = this.add.text(30 * s, sectionY + 20 * s, `SEASON: ${season.name.toUpperCase()}`, {
-      fontSize: `${14 * s}px`,
-      fontFamily: fonts.tech,
-      color: '#38bdf8',
-      stroke: '#000',
-      strokeThickness: 2
-    });
-    this.progressSectionContainer.add(seasonText);
+    this.progressSectionContainer.add(
+      this.add.text(26 * s, sectionY + 14 * s, `СЕЗОН · ${season.name.toUpperCase()}`, {
+        fontSize: `${12 * s}px`,
+        fontFamily: fonts.tech,
+        color: '#bae6fd',
+      })
+    );
 
-    // Premium Badge (if active)
     if (progress.isPremium) {
-      const premBadge = this.add.container(width - 30 * s, sectionY + 20 * s);
-      const bg = this.add.graphics();
-      bg.fillStyle(0xffd700, 0.2);
-      bg.fillRoundedRect(-80 * s, 0, 80 * s, 20 * s, 4 * s);
-      bg.lineStyle(1, 0xffd700, 1);
-      bg.strokeRoundedRect(-80 * s, 0, 80 * s, 20 * s, 4 * s);
-      premBadge.add(bg);
-      
-      premBadge.add(this.add.text(-40 * s, 10 * s, 'VIP PASS', {
-        fontSize: `${10 * s}px`, fontFamily: fonts.tech, color: '#ffd700'
-      }).setOrigin(0.5));
-      
+      const premBadge = this.add.container(width - 30 * s, sectionY + 24 * s);
+      const badgeG = this.add.graphics();
+      badgeG.fillGradientStyle(0xfff1b8, 0xfbbf24, 0xd97706, 0xb45309, 1);
+      badgeG.fillRoundedRect(-78 * s, -10 * s, 78 * s, 20 * s, 8 * s);
+      premBadge.add(badgeG);
+      premBadge.add(
+        this.add.text(-39 * s, 0, 'VIP АКТИВЕН', {
+          fontSize: `${9 * s}px`,
+          fontFamily: fonts.tech,
+          color: '#1a0f08',
+          fontStyle: 'bold',
+        }).setOrigin(0.5)
+      );
       this.progressSectionContainer.add(premBadge);
     }
 
-    // Current Tier (Big Number)
-    this.tierText = this.add.text(width / 2, sectionY + 35 * s, `TIER ${progress.currentTier}`, {
-      fontSize: `${32 * s}px`,
-      fontFamily: fonts.tech,
-      color: '#ffffff',
-      fontStyle: 'bold',
-      stroke: '#00d4ff',
-      strokeThickness: 4,
-      shadow: { blur: 10, color: '#00d4ff', fill: true, offsetX: 0, offsetY: 0 }
-    }).setOrigin(0.5).setShadow(0, 1, '#000000', 3, true, true);
+    this.tierText = this.add
+      .text(width / 2, sectionY + 38 * s, `УРОВЕНЬ ${progress.currentTier}`, {
+        fontSize: `${30 * s}px`,
+        fontFamily: fonts.tech,
+        color: '#fffbeb',
+        fontStyle: 'bold',
+        stroke: '#1e0f05',
+        strokeThickness: 5,
+      })
+      .setOrigin(0.5);
     this.progressSectionContainer.add(this.tierText);
 
-    // === 3. Progress Bar ===
-    const barX = 30 * s;
-    const barY = sectionY + 85 * s;
-    this.progressBarWidth = width - 60 * s;
-    const barHeight = 20 * s;
+    this.progressBarWidth = width - 56 * s;
 
-    // Track (Background)
-    const barBg = this.add.graphics();
-    barBg.fillStyle(0x020617, 1);
-    barBg.fillRoundedRect(barX, barY, this.progressBarWidth, barHeight, 6 * s);
-    // Inner shadow effect
-    barBg.fillStyle(0x000000, 0.5);
-    barBg.fillRect(barX, barY, this.progressBarWidth, barHeight / 2);
-    this.progressSectionContainer.add(barBg);
+    const barTrack = this.add.graphics();
+    barTrack.fillStyle(0x030712, 1);
+    barTrack.fillRoundedRect(barX, barY, this.progressBarWidth, barHeight, 9 * s);
+    barTrack.lineStyle(1, 0x334155, 0.85);
+    barTrack.strokeRoundedRect(barX, barY, this.progressBarWidth, barHeight, 9 * s);
+    this.progressSectionContainer.add(barTrack);
 
-    // Fill
-    const fillWidth = Math.max(10 * s, this.progressBarWidth * xpInfo.progress);
-    this.progressBarFill = this.add.rectangle(
-      barX, 
-      barY + barHeight / 2, 
-      fillWidth, 
-      barHeight,
-      0x38bdf8
-    ).setOrigin(0, 0.5);
-    
-    // Gradient effect on fill
+    const fillWidth = Math.max(12 * s, this.progressBarWidth * xpInfo.progress);
+    this.progressBarFill = this.add
+      .rectangle(barX + 2 * s, barY + barHeight / 2, fillWidth - 4 * s, barHeight - 4 * s, 0xf59e0b)
+      .setOrigin(0, 0.5);
     if (this.progressBarFill.postFX) {
-        this.progressBarFill.postFX.addGradient(0x38bdf8, 0x00f2ff, 0);
-        this.progressBarFill.postFX.addGlow(0x00f2ff, 1, 0, false, 0.1, 10);
+      this.progressBarFill.postFX.addGradient(0xfbbf24, 0xf97316, 0);
+      this.progressBarFill.postFX.addGlow(0xfbbf24, 1, 0, false, 0.06, 8);
     }
     this.progressSectionContainer.add(this.progressBarFill);
 
-    // XP Text
-    this.progressText = this.add.text(
-      width / 2, 
-      barY + barHeight / 2, 
-      `${Math.floor(xpInfo.current)} / ${xpInfo.needed} XP`,
-      {
-        fontSize: `${12 * s}px`,
-        fontFamily: fonts.primary,
-        color: '#ffffff',
-        stroke: '#000',
-        strokeThickness: 3
-      }
-    ).setOrigin(0.5).setShadow(0, 1, '#000000', 3, true, true);
+    this.progressText = this.add
+      .text(barX + this.progressBarWidth / 2, barY + barHeight / 2, `${Math.floor(xpInfo.current)} / ${xpInfo.needed} XP`, {
+        fontSize: `${11 * s}px`,
+        fontFamily: fonts.tech,
+        color: '#f8fafc',
+        stroke: '#020617',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5);
     this.progressSectionContainer.add(this.progressText);
 
-    // Claim All Button (if multiple claimable rewards)
-    this.createClaimAllButton(width - 100 * s, barY + barHeight / 2);
+    this.scrollAreaStartY = sectionY + sectionHeight + 12 * s;
+
+    this.createClaimAllButton(width - 106 * s, barY + barHeight / 2);
   }
 
   private createDualTrackScroll(): void {
@@ -418,31 +434,56 @@ export class BattlePassScene extends Phaser.Scene {
     const season = getCurrentSeason();
     const progress = battlePassManager.getProgress();
 
-    const startY = 160 * s;
-    const scrollAreaHeight = height - startY - 100 * s;
+    const startY = this.scrollAreaStartY > 0 ? this.scrollAreaStartY : 248 * s;
+    const scrollAreaHeight = height - startY - 88 * s;
 
     // Сохраняем размеры для lazy loading
-    this.tierWidth = 130 * s;
-    this.tierSpacing = 20 * s;
+    this.tierWidth = 128 * s;
+    this.tierSpacing = 18 * s;
     this.totalItemWidth = this.tierWidth + this.tierSpacing;
     
     this.trackHeight = (scrollAreaHeight - 60 * s) / 2;
     this.freeTrackY = 40 * s;
     this.premiumTrackY = this.freeTrackY + this.trackHeight + 20 * s;
 
-    // --- Labels ---
-    const freeLabel = this.add.text(20 * s, startY + this.freeTrackY - 20 * s, '🆓 FREE REWARDS', {
-      fontSize: `${12 * s}px`, fontFamily: fonts.tech, color: '#38bdf8',
-    });
-    
-    const premLabel = this.add.container(20 * s, startY + this.premiumTrackY - 20 * s);
-    premLabel.add(this.add.text(0, 0, '👑 GALAXY PASS', {
-      fontSize: `${12 * s}px`, fontFamily: fonts.tech, color: '#ffd700',
-      shadow: { color: '#ffd700', blur: 10, fill: true, offsetX: 0, offsetY: 0 }
-    }));
-    if (!progress.isPremium) {
-      premLabel.add(this.add.text(140 * s, 0, '🔒 LOCKED', { fontSize: `${10 * s}px`, color: '#64748b' }));
-    }
+    // --- Подписи дорожек ---
+    const fw = 148 * s;
+    const fh = 24 * s;
+    const fx = 16 * s;
+    const freeY = startY + this.freeTrackY - 26 * s;
+
+    const freeBg = this.add.graphics();
+    freeBg.fillStyle(0x0f172a, 0.92);
+    freeBg.fillRoundedRect(fx, freeY, fw, fh, 12 * s);
+    freeBg.lineStyle(1.5, 0x38bdf8, 0.9);
+    freeBg.strokeRoundedRect(fx, freeY, fw, fh, 12 * s);
+    this.add.text(fx + fw / 2, freeY + fh / 2, 'БЕСПЛАТНАЯ ДОРОЖКА', {
+      fontSize: `${10 * s}px`,
+      fontFamily: fonts.tech,
+      color: '#e0f2fe',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+
+    const px = fx;
+    const premiumY = startY + this.premiumTrackY - 26 * s;
+    const pw = progress.isPremium ? fw : fw + 72 * s;
+
+    const premBg = this.add.graphics();
+    premBg.fillStyle(0x1a1005, 0.92);
+    premBg.fillRoundedRect(px, premiumY, pw, fh, 12 * s);
+    premBg.lineStyle(1.5, 0xfbbf24, 0.95);
+    premBg.strokeRoundedRect(px, premiumY, pw, fh, 12 * s);
+    premBg.fillStyle(0xfbbf24, 0.06);
+    premBg.fillRoundedRect(px + 2, premiumY + 2, pw - 4, fh / 2 - 2, { tl: 10 * s, tr: 10 * s, bl: 0, br: 0 });
+
+    const premLine = progress.isPremium ? 'GALAXY PASS' : 'GALAXY PASS  ·  НЕДОСТУПНО';
+
+    this.add.text(px + pw / 2, premiumY + fh / 2, premLine, {
+      fontSize: `${10 * s}px`,
+      fontFamily: fonts.tech,
+      color: '#fff6d6',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
 
     // --- Mask ---
     const maskShape = this.make.graphics({});
@@ -510,11 +551,13 @@ export class BattlePassScene extends Phaser.Scene {
         if (!tierData) continue;
         
         const tierContainer = this.add.container(0, 0).setDepth(10);
-        const x = (tier - 1) * this.totalItemWidth + this.tierWidth / 2 + 30 * this.s;
+        const tierCX =
+          (tier - 1) * this.totalItemWidth + this.tierWidth / 2 + 30 * this.s;
+        tierContainer.setData('tierCenterX', tierCX);
 
         if (tierData.freeReward) {
           const freeNode = this.createRewardNode(
-            tierData, tierData.freeReward, x, this.freeTrackY,
+            tierData, tierData.freeReward, tierCX, this.freeTrackY,
             this.tierWidth, this.trackHeight - 10 * this.s, false, progress
           );
           if (freeNode) tierContainer.add(freeNode);
@@ -522,19 +565,45 @@ export class BattlePassScene extends Phaser.Scene {
 
         if (tierData.premiumReward) {
           const premiumNode = this.createRewardNode(
-            tierData, tierData.premiumReward, x, this.premiumTrackY,
+            tierData, tierData.premiumReward, tierCX, this.premiumTrackY,
             this.tierWidth, this.trackHeight - 10 * this.s, true, progress
           );
           if (premiumNode) tierContainer.add(premiumNode);
         }
 
         const tierNumY = (this.freeTrackY + this.premiumTrackY) / 2;
-        const tierNum = this.add.text(x, tierNumY, `${tier}`, {
-          fontSize: `${14 * this.s}px`,
-          fontFamily: 'Orbitron, Arial',
-          color: '#6b7280',
-        }).setOrigin(0.5).setDepth(15);
-        tierContainer.add(tierNum);
+        const isHighlight = tier === progress.currentTier;
+        const markW = 34 * this.s;
+        const markH = 26 * this.s;
+        const pill = this.add.graphics();
+        pill.fillStyle(isHighlight ? 0x422006 : 0x111b26, isHighlight ? 0.96 : 0.9);
+        pill.fillRoundedRect(
+          tierCX - markW / 2,
+          tierNumY - markH / 2,
+          markW,
+          markH,
+          10 * this.s
+        );
+        pill.lineStyle(isHighlight ? 2 : 1, isHighlight ? 0xfbbf24 : 0x475569, isHighlight ? 1 : 0.75);
+        pill.strokeRoundedRect(
+          tierCX - markW / 2,
+          tierNumY - markH / 2,
+          markW,
+          markH,
+          10 * this.s
+        );
+        tierContainer.add(pill);
+        tierContainer.add(
+          this.add
+            .text(tierCX, tierNumY, `${tier}`, {
+              fontSize: `${13 * this.s}px`,
+              fontFamily: fonts.tech,
+              color: isHighlight ? '#fffbeb' : '#94a3b8',
+              fontStyle: 'bold',
+            })
+            .setOrigin(0.5)
+            .setDepth(16)
+        );
 
         this.scrollContainer.add(tierContainer);
         this.visibleTierNodes.set(tier, tierContainer);
@@ -599,6 +668,7 @@ export class BattlePassScene extends Phaser.Scene {
 
     // ✅ Получаем progress ОДИН раз для всего цикла
     const progress = battlePassManager.getProgress();
+    const fonts = getFonts();
 
     // Создаём новые видимые тиры
     for (let tier = startTier; tier <= endTier; tier++) {
@@ -608,14 +678,16 @@ export class BattlePassScene extends Phaser.Scene {
       if (!tierData) continue;
 
       const tierContainer = this.add.container(0, 0).setDepth(10);
-      const x = (tier - 1) * this.totalItemWidth + this.tierWidth / 2 + 30 * this.s;
+      const tierCX =
+        (tier - 1) * this.totalItemWidth + this.tierWidth / 2 + 30 * this.s;
+      tierContainer.setData('tierCenterX', tierCX);
 
       // FREE reward (верхняя дорожка)
       if (tierData.freeReward) {
         const freeNode = this.createRewardNode(
           tierData,
           tierData.freeReward,
-          x,
+          tierCX,
           this.freeTrackY,
           this.tierWidth,
           this.trackHeight - 10 * this.s,
@@ -630,7 +702,7 @@ export class BattlePassScene extends Phaser.Scene {
         const premiumNode = this.createRewardNode(
           tierData,
           tierData.premiumReward,
-          x,
+          tierCX,
           this.premiumTrackY,
           this.tierWidth,
           this.trackHeight - 10 * this.s,
@@ -640,14 +712,27 @@ export class BattlePassScene extends Phaser.Scene {
         if (premiumNode) tierContainer.add(premiumNode);
       }
 
-      // Номер тира между дорожками
       const tierNumY = (this.freeTrackY + this.premiumTrackY) / 2;
-      const tierNum = this.add.text(x, tierNumY, `${tier}`, {
-        fontSize: `${14 * this.s}px`,
-        fontFamily: 'Orbitron, Arial',
-        color: '#6b7280',
-      }).setOrigin(0.5).setDepth(15);
-      tierContainer.add(tierNum);
+      const isHighlight = tier === progress.currentTier;
+      const markW = 34 * this.s;
+      const markH = 26 * this.s;
+      const pill = this.add.graphics();
+      pill.fillStyle(isHighlight ? 0x422006 : 0x111b26, isHighlight ? 0.96 : 0.9);
+      pill.fillRoundedRect(tierCX - markW / 2, tierNumY - markH / 2, markW, markH, 10 * this.s);
+      pill.lineStyle(isHighlight ? 2 : 1, isHighlight ? 0xfbbf24 : 0x475569, isHighlight ? 1 : 0.75);
+      pill.strokeRoundedRect(tierCX - markW / 2, tierNumY - markH / 2, markW, markH, 10 * this.s);
+      tierContainer.add(pill);
+      tierContainer.add(
+        this.add
+          .text(tierCX, tierNumY, `${tier}`, {
+            fontSize: `${13 * this.s}px`,
+            fontFamily: fonts.tech,
+            color: isHighlight ? '#fffbeb' : '#94a3b8',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5)
+          .setDepth(16)
+      );
 
       this.scrollContainer.add(tierContainer);
       this.visibleTierNodes.set(tier, tierContainer);
@@ -796,17 +881,7 @@ export class BattlePassScene extends Phaser.Scene {
         duration: 1100,
         yoyo: true,
         repeat: -1,
-        ease: 'Sine.easeInOut'
-      });
-
-      this.tweens.add({
-        targets: container,
-        scaleX: { from: 1, to: 1.015 },
-        scaleY: { from: 1, to: 1.015 },
-        duration: 1400,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut'
+        ease: 'Sine.easeInOut',
       });
     }
 
@@ -931,7 +1006,7 @@ export class BattlePassScene extends Phaser.Scene {
         { tl: 3 * s, tr: 3 * s, bl: 0, br: 0 }
       );
       
-      const btnText = this.add.text(w / 2, statusY, 'CLAIM', {
+      const btnText = this.add.text(w / 2, statusY, 'ЗАБРАТЬ', {
         fontSize: `${8 * s}px`,
         fontFamily: fonts.tech,
         color: '#000000',
@@ -999,10 +1074,8 @@ export class BattlePassScene extends Phaser.Scene {
     bg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 11 * s);
     btn.add(bg);
     
-    btn.add(this.add.text(0, 0, 'CLAIM', { fontSize: `${9 * s}px`, fontFamily: fonts.tech, color: '#000000' }).setOrigin(0.5));
-    
-    this.tweens.add({ targets: btn, scale: { from: 1, to: 1.08 }, duration: 500, yoyo: true, repeat: -1 });
-    
+    btn.add(this.add.text(0, 0, 'ЗАБРАТЬ', { fontSize: `${9 * s}px`, fontFamily: fonts.tech, color: '#1a0f08', fontStyle: 'bold' }).setOrigin(0.5));
+
     btn.setSize(btnW, btnH);
     btn.setInteractive({ useHandCursor: true });
     btn.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
@@ -1076,19 +1149,21 @@ export class BattlePassScene extends Phaser.Scene {
 
     // 4. Panel Background
     const bg = this.add.graphics();
-    bg.fillStyle(0x1e293b, 1);
+    bg.fillGradientStyle(0x1e293b, 0x151b2e, 0x111b2e, 0x151b2e, 1);
     bg.fillRoundedRect(-120 * s, -100 * s, 240 * s, 200 * s, 20 * s);
-    bg.lineStyle(4, 0x00f2ff, 1);
+    bg.lineStyle(3, 0xfbbf24, 0.9);
     bg.strokeRoundedRect(-120 * s, -100 * s, 240 * s, 200 * s, 20 * s);
+    bg.lineStyle(1, 0x22d3ee, 0.45);
+    bg.strokeRoundedRect(-118 * s, -98 * s, 236 * s, 196 * s, 18 * s);
     popup.add(bg);
 
     // 5. Header Text
-    const titleText = this.add.text(0, -70 * s, 'REWARD UNLOCKED!', {
-        fontSize: `${22 * s}px`,
-        fontFamily: fonts.tech,
-        color: '#ffd700',
-        stroke: '#000',
-        strokeThickness: 4
+    const titleText = this.add.text(0, -70 * s, 'НАГРАДА!', {
+      fontSize: `${22 * s}px`,
+      fontFamily: fonts.tech,
+      color: '#fde68a',
+      stroke: '#1a0f08',
+      strokeThickness: 4,
     }).setOrigin(0.5);
     popup.add(titleText);
 
@@ -1132,10 +1207,10 @@ export class BattlePassScene extends Phaser.Scene {
     popup.add(valueText);
 
     // 8. "Tap to continue"
-    const tapText = this.add.text(0, 140 * s, 'Tap to continue', {
-        fontSize: `${14 * s}px`,
-        fontFamily: fonts.primary,
-        color: '#94a3b8'
+    const tapText = this.add.text(0, 140 * s, 'Нажми для продолжения', {
+      fontSize: `${14 * s}px`,
+      fontFamily: fonts.primary,
+      color: '#bae6fd',
     }).setOrigin(0.5);
     tapText.setAlpha(0);
     // Blink animation
@@ -1181,6 +1256,7 @@ export class BattlePassScene extends Phaser.Scene {
   private createPremiumButton(): void {
     const { width, height } = this.scale;
     const s = this.s;
+    const fonts = getFonts();
     const progress = battlePassManager.getProgress();
     const season = getCurrentSeason();
 
@@ -1200,12 +1276,12 @@ export class BattlePassScene extends Phaser.Scene {
       bg.strokeRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 14);
       container.add(bg);
 
-      const statusText = this.add.text(0, 0, '👑 PREMIUM АКТИВЕН', {
+      const statusText = this.add.text(0, 0, '✦ PREMIUM АКТИВЕН ✦', {
         fontSize: `${14 * s}px`,
-        fontFamily: 'Orbitron, Arial',
+        fontFamily: fonts.tech,
         fontStyle: 'bold',
-        color: '#ffd700',
-      }).setOrigin(0.5).setShadow(0, 0, '#ffd700', 6, true, true);
+        color: '#fff6d6',
+      }).setOrigin(0.5).setShadow(0, 2, '#000000', 4, true, true);
       container.add(statusText);
       
       // ✅ Кнопка неактивна, но видна
@@ -1234,20 +1310,19 @@ export class BattlePassScene extends Phaser.Scene {
       container.add(bg);
 
       // ✅ ИСПРАВЛЕНО: Белый текст с тенью для читаемости
-      const btnText = this.add.text(0, 0, '✦ КУПИТЬ PREMIUM ✦', {
+      const btnText = this.add.text(0, 0, '✦ КУПИТЬ GALAXY PASS ✦', {
         fontSize: `${15 * s}px`,
-        fontFamily: 'Orbitron, Arial',
+        fontFamily: fonts.tech,
         fontStyle: 'bold',
-        color: '#ffffff',
+        color: '#fffbeb',
       }).setOrigin(0.5).setShadow(0, 2, '#000000', 6, true, true);
       container.add(btnText);
 
       // Цена под кнопкой
-      const priceText = this.add.text(0, btnHeight / 2 + 16 * s, 
-        `💎 ${season.premiumPrice.crystals} кристаллов`, {
+      const priceText = this.add.text(0, btnHeight / 2 + 16 * s, `💎 ${season.premiumPrice.crystals} кристаллов`, {
         fontSize: `${11 * s}px`,
-        fontFamily: 'Rajdhani, Arial',
-        color: '#a78bfa',
+        fontFamily: fonts.primary,
+        color: '#ddd6fe',
       }).setOrigin(0.5).setShadow(0, 1, '#000000', 2, true, true);
       container.add(priceText);
 
@@ -1314,14 +1389,26 @@ export class BattlePassScene extends Phaser.Scene {
   private createBackButton(): void {
     const s = this.s;
     const fonts = getFonts();
-    
-    const btn = this.add.text(20 * s, 15 * s, '← НАЗАД', {
-      fontSize: `${14 * s}px`, fontFamily: fonts.primary, color: '#94a3b8',
-    }).setInteractive({ useHandCursor: true });
-    
-    btn.on('pointerover', () => btn.setColor('#ffffff'));
-    btn.on('pointerout', () => btn.setColor('#94a3b8'));
-    btn.on('pointerdown', () => this.handleBack());
+    const bx = 22 * s;
+    const by = 24 * s;
+
+    const backWrap = this.add.container(bx, by).setDepth(120);
+    const disc = this.add.graphics();
+    disc.fillStyle(0x1e293b, 0.92);
+    disc.fillCircle(0, 0, 20 * s);
+    disc.lineStyle(1.5, 0xfbbf24, 0.55);
+    disc.strokeCircle(0, 0, 20 * s);
+    backWrap.add(disc);
+    const lab = this.add.text(0, 0, '←', {
+      fontSize: `${20 * s}px`,
+      fontFamily: fonts.primary,
+      color: '#fef3c7',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    backWrap.add(lab);
+    const hit = this.add.circle(0, 0, 22 * s, 0x000000, 0).setInteractive({ useHandCursor: true });
+    backWrap.add(hit);
+    hit.on('pointerdown', () => this.handleBack());
   }
 
   private updateTimer(): void {
@@ -1470,10 +1557,10 @@ export class BattlePassScene extends Phaser.Scene {
       return;
     }
     
-    const startY = 160 * this.s;
-    const endY = this.scale.height - 100 * this.s;
-    
-    if (pointer.y > startY && pointer.y < endY) {
+    const scrollTop = this.scrollAreaStartY > 0 ? this.scrollAreaStartY : 248 * this.s;
+    const endY = this.scale.height - 82 * this.s;
+
+    if (pointer.y > scrollTop && pointer.y < endY) {
       this.isDragging = true;
       this.dragStartX = pointer.x + this.scrollX;
       this.lastPointerX = pointer.x;
@@ -1551,7 +1638,9 @@ export class BattlePassScene extends Phaser.Scene {
 
     this.visibleTierNodes.forEach((child) => {
       if (!child?.active || child.type !== 'Container') return;
-      const childWorldX = worldContainerX + child.x;
+      const tierCX =
+        typeof child.getData === 'function' ? Number(child.getData('tierCenterX') ?? 0) : 0;
+      const childWorldX = worldContainerX + tierCX;
       const dist = Math.abs(centerX - childWorldX);
       let targetScale = 0.92;
       if (dist < maxDist) {
@@ -1594,17 +1683,19 @@ export class BattlePassScene extends Phaser.Scene {
     
     // Обновить ширину заполнения прогресс-бара
     if (this.progressBarFill) {
-      const fillWidth = Math.max(10 * this.s, this.progressBarWidth * xpInfo.progress);
-      const barX = 30 * this.s;
-      const barY = 100 * this.s + 85 * this.s;
-      const barHeight = 20 * this.s;
-      
+      const ly = this.getBattlePassProgressBarLayout();
+      const fillWidth = Math.max(
+        12 * this.s,
+        this.progressBarWidth * xpInfo.progress - 4 * this.s
+      );
+      const pad = 2 * this.s;
+
       this.tweens.add({
         targets: this.progressBarFill,
         width: fillWidth,
-        x: barX,
+        x: ly.barX + pad,
         duration: 300,
-        ease: 'Power2'
+        ease: 'Power2',
       });
     }
     
@@ -1614,7 +1705,7 @@ export class BattlePassScene extends Phaser.Scene {
     }
     
     if (this.tierText) {
-      this.tierText.setText(`TIER ${progress.currentTier}`);
+      this.tierText.setText(`УРОВЕНЬ ${progress.currentTier}`);
     }
   }
 
@@ -1631,7 +1722,6 @@ export class BattlePassScene extends Phaser.Scene {
   }
 
   private createClaimAllButton(x: number, y: number): void {
-    const progress = battlePassManager.getProgress();
     const season = getCurrentSeason();
     
     // Calculate claimable count manually
@@ -1647,29 +1737,28 @@ export class BattlePassScene extends Phaser.Scene {
     const fonts = getFonts();
 
     const btn = this.add.container(x, y);
-    
-    // Background
+
     const bg = this.add.graphics();
-    bg.fillStyle(0x22c55e, 1);
-    bg.fillRoundedRect(-60*s, -15*s, 120*s, 30*s, 8*s);
-    // Glow
-    bg.lineStyle(2, 0xa7f3d0, 1);
-    bg.strokeRoundedRect(-60*s, -15*s, 120*s, 30*s, 8*s);
+    bg.fillGradientStyle(0xa7f3d0, 0x4ade80, 0x16a34a, 0x14532d, 1);
+    bg.fillRoundedRect(-64 * s, -16 * s, 128 * s, 32 * s, 10 * s);
+    bg.lineStyle(2, 0xd1fae5, 0.95);
+    bg.strokeRoundedRect(-64 * s, -16 * s, 128 * s, 32 * s, 10 * s);
     btn.add(bg);
 
-    // Text
-    btn.add(this.add.text(0, 0, `CLAIM ALL (${claimableCount})`, {
-        fontSize: `${12*s}px`, fontFamily: fonts.tech, color: '#000', fontStyle: 'bold'
-    }).setOrigin(0.5));
+    btn.add(
+      this.add
+        .text(0, 0, `ЗАБРАТЬ ВСЁ (${claimableCount})`, {
+          fontSize: `${11 * s}px`,
+          fontFamily: fonts.tech,
+          color: '#1a0f08',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5)
+    );
 
-    // Interaction
-    btn.setSize(120*s, 30*s).setInteractive({ useHandCursor: true });
-    
-    // Pulse
-    this.tweens.add({ targets: btn, scale: 1.05, duration: 600, yoyo: true, repeat: -1 });
-
+    btn.setSize(128 * s, 32 * s).setInteractive({ useHandCursor: true });
     btn.on('pointerdown', () => this.handleClaimAll(btn));
-    
+
     this.progressSectionContainer.add(btn);
   }
 
@@ -1722,6 +1811,7 @@ export class BattlePassScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const s = this.s;
     const season = getCurrentSeason();
+    const fonts = getFonts();
 
     // Затемнение фона
     const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0)
@@ -1750,9 +1840,10 @@ export class BattlePassScene extends Phaser.Scene {
     bg.fillStyle(0x1a1a2e, 0.98);
     bg.fillRoundedRect(-modalWidth / 2, -modalHeight / 2, modalWidth, modalHeight, 20);
     
-    // Градиентная обводка (цвет сезона)
-    bg.lineStyle(2, season.themeColor, 0.8);
+    bg.lineStyle(2, 0xfbbf24, 0.82);
     bg.strokeRoundedRect(-modalWidth / 2, -modalHeight / 2, modalWidth, modalHeight, 20);
+    bg.lineStyle(1, 0x22d3ee, 0.42);
+    bg.strokeRoundedRect(-modalWidth / 2 + 3, -modalHeight / 2 + 3, modalWidth - 6, modalHeight - 6, 18);
     
     // Свечение сверху
     bg.fillStyle(season.themeColor, 0.15);
@@ -1772,11 +1863,11 @@ export class BattlePassScene extends Phaser.Scene {
     modal.add(crownIcon);
 
     // Заголовок
-    const title = this.add.text(0, -modalHeight / 2 + 110 * s, 'РАЗБЛОКИРОВАТЬ PREMIUM', {
+    const title = this.add.text(0, -modalHeight / 2 + 110 * s, 'GALAXY PASS', {
       fontSize: `${18 * s}px`,
-      fontFamily: 'Orbitron, Arial',
+      fontFamily: fonts.tech,
       fontStyle: 'bold',
-      color: '#ffd700',
+      color: '#fde68a',
       align: 'center',
     }).setOrigin(0.5).setShadow(0, 2, '#000000', 4, true, true);
     modal.add(title);
@@ -1785,8 +1876,7 @@ export class BattlePassScene extends Phaser.Scene {
     const description = this.add.text(0, -modalHeight / 2 + 155 * s, 
       'Получите эксклюзивные награды,\nредких юнитов и особые бонусы!', {
       fontSize: `${13 * s}px`,
-      fontFamily: 'Rajdhani, Arial',
-      color: '#b8c0cc',
+      fontFamily: fonts.primary,
       align: 'center',
       lineSpacing: 4,
     }).setOrigin(0.5);
@@ -1804,8 +1894,7 @@ export class BattlePassScene extends Phaser.Scene {
     benefits.forEach((benefit, i) => {
       const benefitText = this.add.text(0, benefitsStartY + i * 26 * s, benefit, {
         fontSize: `${12 * s}px`,
-        fontFamily: 'Rajdhani, Arial',
-        color: '#a78bfa',
+        fontFamily: fonts.primary,
       }).setOrigin(0.5);
       modal.add(benefitText);
     });
@@ -1814,9 +1903,7 @@ export class BattlePassScene extends Phaser.Scene {
     const priceY = modalHeight / 2 - 110 * s;
     const priceText = this.add.text(0, priceY, `💎 ${season.premiumPrice.crystals} кристаллов`, {
       fontSize: `${16 * s}px`,
-      fontFamily: 'Orbitron, Arial',
-      fontStyle: 'bold',
-      color: '#00d4ff',
+      fontFamily: fonts.tech,
     }).setOrigin(0.5).setShadow(0, 0, '#00d4ff', 8, true, true);
     modal.add(priceText);
 
@@ -1838,11 +1925,11 @@ export class BattlePassScene extends Phaser.Scene {
     );
     modal.add(buyBtnBg);
 
-    const buyBtnText = this.add.text(0, buyBtnY, 'КУПИТЬ PREMIUM', {
+    const buyBtnText = this.add.text(0, buyBtnY, 'ОФОРМИТЬ', {
       fontSize: `${14 * s}px`,
-      fontFamily: 'Orbitron, Arial',
+      fontFamily: fonts.tech,
       fontStyle: 'bold',
-      color: '#ffffff',
+      color: '#fffbeb',
     }).setOrigin(0.5).setShadow(0, 1, '#000000', 3, true, true);
     modal.add(buyBtnText);
 
@@ -1869,8 +1956,8 @@ export class BattlePassScene extends Phaser.Scene {
     
     const closeText = this.add.text(0, closeY, 'Позже', {
       fontSize: `${12 * s}px`,
-      fontFamily: 'Rajdhani, Arial',
-      color: '#9ca3af',
+      fontFamily: fonts.primary,
+      color: '#cbd5e1',
     }).setOrigin(0.5);
     modal.add(closeText);
     
@@ -1933,12 +2020,11 @@ export class BattlePassScene extends Phaser.Scene {
   }
 
   private scrollToTier(tier: number): void {
-    const season = getCurrentSeason();
-    const tierWidth = 100 * this.s;
-    const tierSpacing = 12 * this.s;
+    if (!this.scrollContainer?.active) return;
+    const step = this.totalItemWidth > 0 ? this.totalItemWidth : 150 * this.s;
     const currentIndex = Math.max(0, tier - 2);
-    const targetScrollX = Math.min(this.maxScrollX, currentIndex * (tierWidth + tierSpacing));
-    
+    const targetScrollX = Math.min(this.maxScrollX, currentIndex * step);
+
     this.tweens.add({
       targets: this,
       scrollX: targetScrollX,
@@ -1946,7 +2032,8 @@ export class BattlePassScene extends Phaser.Scene {
       ease: 'Cubic.easeOut',
       onUpdate: () => {
         this.scrollContainer.x = -this.scrollX;
-      }
+        this.updateVisibleTiers();
+      },
     });
   }
 
