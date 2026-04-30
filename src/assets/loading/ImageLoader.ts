@@ -352,6 +352,8 @@ export function loadImagesShop(scene: Phaser.Scene): void {
 export function loadImagesRepository(scene: Phaser.Scene): void {
   ensureSafeImageLoading(scene);
 
+  loadFactionIcons(scene);
+  loadFactionBadgeIcons(scene);
   loadFactionBackgrounds(scene);
   loadFactionTokens(scene);
   loadRewardIcons(scene);
@@ -696,10 +698,33 @@ function loadFactionPreviews(scene: Phaser.Scene): void {
 }
 
 function loadFactionIcons(scene: Phaser.Scene): void {
-  scene.load.image('icon_faction_magma', 'assets/ui/icons/icon_faction_magma.webp');
-  scene.load.image('icon_faction_cyber', 'assets/ui/icons/icon_faction_cyber.webp');
-  scene.load.image('icon_faction_void', 'assets/ui/icons/icon_faction_void.webp');
-  scene.load.image('icon_faction_terran', 'assets/ui/icons/icon_faction_terran.webp');
+  if (!scene.textures.exists('icon_faction_magma')) {
+    scene.load.image('icon_faction_magma', 'assets/ui/icons/icon_faction_magma.webp');
+  }
+  if (!scene.textures.exists('icon_faction_cyber')) {
+    scene.load.image('icon_faction_cyber', 'assets/ui/icons/icon_faction_cyber.webp');
+  }
+  if (!scene.textures.exists('icon_faction_void')) {
+    scene.load.image('icon_faction_void', 'assets/ui/icons/icon_faction_void.webp');
+  }
+  if (!scene.textures.exists('icon_faction_terran')) {
+    scene.load.image('icon_faction_terran', 'assets/ui/icons/icon_faction_terran.webp');
+  }
+}
+
+/** PNG-эмблемы игровых фракций (резерв, если icon_faction_* недоступны) */
+function loadFactionBadgeIcons(scene: Phaser.Scene): void {
+  const badges: [string, string][] = [
+    ['ui_faction_magma', 'assets/ui/icons/player/icon_faction_badge_magma.png'],
+    ['ui_faction_cyborg', 'assets/ui/icons/player/icon_faction_badge_cyborg.png'],
+    ['ui_faction_insect', 'assets/ui/icons/player/icon_faction_badge_insect.png'],
+    ['ui_faction_void', 'assets/ui/icons/player/icon_faction_badge_void.png'],
+  ];
+  for (const [key, url] of badges) {
+    if (!scene.textures.exists(key)) {
+      scene.load.image(key, url);
+    }
+  }
 }
 
 function loadFactionArt(scene: Phaser.Scene): void {

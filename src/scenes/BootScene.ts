@@ -9,6 +9,8 @@ import { CARDS_CATALOG, CardDefinition } from '../data/CardsCatalog';
 import { CampaignGenerator } from '../assets/generation/CampaignGenerator';
 import { FactionGenerator } from '../assets/generation/FactionGenerator';
 import { UIGenerator } from '../assets/generation/UIGenerator';
+import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
+import { addAssetLoadingBackdrop, destroyAssetLoadingBackdrop } from '../ui/AssetsLoadingBackdrop';
 
 export class BootScene extends Phaser.Scene {
   private static readonly LOADING_TIMEOUT_MS = 120_000;
@@ -24,6 +26,8 @@ export class BootScene extends Phaser.Scene {
   private loadingBar?: Phaser.GameObjects.Graphics;
   private loadingText?: Phaser.GameObjects.Text;
   private progressText?: Phaser.GameObjects.Text;
+  private loadingBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private loadingChrome: Phaser.GameObjects.GameObject[] = [];
   private readonly canSendAgentLogs = Boolean(window.DEV_MODE);
 
   constructor() {
@@ -37,6 +41,8 @@ export class BootScene extends Phaser.Scene {
     this.loadErrorCount = 0;
     this.queuedAssetCount = 0;
     this.loadTimeoutEvent = undefined;
+    this.loadingBackdrop = [];
+    this.loadingChrome = [];
   }
 
   preload(): void {
@@ -45,7 +51,39 @@ export class BootScene extends Phaser.Scene {
     this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H1', location: 'BootScene.ts:preload:start', message: 'Boot preload started', data: { baseUrl: import.meta.env.BASE_URL, href: window.location.href }, timestamp: Date.now() });
     // #endregion
 
-    this.createLoadingScreen();
+    ensureSafeImageLoading(this);
+    destroyAssetLoadingBackdrop(this.loadingBackdrop);
+    this.loadingBackdrop = addAssetLoadingBackdrop(this);
+
+    const onProg = (p: number) => this.updateProgress(p);
+    this.load.on('progress', onProg);
+
+    const onFail = (_key: unknown) => {
+      this.loadErrorCount += 1;
+    };
+    this.load.on('loaderror', onFail);
+
+    this.load.once('complete', () => {
+      this.load.off('progress', onProg);
+      this.load.off('loaderror', onFail);
+    });
+
+    let queuedLoads = false;
+    if (!this.textures.exists('ui_home_bg')) {
+      this.load.image('ui_home_bg', 'assets/ui/backgrounds/home_bg.webp');
+      queuedLoads = true;
+    }
+    if (!this.textures.exists('logo')) {
+      this.load.image('logo', 'assets/images/logo.webp');
+      queuedLoads = true;
+    }
+
+    this.createLoadingChrome();
+    if (queuedLoads) {
+      this.installLoadingTimeout();
+    } else {
+      this.updateProgress(1);
+    }
 
     this.queuedAssetCount = this.getQueuedAssetCount();
     this.loadVersionMeta();
@@ -54,10 +92,25 @@ export class BootScene extends Phaser.Scene {
   create(): void {
     console.log('[BootScene] create started');
 
+    this.clearLoadingTimeout();
+    destroyAssetLoadingBackdrop(this.loadingBackdrop);
+    this.loadingBackdrop = addAssetLoadingBackdrop(this);
+
     this.generateTexturesSafely();
     this.ensureCriticalTextureFallbacks();
     // #region agent log
-    this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H3', location: 'BootScene.ts:create:afterTextureGen', message: 'Boot create reached', data: { hasBallPlasma: this.textures.exists('ball_plasma'), hasMainMenuScene: this.scene.get('MainMenuScene') !== undefined }, timestamp: Date.now() });
+    this.sendAgentLog({
+      sessionId: 'e0960d',
+      runId: 'run-pre',
+      hypothesisId: 'H3',
+      location: 'BootScene.ts:create:afterTextureGen',
+      message: 'Boot create reached',
+      data: {
+        hasBallPlasma: this.textures.exists('ball_plasma'),
+        hasMainMenuScene: this.scene.get('MainMenuScene') !== undefined,
+      },
+      timestamp: Date.now(),
+    });
     // #endregion
 
     this.hideLoadingScreen();
@@ -72,19 +125,22 @@ export class BootScene extends Phaser.Scene {
     });
   }
 
-  private createLoadingScreen(): void {
-    const { centerX, centerY, width, height } = this.cameras.main;
+  private createLoadingChrome(): void {
+    this.destroyLoadingChromeOnly();
 
-    this.add.rectangle(centerX, centerY, width, height, 0x050505);
+    const { centerX, centerY, width } = this.cameras.main;
+    const z = 480;
 
-    this.add
+    const title = this.add
       .text(centerX, centerY - 100, 'GALAXY LEAGUE', {
         fontFamily: 'Arial',
         fontSize: '28px',
         color: '#ffffff',
         fontStyle: 'bold',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(z);
+    this.loadingChrome.push(title);
 
     this.loadingText = this.add
       .text(centerX, centerY - 30, 'Загрузка...', {
@@ -92,14 +148,17 @@ export class BootScene extends Phaser.Scene {
         fontSize: '18px',
         color: '#ffffff',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(z);
+    this.loadingChrome.push(this.loadingText);
 
     const barWidth = Math.min(300, width * 0.7);
-    const barHeight = 20;
-    const barBg = this.add.rectangle(centerX, centerY + 20, barWidth, barHeight, 0x222222);
-    barBg.setStrokeStyle(2, 0x444444);
+    const barBg = this.add.rectangle(centerX, centerY + 20, barWidth, 20, 0x222222).setStrokeStyle(2, 0x444444);
+    barBg.setDepth(z);
+    this.loadingChrome.push(barBg);
 
-    this.loadingBar = this.add.graphics();
+    this.loadingBar = this.add.graphics({ x: 0, y: 0 }).setDepth(z + 1);
+    this.loadingChrome.push(this.loadingBar);
 
     this.progressText = this.add
       .text(centerX, centerY + 60, '0%', {
@@ -107,7 +166,23 @@ export class BootScene extends Phaser.Scene {
         fontSize: '16px',
         color: '#aaaaaa',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(z);
+    this.loadingChrome.push(this.progressText);
+  }
+
+  private destroyLoadingChromeOnly(): void {
+    for (const obj of this.loadingChrome) {
+      try {
+        obj.destroy();
+      } catch {
+        //
+      }
+    }
+    this.loadingChrome = [];
+    this.loadingBar = undefined;
+    this.loadingText = undefined;
+    this.progressText = undefined;
   }
 
   private updateProgress(value: number): void {
@@ -135,15 +210,10 @@ export class BootScene extends Phaser.Scene {
   }
 
   private hideLoadingScreen(): void {
-    if (this.loadingBar) {
-      this.loadingBar.destroy();
-    }
-    if (this.loadingText) {
-      this.loadingText.destroy();
-    }
-    if (this.progressText) {
-      this.progressText.destroy();
-    }
+    destroyAssetLoadingBackdrop(this.loadingBackdrop);
+    this.loadingBackdrop = [];
+    this.clearLoadingTimeout();
+    this.destroyLoadingChromeOnly();
 
     if (typeof (window as any).hideLoadingScreen === 'function') {
       (window as any).hideLoadingScreen();

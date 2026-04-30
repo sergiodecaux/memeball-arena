@@ -28,6 +28,7 @@ import { UpdateNotificationOverlay } from '../ui/UpdateNotificationOverlay';
 import { globalCleanup } from '../utils/GlobalCleanup';
 import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
 import { loadAudioBoot } from '../assets/loading/AudioLoader';
+import { addAssetLoadingBackdrop, destroyAssetLoadingBackdrop } from '../ui/AssetsLoadingBackdrop';
 
 export class MainMenuScene extends Phaser.Scene {
   private s: number = 1;
@@ -43,6 +44,8 @@ export class MainMenuScene extends Phaser.Scene {
   private achievementManager?: any; // AchievementManager
   private battlePassBanner?: BattlePassBanner;
   private updateOverlay?: UpdateNotificationOverlay;
+  /** Фон во время preload (до появления меню) */
+  private preloadBackdropObjs: Phaser.GameObjects.GameObject[] = [];
 
   // Новые контейнеры для блочной структуры
   private mainContainer?: Phaser.GameObjects.Container;
@@ -54,6 +57,9 @@ export class MainMenuScene extends Phaser.Scene {
 
   preload(): void {
     ensureSafeImageLoading(this);
+
+    destroyAssetLoadingBackdrop(this.preloadBackdropObjs);
+    this.preloadBackdropObjs = addAssetLoadingBackdrop(this);
 
     // Keep the first menu frame light on mobile. Heavy menu/match assets are
     // loaded by their scenes so WebView does not show a black screen here.
@@ -113,6 +119,8 @@ export class MainMenuScene extends Phaser.Scene {
     this.battlePassBanner = undefined;
     this.mainContainer = undefined;
     this.uiContainer = undefined;
+    destroyAssetLoadingBackdrop(this.preloadBackdropObjs);
+    this.preloadBackdropObjs = [];
     // ✅ BUG FIX: dialogueOverlay removed - no longer used
   }
 
@@ -133,6 +141,9 @@ export class MainMenuScene extends Phaser.Scene {
     }
 
     this.cleanupScene();
+    destroyAssetLoadingBackdrop(this.preloadBackdropObjs);
+    this.preloadBackdropObjs = [];
+
     this.s = tgApp.getUIScale();
 
     // 1) Инициализация систем (Logic Layer) — СОХРАНЕНО

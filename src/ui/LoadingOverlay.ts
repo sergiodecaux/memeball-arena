@@ -16,9 +16,12 @@ export class LoadingOverlay {
 
     this.container = scene.add.container(centerX, centerY);
 
-    // Dark background with slight transparency
-    this.background = scene.add.rectangle(0, 0, width, height, 0x000000, 0.8);
+    // Сплошной тёмно-синий фон и лёгкое затемнение поверх игры — не сплошной чёрный
+    this.background = scene.add.rectangle(0, 0, width, height, 0x0f172a, 1);
     this.container.add(this.background);
+
+    const dim = scene.add.rectangle(0, 0, width, height, 0x000000, 0.42);
+    this.container.add(dim);
 
     // Progress bar background
     const barWidth = Math.min(300, width * 0.7);

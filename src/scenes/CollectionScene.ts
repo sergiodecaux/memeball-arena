@@ -17,6 +17,7 @@ import { createText } from '../utils/TextFactory';
 import { loadImagesRepository } from '../assets/loading/ImageLoader';
 import { AssetPackManager } from '../assets/AssetPackManager';
 import { getRealUnitTextureKey } from '../utils/TextureHelpers';
+import { addAssetLoadingBackdrop, destroyAssetLoadingBackdrop } from '../ui/AssetsLoadingBackdrop';
 
 /**
  * Предотвращает нативные события браузера на pointer событии
@@ -72,17 +73,24 @@ export class CollectionScene extends Phaser.Scene {
   private headerHeight = 60; // Простая шапка только с заголовком
   private tabsHeight = 60;
   private topOffset = 0;
-  
+  /** Во время preload — чтобы не было чёрного экрана под спиннером */
+  private preloadBackdropObjs: Phaser.GameObjects.GameObject[] = [];
+
   constructor() {
     super({ key: 'CollectionScene' });
   }
 
   preload(): void {
+    destroyAssetLoadingBackdrop(this.preloadBackdropObjs);
+    this.preloadBackdropObjs = addAssetLoadingBackdrop(this);
     loadImagesRepository(this);
   }
 
   create(): void {
     try {
+      destroyAssetLoadingBackdrop(this.preloadBackdropObjs);
+      this.preloadBackdropObjs = [];
+
       this.width = this.cameras.main.width;
       this.height = this.cameras.main.height;
       this.topOffset = this.headerHeight + this.tabsHeight;
@@ -405,15 +413,24 @@ export class CollectionScene extends Phaser.Scene {
     
     container.add(bg);
 
-    // Иконка фракции
     const uiFactionId = getUIFactionByGameFaction(factionId);
-    const iconKey = `icon_faction_${uiFactionId}`;
-    
-    if (this.textures.exists(iconKey)) {
-      const icon = this.add.image(0, 0, iconKey);
+    const emblemKeys = [`icon_faction_${uiFactionId}`, `ui_faction_${factionId}`];
+
+    let emblemAdded = false;
+    for (const emblemKey of emblemKeys) {
+      if (!this.textures.exists(emblemKey)) {
+        continue;
+      }
+      const icon = this.add.image(0, 0, emblemKey);
       icon.setDisplaySize(size * 0.7, size * 0.7);
       icon.setAlpha(isSelected ? 1 : 0.6);
       container.add(icon);
+      emblemAdded = true;
+      break;
+    }
+    if (!emblemAdded) {
+      const dot = this.add.circle(0, 0, size * 0.22, faction.color, 0.85);
+      container.add(dot);
     }
 
     // Интерактивность
@@ -1703,5 +1720,8 @@ export class CollectionScene extends Phaser.Scene {
     this.tweens.killAll();
     this.time.removeAllEvents();
     this.input.removeAllListeners();
+
+    destroyAssetLoadingBackdrop(this.preloadBackdropObjs);
+    this.preloadBackdropObjs = [];
   }
 }
