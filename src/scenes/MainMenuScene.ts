@@ -80,18 +80,6 @@ export class MainMenuScene extends Phaser.Scene {
     this.load.image('ui_rewards_crystals', 'assets/ui/icons/rewards/icon_currency_crystals.png');
     this.load.image('ui_settings_gear', 'assets/ui/icons/system/icon_settings_gear.png');
     this.load.image('ui_player_level', 'assets/ui/icons/player/icon_player_level.png');
-
-    /** Музыка меню после декодирования ассетов — не ждём отдельный экран */
-    const startMenuMusicEarly = (): void => {
-      try {
-        const audio = AudioManager.getInstance();
-        audio.init(this);
-        audio.playMusic('bgm_menu');
-      } catch {
-        //
-      }
-    };
-    this.load.once('complete', startMenuMusicEarly);
   }
 
   shutdown(): void {
@@ -209,28 +197,20 @@ export class MainMenuScene extends Phaser.Scene {
     const audio = AudioManager.getInstance();
     audio.init(this);
 
-    // ✅ ДОБАВЛЕНО: Останавливаем любые звуки с предыдущих сцен (включая result win/lose)
-    audio.stopAllSounds();
+    // Тихо глушим матч/SFX без stopAll(): играющее bgm_menu не трогаем (нет обрыва при возврате из подменю)
+    audio.prepareForMainMenuAudio();
 
-    // ✅ УБРАНО stopAll() — playMusic сам проверит и не перезапустит если уже играет
     audio.playMusic('bgm_menu');
 
-    // ✅ УЛУЧШЕНО: Множественные способы разблокировки
+    // После первого жеста: разблокировка контекста + повторная попытка (Phaser sound.locked)
     const unlockAndPlay = () => {
       audio.unlockAudioContext();
-      // Убираем слушатели после первого срабатывания
+      audio.playMusic('bgm_menu');
       this.input.off('pointerdown', unlockAndPlay);
       this.input.off('pointerup', unlockAndPlay);
     };
     this.input.on('pointerdown', unlockAndPlay);
     this.input.on('pointerup', unlockAndPlay);
-
-    // ✅ ДОБАВЛЕНО: Также пробуем через таймер (если первый клик был вне Phaser canvas)
-    this.time.delayedCall(100, () => {
-      if (!audio.isPlaying('bgm_menu')) {
-        audio.unlockAudioContext();
-      }
-    });
 
     // ✅ Проверка сезонов при запуске
     const playerDataObj = playerData.get();

@@ -28,6 +28,9 @@ export class AudioManager {
   // ✅ NEW: Музыка, которую нужно запустить после разблокировки AudioContext
   private pendingMusicKey: string | null = null;
 
+  /** Phaser звук может быть locked до первого жеста — один слушатель на unlock */
+  private soundUnlockListenerActive = false;
+
   private constructor() {}
 
   private hasAudio(key: string): boolean {
@@ -130,7 +133,9 @@ export class AudioManager {
   public unlockAudioContext(): void {
     if (this.audioContextReady) return;
     this.audioContextReady = true;
-    console.log('[AudioManager] AudioContext manually unlocked');
+    if (import.meta.env.DEV) {
+      console.log('[AudioManager] AudioContext manually unlocked');
+    }
     
     // Запускаем отложенную музыку
     if (this.pendingMusicKey) {
@@ -159,6 +164,42 @@ export class AudioManager {
 
     if (this.scene && this.scene.sound) {
       this.scene.sound.stopAll();
+    }
+  }
+
+  /**
+   * При входе в главное меню: убрать хвосты матча / награды, но не рвать уже играющий bgm_menu
+   * (во избежание «тишины до другого экрана» и повторного старта темы при возврате из подменю).
+   */
+  public prepareForMainMenuAudio(): void {
+    this.stopAmbience();
+    this.stopResultMusic();
+    this.stopPackReveal();
+    this.stopFactionSelectSounds();
+
+    const menuKey = 'bgm_menu';
+    let menuPlaying = false;
+    if (this.currentMusicKey === menuKey && this.currentMusic) {
+      try {
+        menuPlaying = this.currentMusic.isPlaying;
+      } catch {
+        menuPlaying = false;
+      }
+    }
+
+    if (!menuPlaying) {
+      this.stopMusic();
+    }
+
+    if (this.scene?.sound) {
+      try {
+        const stopKeys = ['sfx_win', 'sfx_lose', 'sfx_draw', 'sfx_goal_crowd', 'sfx_whistle', 'sfx_goal'];
+        for (const key of stopKeys) {
+          this.scene.sound.stopByKey(key);
+        }
+      } catch {
+        //
+      }
     }
   }
 
@@ -254,7 +295,9 @@ export class AudioManager {
     if (!this.isMusicEnabled) return;
     
     if (!this.audioContextReady) {
-      console.log('[AudioManager] Music playback deferred until user interaction');
+      if (import.meta.env.DEV) {
+        console.log('[AudioManager] Music playback deferred until user interaction');
+      }
       this.pendingMusicKey = key;
       return;
     }
@@ -264,7 +307,9 @@ export class AudioManager {
       // Тот же трек — проверяем играет ли
       try {
         if (this.currentMusic?.isPlaying) {
-          console.log(`[AudioManager] Music "${key}" already playing, skipping`);
+          if (import.meta.env.DEV) {
+            console.log(`[AudioManager] Music "${key}" already playing, skipping`);
+          }
           return;
         }
       } catch (e) {
@@ -278,14 +323,33 @@ export class AudioManager {
       return;
     }
 
+    const sm = this.scene?.sound as Phaser.Sound.WebAudioSoundManager | undefined;
+    if (sm && (sm as { locked?: boolean }).locked) {
+      this.pendingMusicKey = key;
+      if (!this.soundUnlockListenerActive) {
+        this.soundUnlockListenerActive = true;
+        sm.once('unlocked', () => {
+          this.soundUnlockListenerActive = false;
+          const pending = this.pendingMusicKey;
+          this.pendingMusicKey = null;
+          if (pending) {
+            this.playMusic(pending);
+          }
+        });
+      }
+      return;
+    }
+
     this.stopMusic();
-    
+
     try {
-      if (this.scene?.sound && !this.scene.sound.locked) {
+      if (this.scene?.sound) {
         this.currentMusic = this.scene.sound.add(key, { loop: true, volume: 0.4 });
         this.currentMusic.play();
         this.currentMusicKey = key;
-        console.log(`[AudioManager] Started playing: ${key}`);
+        if (import.meta.env.DEV) {
+          console.log(`[AudioManager] Started playing: ${key}`);
+        }
       }
     } catch (e) {
       console.warn('AudioManager: Could not play music', key, e);
