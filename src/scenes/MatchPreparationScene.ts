@@ -54,11 +54,16 @@ export class MatchPreparationScene extends Phaser.Scene {
   private playerReady = false;
   private opponentReady = false;
   
+  // Подсказка фракции с сервера (бот/матчмейк); для ИИ не задаёт opponentSelectedFaction до «выбора» бота
+  private suggestedOpponentFaction?: FactionId;
+  
   // UI элементы
   private factionCards = new Map<FactionId, Phaser.GameObjects.Container>();
   private factionScrollContainer?: Phaser.GameObjects.Container;
   private readyButton?: PremiumButton;
   private botThinkingTimer?: Phaser.Time.TimerEvent;
+  /** Имитация «живого» соперника в PvP (задержка перед LOCKED IN) */
+  private simulatedOpponentTimer?: Phaser.Time.TimerEvent;
   
   // ⏱️ Таймер подготовки (5 минут = 300 секунд)
   private prepTimeRemaining = 300;
@@ -81,7 +86,10 @@ export class MatchPreparationScene extends Phaser.Scene {
     if (import.meta.env.DEV) {
       console.debug('[MatchPreparationScene] shutdown called');
     }
-    // Cleanup is handled by Phaser automatically
+    this.botThinkingTimer?.destroy();
+    this.botThinkingTimer = undefined;
+    this.simulatedOpponentTimer?.destroy();
+    this.simulatedOpponentTimer = undefined;
   }
 
   init(data: MatchPreparationData): void {
@@ -97,10 +105,18 @@ export class MatchPreparationScene extends Phaser.Scene {
     
     // Сброс состояния
     this.playerSelectedFaction = undefined;
-    this.opponentSelectedFaction = data.opponentFaction;
+    this.suggestedOpponentFaction = data.opponentFaction;
     this.playerReady = false;
     this.opponentReady = false;
     this.prepTimeRemaining = 300;
+
+    if (data.isAI) {
+      // ✅ PvP/Live-бот: сервер прислал factionId, но визуально «оппонент ещё выбирает» — иначе startBotThinking не вызовется
+      this.opponentSelectedFaction = undefined;
+    } else {
+      // PvP против игрока (другой клиент): известна заранее фракция с матчмейка
+      this.opponentSelectedFaction = data.opponentFaction;
+    }
     
     this.factionCards.clear();
   }
@@ -127,6 +143,10 @@ export class MatchPreparationScene extends Phaser.Scene {
     
     // ⏱️ Запускаем таймер подготовки
     this.startPrepTimer();
+
+    if (!this.matchData.isAI && this.opponentSelectedFaction) {
+      this.scheduleSimulatedHumanOpponentReady();
+    }
   }
 
   // ========== ФОНОВАЯ ЧАСТЬ ==========
@@ -315,11 +335,12 @@ export class MatchPreparationScene extends Phaser.Scene {
     applyTextShadow(opponentName, 'strong');
     opponentContainer.add(opponentName);
     
-    // Статус противника
-    this.opponentStatusText = this.add.text(0, 50 * s, 'WAITING...', {
+    // Статус противника (как живой игрок: сначала выбирает фракцию)
+    this.opponentStatusText = this.add.text(0, 50 * s, 'PICKING...', {
       fontSize: `${14 * s}px`,
       fontFamily: fonts.tech,
-      color: '#888888',
+      color: '#ffaa00',
+      fontStyle: 'bold',
     }).setOrigin(0.5);
     opponentContainer.add(this.opponentStatusText);
   }
@@ -673,52 +694,96 @@ export class MatchPreparationScene extends Phaser.Scene {
     });
   }
 
-  private botSelectFaction(): void {
-    // ✅ ИСПРАВЛЕНО: Для AI режима бот может выбрать любую фракцию, кроме выбранной игроком
-    // Бот не ограничен открытыми у игрока фракциями - у AI могут быть все фракции
-    const availableFactions = FACTION_IDS.filter(factionId => {
-      return factionId !== this.playerSelectedFaction;
-    });
-    
-    if (availableFactions.length === 0) {
-      console.error('[MatchPreparationScene] No available factions for bot!');
+  /**
+   * PvP против реального игрока: соперник «блокирует» фракцию с задержкой, как человек.
+   */
+  private scheduleSimulatedHumanOpponentReady(): void {
+    this.simulatedOpponentTimer?.destroy();
+
+    const faction = this.opponentSelectedFaction || this.suggestedOpponentFaction;
+
+    if (!faction) {
+      logWarn('MatchPrep', 'PvP opponent has no faction hint; proceeding as ready');
+      this.opponentReady = true;
+      this.checkBothReady();
       return;
     }
-    
-    const randomIndex = Math.floor(Math.random() * availableFactions.length);
-    this.opponentSelectedFaction = availableFactions[randomIndex];
-    
+
+    this.opponentSelectedFaction = faction;
+    if (this.opponentStatusText) {
+      this.opponentStatusText.setText('PICKING...').setColor('#ffaa00');
+    }
+
+    const ms = Phaser.Math.Between(900, 2600);
+    this.simulatedOpponentTimer = this.time.delayedCall(ms, () => {
+      this.simulatedOpponentTimer = undefined;
+      if (this.opponentStatusText) {
+        this.opponentStatusText.setText('LOCKED IN!').setColor('#00ff66');
+      }
+      AudioManager.getInstance().playSFX('sfx_ui_click');
+      hapticSelection();
+      this.opponentReady = true;
+      this.updateFactionCards();
+      this.checkBothReady();
+    });
+  }
+
+  private botSelectFaction(): void {
+    const exclude = this.playerSelectedFaction;
+    const hinted = this.suggestedOpponentFaction;
+
+    let chosen: FactionId;
+    if (hinted && FACTION_IDS.includes(hinted) && hinted !== exclude) {
+      chosen = hinted;
+    } else {
+      const availableFactions = FACTION_IDS.filter((factionId) => factionId !== exclude);
+
+      if (availableFactions.length === 0) {
+        console.error('[MatchPreparationScene] No available factions for bot!');
+        return;
+      }
+
+      chosen = availableFactions[Math.floor(Math.random() * availableFactions.length)];
+    }
+
+    this.opponentSelectedFaction = chosen;
+
     console.log(`[MatchPreparationScene] Bot selected: ${this.opponentSelectedFaction}`);
-    
+
     AudioManager.getInstance().playSFX('sfx_ui_click');
     hapticSelection();
-    
+
     // ✅ Обновляем статус противника
     if (this.opponentStatusText) {
-      this.opponentStatusText.setText('LOCKED IN!').setColor('#ff6b6b');
+      this.opponentStatusText.setText('LOCKED IN!').setColor('#00ff66');
     }
-    
+
     this.updateFactionCards();
-    
+
     // Бот готов через 0.5 сек
     this.time.delayedCall(500, () => {
       this.opponentReady = true;
       if (this.opponentStatusText) {
-        this.opponentStatusText.setText('READY!').setColor('#00ff00');
+        this.opponentStatusText.setText('READY!').setColor('#00ff66');
       }
-      
-      // ✅ ДЛЯ AI РЕЖИМА (casual): Автоматически делаем игрока готовым, если он выбрал фракцию
-      if (this.matchData.isAI && (this.matchData.matchContext === 'casual' || this.matchData.matchContext === 'ranked') && this.playerSelectedFaction && !this.playerReady) {
+
+      // ✅ Для AI (casual/ranked/league/...): Автоматически делаем игрока готовым, если он выбрал фракцию
+      if (
+        this.matchData.isAI &&
+        (this.matchData.matchContext === 'casual' ||
+          this.matchData.matchContext === 'ranked') &&
+        this.playerSelectedFaction &&
+        !this.playerReady
+      ) {
         this.playerReady = true;
         if (this.playerStatusText) {
-          this.playerStatusText.setText('READY!').setColor('#00ff00');
+          this.playerStatusText.setText('READY!').setColor('#00ff9d');
         }
-        // Убираем кнопку READY
         if (this.readyButton) {
           this.readyButton.destroy();
         }
       }
-      
+
       this.checkBothReady();
     });
   }
