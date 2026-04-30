@@ -368,10 +368,9 @@ export class GameScene extends Phaser.Scene {
     // Р’СЃРµ С‚РµРєСЃС‚СѓСЂС‹ СѓР¶Рµ Р·Р°РіСЂСѓР¶РµРЅС‹ РІ BootScene Рё РѕСЃС‚Р°СЋС‚СЃСЏ РІ РїР°РјСЏС‚Рё
     // Р­С‚Рѕ СЃС‚Р°Р±РёР»СЊРЅР°СЏ СЃС‚СЂР°С‚РµРіРёСЏ РёР· СЃС‚Р°СЂРѕР№ РІРµСЂСЃРёРё Р±РµР· РІС‹Р»РµС‚РѕРІ
     
-    // вњ… FIX: Р“РµРЅРµСЂРёСЂСѓРµРј fallback РґР»СЏ СЋРЅРёС‚РѕРІ РёР· UNITS_REPOSITORY РїРµСЂРµРґ РЅР°С‡Р°Р»РѕРј РјР°С‚С‡Р°
-    // Р­С‚Рѕ РєСЂРёС‚РёС‡РЅРѕ РґР»СЏ РјР°С‚С‡РµР№ СЃ Р±РѕС‚Р°РјРё РІ Р»РёРіРµ/С‚СѓСЂРЅРёСЂР°С…, РєРѕС‚РѕСЂС‹Рµ РёСЃРїРѕР»СЊР·СѓСЋС‚ СЋРЅРёС‚С‹ РёР· СЂРµРїРѕР·РёС‚РѕСЂРёСЏ
+    // Lightweight fallbacks only. Unit PNGs are loaded explicitly before match start,
+    // so generating 80+ repository canvas fallbacks here would just add jank.
     const fallbackManager = new FallbackManager(this);
-    fallbackManager.ensureUnitsRepositoryFallbacks();
     fallbackManager.ensureFactionFallbacks();
     
     // рџ”Ґ TUTORIAL OVERHAUL: Dynamic Faction Logic

@@ -3,6 +3,7 @@
 import Phaser from 'phaser';
 import { FACTIONS, FACTION_IDS, FACTION_ARENAS } from '../../constants/gameConstants';
 import { UNITS_CATALOG } from '../../data/UnitsCatalog';
+import { CARDS_CATALOG } from '../../data/CardsCatalog';
 // ⚠️ REMOVED: MYSTIC_CAPS - старая система коллекций убрана
 import { UNITS_REPOSITORY } from '../../data/UnitsRepository';
 import {
@@ -416,7 +417,7 @@ export function loadImages(scene: Phaser.Scene): void {
  */
 function loadCardAssets(scene: Phaser.Scene): void {
   if (import.meta.env.DEV) {
-    console.log('[ImageLoader] Loading card frame assets...');
+    console.log('[ImageLoader] Loading card frame and icon assets...');
   }
 
   const framesPath = 'assets/cards/frames';
@@ -426,9 +427,13 @@ function loadCardAssets(scene: Phaser.Scene): void {
   safeLoadImage(scene, 'frame_rare', `${framesPath}/frame_rare.png`);
   safeLoadImage(scene, 'frame_epic', `${framesPath}/frame_epic.png`);
   safeLoadImage(scene, 'card_back', `${framesPath}/card_back.png`);
+
+  Object.values(CARDS_CATALOG).forEach((card) => {
+    safeLoadImage(scene, `card_${card.id}`, card.assetPath);
+  });
   
   if (import.meta.env.DEV) {
-    console.log('[ImageLoader] Card frame assets queued (4 frames)');
+    console.log(`[ImageLoader] Card assets queued (4 frames, ${Object.keys(CARDS_CATALOG).length} icons)`);
   }
 }
 

@@ -54,10 +54,8 @@ export class BootScene extends Phaser.Scene {
   create(): void {
     console.log('[BootScene] create started');
 
-    this.generateAllFallbacksSafely();
     this.generateTexturesSafely();
     this.ensureCriticalTextureFallbacks();
-    this.ensureCardTextureFallbacks();
     // #region agent log
     this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H3', location: 'BootScene.ts:create:afterTextureGen', message: 'Boot create reached', data: { hasBallPlasma: this.textures.exists('ball_plasma'), hasMainMenuScene: this.scene.get('MainMenuScene') !== undefined }, timestamp: Date.now() });
     // #endregion

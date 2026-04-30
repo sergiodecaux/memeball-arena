@@ -65,6 +65,15 @@ export class MainMenuScene extends Phaser.Scene {
     // Локальная подгрузка иконок главного меню (хранятся в public/assets/ui/main)
     this.load.image('icon_repository_sci', 'assets/ui/main/icon_repository_sci.png');
     this.load.image('icon_tasks_sci', 'assets/ui/main/icon_tasks_sci.png');
+    this.load.image('ui_match_primary', 'assets/ui/icons/match/icon_match_primary.png');
+    this.load.image('ui_nav_home', 'assets/ui/icons/nav/icon_nav_home.png');
+    this.load.image('ui_nav_team', 'assets/ui/icons/nav/icon_nav_team.png');
+    this.load.image('ui_nav_shop', 'assets/ui/icons/nav/icon_nav_shop.png');
+    this.load.image('ui_nav_profile', 'assets/ui/icons/nav/icon_nav_profile.png');
+    this.load.image('ui_rewards_coins', 'assets/ui/icons/rewards/icon_currency_coins.png');
+    this.load.image('ui_rewards_crystals', 'assets/ui/icons/rewards/icon_currency_crystals.png');
+    this.load.image('ui_settings_gear', 'assets/ui/icons/system/icon_settings_gear.png');
+    this.load.image('ui_player_level', 'assets/ui/icons/player/icon_player_level.png');
   }
 
   shutdown(): void {

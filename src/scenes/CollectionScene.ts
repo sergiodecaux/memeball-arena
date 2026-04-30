@@ -11,8 +11,6 @@ import { COLLECTION_RU } from '../i18n/collection_ru';
 import { getFonts } from '../config/themes';
 import { getUIFactionByGameFaction } from '../constants/factionUiConfig';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
-import { FallbackManager } from '../assets/fallback/FallbackManager';
-import { TextureMemoryManager } from '../managers/TextureMemoryManager';
 import { BattlePassUnitPreview } from '../ui/previews/BattlePassUnitPreview';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { createText } from '../utils/TextFactory';
@@ -51,7 +49,6 @@ export class CollectionScene extends Phaser.Scene {
   private contentContainer!: Phaser.GameObjects.Container;
   private modalContainer?: Phaser.GameObjects.Container;
   private factionBg?: Phaser.GameObjects.Image;
-  private fallbackManager!: FallbackManager;
   private missingTextureKeys = new Set<string>();
   private unitPngLoadToken = 0;
   /** Инкремент при каждом renderUnitsGrid — отменяет отложенные createBatch от предыдущего прохода */
@@ -89,15 +86,6 @@ export class CollectionScene extends Phaser.Scene {
       this.width = this.cameras.main.width;
       this.height = this.cameras.main.height;
       this.topOffset = this.headerHeight + this.tabsHeight;
-
-      // ✅ FIX: Проверяем и генерируем fallback для UNITS_REPOSITORY с обработкой ошибок
-      try {
-        this.fallbackManager = new FallbackManager(this);
-        this.fallbackManager.ensureUnitsRepositoryFallbacks();
-      } catch (error) {
-        console.error('[CollectionScene] Error initializing fallback manager:', error);
-        // Продолжаем работу даже если fallback не удалось создать
-      }
 
       // Фон
       this.createBackground();
@@ -184,14 +172,28 @@ export class CollectionScene extends Phaser.Scene {
     const loadToken = ++this.unitPngLoadToken;
     const units = getRepositoryUnitsByFaction(selectedFaction);
     const unitIds = units.map((unit) => unit.id);
+    const batchSize = 6;
 
     try {
-      await AssetPackManager.loadUnitAssets(this, unitIds);
-      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
-        this.renderUnitsGrid();
+      for (let index = 0; index < unitIds.length && this.scene.isActive(); index += batchSize) {
+        if (this.selectedFaction !== selectedFaction || this.unitPngLoadToken !== loadToken) {
+          return;
+        }
+
+        await AssetPackManager.loadUnitAssets(this, unitIds.slice(index, index + batchSize));
+        if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
+          this.renderUnitsGrid();
+        }
+
+        if (index + batchSize < unitIds.length) {
+          await new Promise<void>((resolve) => this.time.delayedCall(16, () => resolve()));
+        }
       }
     } catch (error) {
       console.warn('[CollectionScene] Failed to lazy-load unit PNGs:', error);
+      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
+        this.renderUnitsGrid();
+      }
     }
   }
   
@@ -205,7 +207,7 @@ export class CollectionScene extends Phaser.Scene {
       if (this.textures.exists(textureKey)) return;
       
       // Если есть _512 версия, создаем alias
-      if (this.textures.exists(hdKey)) {
+      if (this.textures.exists(hdKey) && isRealImageLoaded(hdKey)) {
         try {
           const hdTexture = this.textures.get(hdKey);
           const sourceImage = hdTexture.getSourceImage();
@@ -224,13 +226,6 @@ export class CollectionScene extends Phaser.Scene {
       if (!this.missingTextureKeys.has(textureKey)) {
         console.warn(`[CollectionScene] ❌ Texture missing: "${textureKey}" (hdKey: "${hdKey}")`);
         this.missingTextureKeys.add(textureKey);
-      }
-
-      // Генерируем fallback
-      try {
-        this.fallbackManager?.ensureUnitsRepositoryFallbacks();
-      } catch (fallbackError) {
-        console.warn(`[CollectionScene] Fallback generation failed:`, fallbackError);
       }
       
     } catch (error) {
@@ -691,10 +686,9 @@ export class CollectionScene extends Phaser.Scene {
       // Доп. попытка сгенерировать/дозагрузить текстуру + улучшенный плейсхолдер
       try {
         this.ensureUnitTexture(textureKey, unit.assetPath);
-        if (this.textures.exists(textureKey)) {
-          imageAdded = addUnitImage(textureKey);
-        } else if (this.textures.exists(hdKey)) {
-          imageAdded = addUnitImage(hdKey);
+        const ensuredTextureKey = getRealUnitTextureKey(this, unit);
+        if (ensuredTextureKey) {
+          imageAdded = addUnitImage(ensuredTextureKey);
         }
       } catch (error) {
         console.error(`[CollectionScene] Error ensuring texture for "${textureKey}":`, error);
