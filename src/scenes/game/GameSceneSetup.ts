@@ -88,25 +88,30 @@ export class GameSceneSetup {
     let playerTeamSize: number;
     let aiTeamSize: number;
 
-    // 🎮 Приоритет 1: Если задан teamSize для лиги/турнира
+    // 🎮 Приоритет 1: Задан размер команды (лига / турнир / PvP по уровню и т.д.)
     if (data?.teamSize !== undefined) {
-      // ✅ ИСПРАВЛЕНО: Используем минимум из требуемого размера лиги и доступного у игрока
-      const requiredSize = Phaser.Math.Clamp(data.teamSize, 3, 5);
-      const allowedSize = this.getPlayerTeamSize(state);
-      playerTeamSize = Math.min(requiredSize, allowedSize);
-      aiTeamSize = requiredSize; // AI использует полный размер лиги
-      
-      console.log(`[GameSceneSetup] League/Tournament: required=${requiredSize}, allowed=${allowedSize}, using player=${playerTeamSize}, ai=${aiTeamSize}`);
+      const desired = Phaser.Math.Clamp(data.teamSize, 3, 5);
+      const masteryCap =
+        state.useFactions && state.playerFaction
+          ? playerData.getAllowedTeamSize(state.playerFaction)
+          : 5;
+      const effective = Math.max(3, Math.min(desired, masteryCap));
+      playerTeamSize = effective;
+      aiTeamSize = effective;
+
+      console.log(
+        `[GameSceneSetup] Match sizing from data: desired=${desired}, masteryCap=${masteryCap}, effective=${effective}`
+      );
     } 
     // Приоритет 2: Кампания с переопределением
     else if (isCampaignMode && campaignLevelConfig) {
       const override = campaignLevelConfig.teamSizeOverride;
-      playerTeamSize = this.getPlayerTeamSize(state, override);
+      playerTeamSize = this.getPlayerTeamSize(state, override, data);
       aiTeamSize = override ?? playerTeamSize; // symmetric when override not set
     } 
     // Приоритет 3: Стандартное определение размера
     else {
-      playerTeamSize = this.getPlayerTeamSize(state);
+      playerTeamSize = this.getPlayerTeamSize(state, undefined, data);
       aiTeamSize = playerTeamSize;
     }
 
@@ -237,11 +242,12 @@ export class GameSceneSetup {
   }
 
   private initializeStandardMode(state: GameSceneState, data?: GameSceneData): void {
-    // ✅ ИСПРАВЛЕНО: Правильное определение PVP режима
-    state.isPvPMode = data?.isPvP ?? false;
+    state.isPvPMode = data?.isPvP === true || data?.mode === 'pvp';
     state.pvpData = data?.pvpData;
-    
-    console.log(`[GameSceneSetup] initializeStandardMode: isPvP=${data?.isPvP}, hasPvpData=${!!data?.pvpData}, isPvPMode=${state.isPvPMode}`);
+
+    console.log(
+      `[GameSceneSetup] initializeStandardMode: isPvP=${data?.isPvP}, mode=${data?.mode}, hasPvpData=${!!data?.pvpData}, isPvPMode=${state.isPvPMode}`
+    );
 
     const playerHasFaction = !!playerData.getFaction();
     
@@ -263,7 +269,10 @@ export class GameSceneSetup {
       // ✅ ДОБАВЛЕНО: Настройка PVP параметров из MultiplayerManager
       const mp = MultiplayerManager.getInstance();
       state.isAIEnabled = false;
-      state.matchDuration = state.pvpData.config.MATCH_DURATION || GAME.DEFAULT_MATCH_DURATION;
+      state.matchDuration =
+        data?.matchDuration ??
+        state.pvpData.config.MATCH_DURATION ??
+        GAME.DEFAULT_MATCH_DURATION;
       state.isHost = mp.isHost();
       state.myPlayerIndex = mp.getMyPlayerIndex();
       state.myPlayer = mp.getMe();
@@ -310,10 +319,15 @@ export class GameSceneSetup {
    */
   private getPlayerTeamSize(
     state: GameSceneState,
-    overrideTeamSize?: number
+    overrideTeamSize?: number,
+    sceneData?: GameSceneData
   ): number {
-    // PvP: всегда 3, игнорируем любые переопределения
-    if (state.isPvPMode && state.pvpData) {
+    // Legacy PvP (MultiplayerManager + pvpData): без явного teamSize из сцены — 3 юнита
+    if (
+      state.isPvPMode &&
+      state.pvpData &&
+      (sceneData?.teamSize === undefined || sceneData.teamSize <= 0)
+    ) {
       return 3;
     }
 

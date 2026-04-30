@@ -7,7 +7,7 @@ import { playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
 import { tgApp } from '../utils/TelegramWebApp';
 import { hapticImpact } from '../utils/Haptics';
-import { LeagueTier, LeagueProgress, LEAGUE_AI_DIFFICULTY, LEAGUE_TEAM_SIZE, LEAGUE_ENTRY_FEE, LEAGUE_STAR_BUYBACK, createDefaultLeagueProgress, getLeagueTierOrder } from '../types/league';
+import { LeagueTier, LeagueProgress, LEAGUE_AI_DIFFICULTY, LEAGUE_TEAM_SIZE, LEAGUE_MATCH_DURATION, LEAGUE_ENTRY_FEE, LEAGUE_STAR_BUYBACK, createDefaultLeagueProgress, getLeagueTierOrder } from '../types/league';
 import { LeagueManager, ORBIT_STABILIZATION_COSTS } from '../managers/LeagueManager';
 import { LEAGUE_HUB_BG, LEAGUE_BADGE_KEYS, TOURNAMENT_CUP_KEYS, LEAGUE_ORBIT_KEYS } from '../config/assetKeys';
 import { addFullScreenBackground } from '../utils/ImageUtils';
@@ -885,7 +885,8 @@ export class LeagueScene extends Phaser.Scene {
       
       // ✅ ИСПРАВЛЕНО: Генерируем противника с аватаром для консистентности
       const opponent = this.generateOpponentData();
-      
+      const tier = this.playerProgress.currentTier;
+
       // ✅ Запускаем экран подготовки к матчу (выбор фракции)
       await safeSceneStart(this, 'MatchPreparationScene', {
         matchContext: 'league',
@@ -894,6 +895,7 @@ export class LeagueScene extends Phaser.Scene {
         opponentName: opponent.name,
         opponentAvatarId: opponent.avatarId, // ✅ Передаем аватар
         teamSize: teamSize, // 🎮 Передаем размер команды
+        matchDuration: LEAGUE_MATCH_DURATION[tier],
         entryFee: entryFee, // 💰 Передаем взнос для расчета награды
       });
     });

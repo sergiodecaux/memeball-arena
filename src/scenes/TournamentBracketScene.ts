@@ -9,7 +9,7 @@ import { tgApp } from '../utils/TelegramWebApp';
 import { hapticImpact } from '../utils/Haptics';
 import { SWIPE_NAVIGATION } from '../constants/gameConstants';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
-import { TournamentRuntimeState, MatchSeriesState, ParticipantId, BracketStage, TOURNAMENT_TEAM_SIZE } from '../types/tournament';
+import { TournamentRuntimeState, MatchSeriesState, ParticipantId, BracketStage, TOURNAMENT_TEAM_SIZE, TOURNAMENT_MATCH_DURATION } from '../types/tournament';
 import { TournamentManager } from '../managers/TournamentManager';
 import { 
   TOURNAMENT_BACKGROUND_KEYS,
@@ -840,6 +840,7 @@ export class TournamentBracketScene extends Phaser.Scene {
       majorAbilityBonus,
       aimAssistDisabled,
       teamSize: teamSize, // 🎮 Передаем размер команды
+      matchDuration: TOURNAMENT_MATCH_DURATION[tier],
     });
   }
 

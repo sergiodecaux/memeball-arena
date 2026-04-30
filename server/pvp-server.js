@@ -835,11 +835,19 @@ function addToMatchmaking(playerId, playerData, socket) {
   tryMatchmaking();
 }
 
+function clampTeamSize(n) {
+  const t = Number(n);
+  if (!Number.isFinite(t)) return 3;
+  return Math.min(5, Math.max(3, Math.floor(t)));
+}
+
 function createBotPlayerData(humanPlayer) {
   const name = generateBotDisplayName();
   const factions = ['magma', 'cyborg', 'void', 'insect'];
   const humanFaction = humanPlayer.playerData.factionId;
   const factionId = factions.filter((f) => f !== humanFaction)[Math.floor(Math.random() * Math.max(1, factions.length - 1))] || 'magma';
+
+  const humanTeamSize = humanPlayer.playerData.teamSize;
 
   return {
     id: `bot_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
@@ -848,7 +856,7 @@ function createBotPlayerData(humanPlayer) {
     isBot: true,
     mmr: humanPlayer.mmr,
     factionId,
-    teamSize: 3,
+    teamSize: clampTeamSize(humanTeamSize),
     socket: null,
   };
 }

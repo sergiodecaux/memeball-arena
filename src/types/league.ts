@@ -39,11 +39,21 @@ export const LEAGUE_AI_DIFFICULTY: Record<LeagueTier, AIDifficulty> = {
  */
 export const LEAGUE_TEAM_SIZE: Record<LeagueTier, number> = {
   [LeagueTier.METEORITE]: 3, // Начальная лига - 3 фишки
-  [LeagueTier.COMET]: 3,      // Низкая лига - 3 фишки
-  [LeagueTier.PLANET]: 4,     // Средняя лига - 4 фишки
-  [LeagueTier.STAR]: 5,       // Топ лига - 5 фишек
-  [LeagueTier.NEBULA]: 5,     // Топ лига - 5 фишек
-  [LeagueTier.CORE]: 5,       // Высшая лига - 5 фишек
+  [LeagueTier.COMET]: 3, // Низкая лига - 3 фишки
+  [LeagueTier.PLANET]: 4, // Средняя лига - 4 фишки
+  [LeagueTier.STAR]: 5, // Топ лига - 5 фишек
+  [LeagueTier.NEBULA]: 5, // Топ лига - 5 фишек
+  [LeagueTier.CORE]: 5, // Высшая лига - 5 фишек
+};
+
+/** Длительность матча (секунды): согласована с числом фишек лиги (3→3 мин, 4→4 мин, 5→5 мин) */
+export const LEAGUE_MATCH_DURATION: Record<LeagueTier, number> = {
+  [LeagueTier.METEORITE]: 180,
+  [LeagueTier.COMET]: 180,
+  [LeagueTier.PLANET]: 240,
+  [LeagueTier.STAR]: 300,
+  [LeagueTier.NEBULA]: 300,
+  [LeagueTier.CORE]: 300,
 };
 
 /**

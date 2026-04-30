@@ -11,6 +11,7 @@ import { tgApp } from '../utils/TelegramWebApp';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { FACTION_IDS, type FactionId } from '../constants/gameConstants';
 import { eventBus, GameEvents, type EventPayload } from '../core/EventBus';
+import { getAccountLevelMatchCaps } from '../match/accountLevelMatchRules';
 
 type MatchmakingMode = 'casual' | 'ranked';
 
@@ -244,11 +245,13 @@ export class MatchmakingScene extends Phaser.Scene {
     const data = playerData.get();
     const mmrBucket = data.pvpStats?.[this.mode]?.rating ?? 1000;
 
+    const bracket = getAccountLevelMatchCaps(playerData.get().level ?? 1);
+
     pMgr.findGame(this.mode, {
       playerName: playerData.getNickname() || data.nickname || 'Player',
       mmr: mmrBucket,
       factionId: playerData.getFaction() || undefined,
-      teamSize: 3,
+      teamSize: bracket.teamSize,
       teamUnitIds: playerData.getTeamUnits(playerData.getFaction() || 'magma').filter(Boolean) as string[],
     });
 
@@ -334,6 +337,10 @@ export class MatchmakingScene extends Phaser.Scene {
     return rest[Math.floor(Math.random() * rest.length)];
   }
 
+  private progressionBracket(): ReturnType<typeof getAccountLevelMatchCaps> {
+    return getAccountLevelMatchCaps(playerData.get().level ?? 1);
+  }
+
   private async gotoMatchPrepFromServer(
     botMatch: boolean,
     found: EventPayload<GameEvents.PVP_MATCH_FOUND>
@@ -345,6 +352,7 @@ export class MatchmakingScene extends Phaser.Scene {
 
     const opponentName = (found.opponentName || this.generateBotNickname()).trim() || this.generateBotNickname();
     const opponentAvatarId = this.avatarIdForNickname(opponentName);
+    const bracket = this.progressionBracket();
 
     await safeSceneStart(this, 'MatchPreparationScene', {
       matchContext: this.mode === 'ranked' ? 'ranked' : 'casual',
@@ -354,6 +362,8 @@ export class MatchmakingScene extends Phaser.Scene {
       opponentName,
       opponentAvatarId,
       opponentFaction: oppFaction,
+      teamSize: bracket.teamSize,
+      matchDuration: bracket.matchDurationSeconds,
       ...(botMatch
         ? {}
         : {
@@ -385,6 +395,7 @@ export class MatchmakingScene extends Phaser.Scene {
     const opponentFaction = this.opponentFactionPreferServer(undefined, playerFaction)!;
     const opponentName = this.generateBotNickname();
     const opponentAvatarId = this.avatarIdForNickname(opponentName);
+    const bracket = this.progressionBracket();
 
     void safeSceneStart(this, 'MatchPreparationScene', {
       matchContext: this.mode === 'ranked' ? 'ranked' : 'casual',
@@ -394,6 +405,8 @@ export class MatchmakingScene extends Phaser.Scene {
       opponentName,
       opponentAvatarId,
       opponentFaction,
+      teamSize: bracket.teamSize,
+      matchDuration: bracket.matchDurationSeconds,
     });
     this.scene.stop('MatchmakingScene');
   }

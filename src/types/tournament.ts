@@ -40,10 +40,18 @@ export function createDefaultTournamentState(): TournamentState {
  * Чем выше турнир, тем больше фишек в команде
  */
 export const TOURNAMENT_TEAM_SIZE: Record<TournamentTier, number> = {
-  rookie: 3,  // Начальный турнир - 3 фишки
-  minor: 4,   // Средний турнир - 4 фишки
-  major: 5,   // Топ турнир - 5 фишек
-  apex: 5,    // Высший турнир - 5 фишек
+  rookie: 3, // Начальный турнир - 3 фишки
+  minor: 4, // Средний турнир - 4 фишки
+  major: 5, // Топ турнир - 5 фишек
+  apex: 5, // Высший турнир - 5 фишек
+};
+
+/** Длительность матча (сек), по принципу фишки = минуты */
+export const TOURNAMENT_MATCH_DURATION: Record<TournamentTier, number> = {
+  rookie: 180,
+  minor: 240,
+  major: 300,
+  apex: 300,
 };
 
 // ========== TOURNAMENT RUNTIME STATE ==========

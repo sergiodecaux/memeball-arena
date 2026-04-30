@@ -41,6 +41,9 @@ interface MatchPreparationData {
   
   // ✅ НОВОЕ: Аватар противника (для консистентности)
   opponentAvatarId?: string;
+
+  /** Длительность матча, секунды (лига / турнир / PvP по уровню) */
+  matchDuration?: number;
 }
 
 export class MatchPreparationScene extends Phaser.Scene {
@@ -1098,6 +1101,7 @@ export class MatchPreparationScene extends Phaser.Scene {
       round: this.matchData.round,
       majorAbilityBonus: this.matchData.majorAbilityBonus,
       aimAssistDisabled: this.matchData.aimAssistDisabled,
+      ...(this.matchData.matchDuration != null ? { matchDuration: this.matchData.matchDuration } : {}),
       ...(this.matchData.isAI === false &&
       this.matchData.pvpRoomId &&
       this.matchData.pvpOpponentId !== undefined

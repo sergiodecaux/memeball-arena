@@ -10,6 +10,7 @@ import { tgApp } from '../utils/TelegramWebApp';
 import { FACTIONS } from '../constants/gameConstants';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import type { AIDifficulty } from '../types/league';
+import { getAccountLevelMatchCaps } from '../match/accountLevelMatchRules';
 
 interface DifficultyConfig {
   id: AIDifficulty;
@@ -405,16 +406,21 @@ export class AIDifficultySelectScene extends Phaser.Scene {
     console.log(`[AIDifficultySelect] Player faction: ${selectedFaction}, allowed teamSize: ${allowedTeamSize}`);
     
     // Запоминаем режим для определения в GameScene
-    const data = playerData.get();
-    data.currentMatchMode = 'custom';
+    const pdata = playerData.get();
+    pdata.currentMatchMode = 'custom';
     playerData.save();
+    
+    const caps = getAccountLevelMatchCaps(pdata.level);
+    const matchTeamSize = Math.max(3, Math.min(caps.teamSize, allowedTeamSize));
     
     this.scene.stop('AIDifficultySelectScene');
     await safeSceneStart(this, 'MatchPreparationScene', {
       matchContext: 'casual', // используем casual контекст для custom режима
       isAI: true,
+      opponentName: 'Тренировочный соперник',
       aiDifficulty: difficultyMap[this.selectedDifficulty],
-      teamSize: allowedTeamSize, // ✅ ИСПРАВЛЕНО: Используем реальное количество открытых слотов
+      teamSize: matchTeamSize,
+      matchDuration: caps.matchDurationSeconds,
     });
   }
   
