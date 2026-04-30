@@ -20,6 +20,27 @@ export const COLLECTION_RU = {
     epic: 'ЭПИЧЕСКИЙ',
     legendary: 'ЛЕГЕНДАРНЫЙ',
   },
+
+  /** Короткие подписи на чипах фильтров (как строка выбора в MOBA) */
+  filters: {
+    all: 'ВСЕ',
+    rarityLabel: 'Редкость',
+    roleLabel: 'Роль',
+    emptyFiltered: 'Нет фишек по фильтрам. Нажми «ВСЕ», чтобы показать всех.',
+    rarityShort: {
+      common: 'ОБЫЧ.',
+      rare: 'РЕДК.',
+      epic: 'ЭПИЧ.',
+      legendary: 'ЛЕГ.',
+    },
+  },
+
+  roles: {
+    balanced: 'УНИВ.',
+    tank: 'ТАНК',
+    sniper: 'СНАЙПЕР',
+    trickster: 'ТРЮКИ',
+  },
   
   // Статы
   stats: {

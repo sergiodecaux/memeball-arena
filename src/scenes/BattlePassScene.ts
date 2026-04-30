@@ -73,8 +73,6 @@ export class BattlePassScene extends Phaser.Scene {
   // Event subscriptions
   private bpEventCallbacks: { event: string; callback: Function }[] = [];
 
-  private carouselFrameKey = -1;
-
   /** Нижняя граница блока прогресса — начало зоны горизонтального скролла наград */
   private scrollAreaStartY = 0;
 
@@ -439,7 +437,7 @@ export class BattlePassScene extends Phaser.Scene {
 
     // Сохраняем размеры для lazy loading
     this.tierWidth = 128 * s;
-    this.tierSpacing = 18 * s;
+    this.tierSpacing = 22 * s;
     this.totalItemWidth = this.tierWidth + this.tierSpacing;
     
     this.trackHeight = (scrollAreaHeight - 60 * s) / 2;
@@ -807,19 +805,24 @@ export class BattlePassScene extends Phaser.Scene {
     const fonts = getFonts();
     const container = this.add.container(x, y);
 
+    /* Центр колонки тира совпадает с container.x; рисуем карточку симметрично [-w/2 .. +w/2],
+     * иначе позиция считалась как «левый край» и слоты наезжали друг на друга. */
+    const L = -w / 2;
+    const R = w / 2;
+    const cx = 0;
+
     const isUnlocked = tier.tier <= progress.currentTier;
-    const isClaimed = isPremium 
-      ? progress.claimedPremiumTiers.includes(tier.tier) 
+    const isClaimed = isPremium
+      ? progress.claimedPremiumTiers.includes(tier.tier)
       : progress.claimedFreeTiers.includes(tier.tier);
     const canClaim = battlePassManager.canClaimReward(tier.tier, isPremium);
     const isLockedByPremium = isPremium && !progress.isPremium;
     const isFuture = !isUnlocked;
 
-    // === ЦВЕТОВАЯ СХЕМА ===
     let baseColor = isPremium ? 0x1a0a2e : 0x0f172a;
     let accentColor = isPremium ? 0x7c3aed : 0x3b82f6;
     let glowColor = isPremium ? 0xa855f7 : 0x60a5fa;
-    
+
     if (isClaimed) {
       baseColor = 0x052e16;
       accentColor = 0x22c55e;
@@ -834,47 +837,43 @@ export class BattlePassScene extends Phaser.Scene {
       glowColor = 0x4b5563;
     }
 
-    // === BACKGROUND ===
     const cardBg = this.add.graphics();
-    
-    // Внешнее свечение для активных Premium карточек
+
     if (isPremium && !isFuture && !isClaimed && !isLockedByPremium) {
       cardBg.fillStyle(glowColor, 0.12);
-      cardBg.fillRoundedRect(-4, -4, w + 8, h + 8, 14 * s);
+      cardBg.fillRoundedRect(L - 4, -4, w + 8, h + 8, 14 * s);
     }
 
-    // Основной фон
     cardBg.fillStyle(baseColor, 1);
-    cardBg.fillRoundedRect(0, 0, w, h, 10 * s);
-    
-    // Верхний градиентный слой (имитация)
-    cardBg.fillStyle(accentColor, 0.08);
-    cardBg.fillRoundedRect(0, 0, w, h * 0.35, { tl: 10 * s, tr: 10 * s, bl: 0, br: 0 });
-    
-    // Рамка
-    const borderWidth = canClaim ? 2.5 : (isPremium ? 1.5 : 1);
-    cardBg.lineStyle(borderWidth, accentColor, canClaim ? 1 : 0.5);
-    cardBg.strokeRoundedRect(0, 0, w, h, 10 * s);
+    cardBg.fillRoundedRect(L, 0, w, h, 10 * s);
 
-    // Угловые акценты для Premium
+    cardBg.fillStyle(accentColor, 0.08);
+    cardBg.fillRoundedRect(L, 0, w, h * 0.35, { tl: 10 * s, tr: 10 * s, bl: 0, br: 0 });
+
+    const borderWidth = canClaim ? 2.5 : isPremium ? 1.5 : 1;
+    cardBg.lineStyle(borderWidth, accentColor, canClaim ? 1 : 0.5);
+    cardBg.strokeRoundedRect(L, 0, w, h, 10 * s);
+
     if (isPremium && !isClaimed && !isFuture) {
       cardBg.lineStyle(1.5, glowColor, 0.6);
       cardBg.beginPath();
-      cardBg.moveTo(0, 12 * s); cardBg.lineTo(0, 0); cardBg.lineTo(12 * s, 0);
-      cardBg.moveTo(w, h - 12 * s); cardBg.lineTo(w, h); cardBg.lineTo(w - 12 * s, h);
+      cardBg.moveTo(L, 12 * s);
+      cardBg.lineTo(L, 0);
+      cardBg.lineTo(L + 12 * s, 0);
+      cardBg.moveTo(R, h - 12 * s);
+      cardBg.lineTo(R, h);
+      cardBg.lineTo(R - 12 * s, h);
       cardBg.strokePath();
     }
 
     container.add(cardBg);
 
-    // === АНИМАЦИИ ДЛЯ CLAIMABLE ===
     if (canClaim) {
       const pulseGlow = this.add.graphics();
       pulseGlow.lineStyle(3, glowColor, 0.5);
-      pulseGlow.strokeRoundedRect(-2, -2, w + 4, h + 4, 12 * s);
+      pulseGlow.strokeRoundedRect(L - 2, -2, w + 4, h + 4, 12 * s);
       container.add(pulseGlow);
-      
-      // ✅ Tweens привязаны к объектам внутри container — destroy(true) их уничтожит
+
       this.tweens.add({
         targets: pulseGlow,
         alpha: { from: 0.7, to: 0.15 },
@@ -885,137 +884,140 @@ export class BattlePassScene extends Phaser.Scene {
       });
     }
 
-    // === LOCKED OVERLAY ===
     if (isLockedByPremium || isFuture) {
       const lockOverlay = this.add.graphics();
-      
-      // Диагональные линии
-      lockOverlay.lineStyle(1, 0xffffff, 0.04);
-      for (let i = -h; i < w + h; i += 10) {
-        lockOverlay.moveTo(Math.max(0, i), Math.max(0, -i));
-        lockOverlay.lineTo(Math.min(w, i + h), Math.min(h, h - i + h));
-      }
-      lockOverlay.strokePath();
-      
-      // Затемнение
-      lockOverlay.fillStyle(0x000000, 0.35);
-      lockOverlay.fillRoundedRect(0, 0, w, h, 10 * s);
-      
+      lockOverlay.fillStyle(0x000000, 0.4);
+      lockOverlay.fillRoundedRect(L, 0, w, h, 10 * s);
+      lockOverlay.lineStyle(1, 0xffffff, 0.06);
+      lockOverlay.strokeRoundedRect(L + 1, 1, w - 2, h - 2, 9 * s);
       container.add(lockOverlay);
     }
 
-    // === ИКОНКА НАГРАДЫ ===
     const iconY = h * 0.36;
     const unitIconSize = 50 * s;
     const regularIconSize = 36 * s;
 
-    // Свечение редкости для юнитов
     if (tier.unitRarity && !isClaimed && !isFuture && !isLockedByPremium) {
       const rarityGlow = this.add.graphics();
       const rarityColor = this.getRarityColor(tier.unitRarity);
       rarityGlow.fillStyle(rarityColor, 0.2);
-      rarityGlow.fillCircle(w / 2, iconY, unitIconSize * 0.7);
+      rarityGlow.fillCircle(cx, iconY, unitIconSize * 0.7);
       container.add(rarityGlow);
-      
+
       this.tweens.add({
         targets: rarityGlow,
         alpha: { from: 0.2, to: 0.08 },
         duration: 1800,
         yoyo: true,
-        repeat: -1
+        repeat: -1,
       });
     }
 
-    // Иконка
-    const iconAlpha = (isFuture || isLockedByPremium) ? 0.35 : 1;
-    
+    const iconAlpha = isFuture || isLockedByPremium ? 0.35 : 1;
+
     if (reward.type === 'unit' && reward.itemId) {
       const unit = getUnitById(reward.itemId);
       if (unit) {
         const textureKey = getRealUnitTextureKey(this, unit);
         if (textureKey && this.textures.exists(textureKey)) {
-          const unitImg = this.add.image(w / 2, iconY, textureKey);
+          const unitImg = this.add.image(cx, iconY, textureKey);
           unitImg.setDisplaySize(unitIconSize, unitIconSize);
           unitImg.setAlpha(iconAlpha);
           container.add(unitImg);
         } else {
           this.requestBattlePassUnitTexture(unit.id);
-          container.add(this.add.text(w / 2, iconY, '🎯', { fontSize: `${34 * s}px` }).setOrigin(0.5).setAlpha(iconAlpha));
+          container.add(
+            this.add
+              .text(cx, iconY, '🎯', { fontSize: `${34 * s}px` })
+              .setOrigin(0.5)
+              .setAlpha(iconAlpha)
+          );
         }
       }
     } else {
       const iconKey = this.getRewardIconKey(reward);
       if (iconKey && this.textures.exists(iconKey)) {
-        const icon = this.add.image(w / 2, iconY, iconKey);
+        const icon = this.add.image(cx, iconY, iconKey);
         icon.setDisplaySize(regularIconSize, regularIconSize);
         icon.setAlpha(iconAlpha);
         container.add(icon);
       } else {
-        const emoji = this.add.text(w / 2, iconY, this.getRewardEmoji(reward), {
-          fontSize: `${20 * s}px`
-        }).setOrigin(0.5).setAlpha(iconAlpha);
+        const emoji = this.add
+          .text(cx, iconY, this.getRewardEmoji(reward), {
+            fontSize: `${20 * s}px`,
+          })
+          .setOrigin(0.5)
+          .setAlpha(iconAlpha);
         container.add(emoji);
       }
     }
 
-    // === ТЕКСТ НАГРАДЫ ===
     const valueY = h * 0.65;
-    const textColor = tier.isUnitReward 
-      ? this.getRarityHexColor(tier.unitRarity) 
-      : (isPremium ? '#e9d5ff' : '#cbd5e1');
-    
-    const valueText = this.add.text(w / 2, valueY, this.getRewardValueText(reward), {
-      fontSize: `${9 * s}px`,
-      fontFamily: fonts.primary,
-      color: (isFuture || isLockedByPremium) ? '#64748b' : textColor,
-      align: 'center',
-      wordWrap: { width: w - 6 }
-    }).setOrigin(0.5);
+    const textColor = tier.isUnitReward
+      ? this.getRarityHexColor(tier.unitRarity)
+      : isPremium
+        ? '#e9d5ff'
+        : '#cbd5e1';
+
+    const valueText = this.add
+      .text(cx, valueY, this.getRewardValueText(reward), {
+        fontSize: `${9 * s}px`,
+        fontFamily: fonts.primary,
+        color: isFuture || isLockedByPremium ? '#64748b' : textColor,
+        align: 'center',
+        wordWrap: { width: w - 6 },
+      })
+      .setOrigin(0.5);
     container.add(valueText);
 
-    // === СТАТУС ===
     const statusY = h - 16 * s;
 
     if (isClaimed) {
       const checkBg = this.add.graphics();
       checkBg.fillStyle(0x22c55e, 1);
-      checkBg.fillCircle(w / 2, statusY, 10 * s);
+      checkBg.fillCircle(cx, statusY, 10 * s);
       container.add(checkBg);
-      
-      container.add(this.add.text(w / 2, statusY, '✓', {
-        fontSize: `${11 * s}px`,
-        color: '#ffffff',
-        fontStyle: 'bold'
-      }).setOrigin(0.5));
+
+      container.add(
+        this.add
+          .text(cx, statusY, '✓', {
+            fontSize: `${11 * s}px`,
+            color: '#ffffff',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5)
+      );
     } else if (canClaim) {
       const btnW = w - 14 * s;
       const btnH = 20 * s;
       const btnColor = isPremium ? 0xfbbf24 : 0x22d3ee;
-      
+
       const btnBg = this.add.graphics();
       btnBg.fillStyle(btnColor, 1);
-      btnBg.fillRoundedRect(w / 2 - btnW / 2, statusY - btnH / 2, btnW, btnH, 4 * s);
-      
-      // Блик
+      btnBg.fillRoundedRect(cx - btnW / 2, statusY - btnH / 2, btnW, btnH, 4 * s);
+
       btnBg.fillStyle(0xffffff, 0.15);
       btnBg.fillRoundedRect(
-        w / 2 - btnW / 2 + 2, 
-        statusY - btnH / 2 + 1, 
-        btnW - 4, 
-        btnH / 2 - 1, 
+        cx - btnW / 2 + 2,
+        statusY - btnH / 2 + 1,
+        btnW - 4,
+        btnH / 2 - 1,
         { tl: 3 * s, tr: 3 * s, bl: 0, br: 0 }
       );
-      
-      const btnText = this.add.text(w / 2, statusY, 'ЗАБРАТЬ', {
-        fontSize: `${8 * s}px`,
-        fontFamily: fonts.tech,
-        color: '#000000',
-        fontStyle: 'bold'
-      }).setOrigin(0.5);
 
-      const hitArea = this.add.rectangle(w / 2, statusY, btnW, btnH)
+      const btnText = this.add
+        .text(cx, statusY, 'ЗАБРАТЬ', {
+          fontSize: `${8 * s}px`,
+          fontFamily: fonts.tech,
+          color: '#000000',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5);
+
+      const hitArea = this.add
+        .rectangle(cx, statusY, btnW, btnH)
         .setInteractive({ useHandCursor: true });
-      
+
       hitArea.on('pointerdown', (p: Phaser.Input.Pointer) => {
         p.event?.stopPropagation();
         this.claimReward(tier.tier, isPremium);
@@ -1025,14 +1027,18 @@ export class BattlePassScene extends Phaser.Scene {
       container.add(btnText);
       container.add(hitArea);
     } else if (isLockedByPremium) {
-      container.add(this.add.text(w / 2, statusY, '🔒 VIP', {
-        fontSize: `${8 * s}px`,
-        color: '#a855f7',
-        fontFamily: fonts.tech
-      }).setOrigin(0.5));
-      
-      // Вся карточка кликабельна
-      const hitArea = this.add.rectangle(w / 2, h / 2, w, h)
+      container.add(
+        this.add
+          .text(cx, statusY, '🔒 VIP', {
+            fontSize: `${8 * s}px`,
+            color: '#a855f7',
+            fontFamily: fonts.tech,
+          })
+          .setOrigin(0.5)
+      );
+
+      const hitArea = this.add
+        .rectangle(cx, h / 2, w, h)
         .setInteractive({ useHandCursor: true });
       hitArea.on('pointerdown', () => {
         if (!this.premiumModalShownThisSession) {
@@ -1043,19 +1049,22 @@ export class BattlePassScene extends Phaser.Scene {
       container.add(hitArea);
     }
 
-    // === VIP BADGE для Premium ===
     if (isPremium && !isClaimed && !isFuture && !isLockedByPremium) {
       const badgeBg = this.add.graphics();
       badgeBg.fillStyle(0x7c3aed, 1);
-      badgeBg.fillRoundedRect(w - 24 * s, 3 * s, 21 * s, 12 * s, 2 * s);
+      badgeBg.fillRoundedRect(R - 24 * s, 3 * s, 21 * s, 12 * s, 2 * s);
       container.add(badgeBg);
-      
-      container.add(this.add.text(w - 13.5 * s, 9 * s, 'VIP', {
-        fontSize: `${6 * s}px`,
-        color: '#fef3c7',
-        fontFamily: fonts.tech,
-        fontStyle: 'bold'
-      }).setOrigin(0.5));
+
+      container.add(
+        this.add
+          .text(R - 13.5 * s, 9 * s, 'VIP', {
+            fontSize: `${6 * s}px`,
+            color: '#fef3c7',
+            fontFamily: fonts.tech,
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5)
+      );
     }
 
     return container;
@@ -1614,40 +1623,19 @@ export class BattlePassScene extends Phaser.Scene {
     });
   }
 
-  update(time: number, delta: number): void {
+  update(_time: number, _delta: number): void {
     if (!this.scrollContainer?.active || this.visibleTierNodes.size === 0) {
       return;
     }
 
-    const velocity = this.scrollX - this.prevScrollX;
     this.prevScrollX = this.scrollX;
-    const targetSkew = Phaser.Math.Clamp(velocity * 0.035, -0.04, 0.04);
-    this.scrollContainer.rotation = Phaser.Math.Linear(this.scrollContainer.rotation, targetSkew, 0.12);
 
-    // Карусельный масштаб только для видимых ячеек (не каждый child scrollContainer → меньше лагов)
-    const centerX = this.scale.width / 2;
-    const worldContainerX = this.scrollContainer.x;
-    const maxDist = Math.max(this.scale.width * 0.5, 200 * this.s);
-    /** Реже апдейтим масштаб на слабом Telegram WebView */
-    const framePulse = Math.floor(time / 50);
-    const shouldPulse = framePulse !== this.carouselFrameKey;
-    this.carouselFrameKey = framePulse;
-    if (!shouldPulse && Math.abs(velocity) < 0.5) {
-      return;
-    }
-
+    // Стабильная дорожка: без наклона и без карусельного масштаба (иначе визуальные наложения)
+    this.scrollContainer.rotation = 0;
     this.visibleTierNodes.forEach((child) => {
-      if (!child?.active || child.type !== 'Container') return;
-      const tierCX =
-        typeof child.getData === 'function' ? Number(child.getData('tierCenterX') ?? 0) : 0;
-      const childWorldX = worldContainerX + tierCX;
-      const dist = Math.abs(centerX - childWorldX);
-      let targetScale = 0.92;
-      if (dist < maxDist) {
-        const ratio = dist / maxDist;
-        targetScale = 0.9 + 0.1 * Math.cos((ratio * Math.PI) / 2);
+      if (child?.active && child.type === 'Container') {
+        child.setScale(1);
       }
-      child.setScale(Phaser.Math.Linear(child.scaleX, targetScale, 0.35));
     });
   }
 

@@ -2,7 +2,7 @@
 // Perfect text readability, no overlaps, clean hierarchy
 
 import Phaser from 'phaser';
-import { FactionId, FACTIONS, FACTION_IDS } from '../constants/gameConstants';
+import { FactionId, FACTIONS, FACTION_IDS, CapClass } from '../constants/gameConstants';
 import { UNITS_REPOSITORY, getUnitsByFaction as getRepositoryUnitsByFaction, UnitData as RepoUnitData, UnitRarity, getUnitById, getDisplayName } from '../data/UnitsRepository';
 import { playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
@@ -47,6 +47,7 @@ export class CollectionScene extends Phaser.Scene {
   private mainContainer!: Phaser.GameObjects.Container;
   private headerContainer!: Phaser.GameObjects.Container;
   private tabsContainer!: Phaser.GameObjects.Container;
+  private filtersContainer!: Phaser.GameObjects.Container;
   private contentContainer!: Phaser.GameObjects.Container;
   private modalContainer?: Phaser.GameObjects.Container;
   private factionBg?: Phaser.GameObjects.Image;
@@ -72,6 +73,11 @@ export class CollectionScene extends Phaser.Scene {
   private height = 0;
   private headerHeight = 60; // Простая шапка только с заголовком
   private tabsHeight = 60;
+  /** Панель фильтров редкость / роль под табами фракций */
+  private filtersBarHeight = 74;
+  private filterRarity: UnitRarity | 'all' = 'all';
+  private filterRole: CapClass | 'all' = 'all';
+  private readonly roleSortOrder: CapClass[] = ['tank', 'sniper', 'balanced', 'trickster'];
   private topOffset = 0;
   /** Во время preload — чтобы не было чёрного экрана под спиннером */
   private preloadBackdropObjs: Phaser.GameObjects.GameObject[] = [];
@@ -93,7 +99,7 @@ export class CollectionScene extends Phaser.Scene {
 
       this.width = this.cameras.main.width;
       this.height = this.cameras.main.height;
-      this.topOffset = this.headerHeight + this.tabsHeight;
+      this.topOffset = this.headerHeight + this.tabsHeight + this.filtersBarHeight;
 
       // Фон
       this.createBackground();
@@ -109,7 +115,10 @@ export class CollectionScene extends Phaser.Scene {
       
       // Табы фракций под шапкой
       this.createFactionTabs();
-      
+
+      // Фильтры редкости и роли
+      this.createFiltersBar();
+
       // Контент (карточки юнитов)
       this.contentContainer = this.add.container(0, this.topOffset).setDepth(2);
       this.mainContainer.add(this.contentContainer);
@@ -381,6 +390,131 @@ export class CollectionScene extends Phaser.Scene {
   }
 
   /**
+   * Чипы фильтрации по редкости и роли (сетка после выбора фракции)
+   */
+  private createFiltersBar(): void {
+    if (this.filtersContainer) {
+      this.filtersContainer.destroy(true);
+    }
+    const fy = this.headerHeight + this.tabsHeight;
+    this.filtersContainer = this.add.container(0, fy).setDepth(98);
+
+    const s = Math.min(this.width / 390, 1.35);
+    const fonts = getFonts();
+    const h = this.filtersBarHeight;
+
+    const panel = this.add.graphics();
+    panel.fillGradientStyle(0x12121c, 0x0b0e17, 0x0b0e17, 0x12121c, 1, 1, 1, 1);
+    panel.fillRect(0, 0, this.width, h);
+    panel.lineStyle(1, 0xfbbf24, 0.18);
+    panel.lineBetween(0, h - 1, this.width, h - 1);
+    this.filtersContainer.add(panel);
+
+    const chipH = Math.max(22, Math.round(24 * s));
+    const gap = Math.max(5, Math.round(6 * s));
+    const padX = Math.max(8, Math.round(10 * s));
+
+    const rarityDefs: ReadonlyArray<{ id: UnitRarity | 'all'; text: string }> = [
+      { id: 'all', text: COLLECTION_RU.filters.all },
+      { id: 'common', text: COLLECTION_RU.filters.rarityShort.common },
+      { id: 'rare', text: COLLECTION_RU.filters.rarityShort.rare },
+      { id: 'epic', text: COLLECTION_RU.filters.rarityShort.epic },
+      { id: 'legendary', text: COLLECTION_RU.filters.rarityShort.legendary },
+    ];
+
+    const roleDefs: ReadonlyArray<{ id: CapClass | 'all'; text: string }> = [
+      { id: 'all', text: COLLECTION_RU.filters.all },
+      { id: 'tank', text: COLLECTION_RU.roles.tank },
+      { id: 'sniper', text: COLLECTION_RU.roles.sniper },
+      { id: 'balanced', text: COLLECTION_RU.roles.balanced },
+      { id: 'trickster', text: COLLECTION_RU.roles.trickster },
+    ];
+
+    const row1Y = Math.round(10 + chipH / 2);
+    const row2Y = Math.round(10 + chipH + gap + 6 + chipH / 2);
+    const rowUsableW = this.width - padX * 2;
+
+    const addChipRow = (
+      defs: ReadonlyArray<{ id: string; text: string }>,
+      rowCenterY: number,
+      selectedId: string,
+      apply: (id: string) => void,
+    ) => {
+      const n = defs.length;
+      const innerGap = gap;
+      const chipW = (rowUsableW - (n - 1) * innerGap) / n;
+      for (let i = 0; i < n; i++) {
+        const d = defs[i]!;
+        const cx = padX + chipW / 2 + i * (chipW + innerGap);
+        const selected = d.id === selectedId;
+        const c = this.add.container(cx, rowCenterY);
+        const hw = chipW / 2 - 1;
+        const hh = chipH / 2 - 1;
+        const bg = this.add.graphics();
+        bg.fillStyle(selected ? 0x1f2533 : 0x141820, 1);
+        bg.fillRoundedRect(-hw, -hh, chipW - 2, chipH, 6 * s);
+        if (selected) {
+          bg.lineStyle(2, 0xffc857, 0.95);
+          bg.strokeRoundedRect(-hw, -hh, chipW - 2, chipH, 6 * s);
+          bg.lineStyle(1, 0x38bdf8, 0.35);
+          bg.strokeRoundedRect(-hw + 1, -hh + 1, chipW - 4, chipH - 2, 5 * s);
+        } else {
+          bg.lineStyle(1, 0x363d4d, 0.85);
+          bg.strokeRoundedRect(-hw, -hh, chipW - 2, chipH, 6 * s);
+        }
+        c.add(bg);
+        c.add(
+          this.add
+            .text(0, 0, d.text, {
+              fontSize: `${Math.max(8, Math.round(9 * s))}px`,
+              fontFamily: fonts.tech,
+              color: selected ? '#fffbeb' : '#94a3b8',
+            })
+            .setOrigin(0.5)
+        );
+        const hit = this.add
+          .rectangle(0, 0, chipW - 2, chipH + 4, 0, 0)
+          .setInteractive({ useHandCursor: true });
+        hit.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+          preventNativeEvent(pointer);
+          if (selected) return;
+          AudioManager.getInstance().playUIClick();
+          hapticImpact('light');
+          apply(d.id);
+        });
+        c.add(hit);
+        this.filtersContainer.add(c);
+      }
+    };
+
+    addChipRow(
+      rarityDefs,
+      row1Y,
+      this.filterRarity,
+      (id: string) => {
+        this.filterRarity = id as UnitRarity | 'all';
+        this.createFiltersBar();
+        this.renderUnitsGrid();
+        this.time.delayedCall(40, () => void this.loadVisibleUnitPngs());
+      },
+    );
+
+    addChipRow(
+      roleDefs,
+      row2Y,
+      this.filterRole,
+      (id: string) => {
+        this.filterRole = id as CapClass | 'all';
+        this.createFiltersBar();
+        this.renderUnitsGrid();
+        this.time.delayedCall(40, () => void this.loadVisibleUnitPngs());
+      },
+    );
+
+    this.mainContainer.add(this.filtersContainer);
+  }
+
+  /**
    * Создает таб одной фракции
    */
   private createFactionTab(factionId: FactionId, x: number, y: number, size: number): Phaser.GameObjects.Container {
@@ -475,31 +609,46 @@ export class CollectionScene extends Phaser.Scene {
     // ✅ ИСПРАВЛЕНО: Показываем ВСЕ юниты включая Battle Pass
     // BP юниты отмечаются специальным бейджем в createUnitCard()
     const allUnits = getRepositoryUnitsByFaction(this.selectedFaction);
-    const units = allUnits; // Больше НЕ фильтруем isBattlePass
-    
+    let units = [...allUnits];
+    units = units.filter((u) => this.filterRarity === 'all' || u.rarity === this.filterRarity);
+    units = units.filter((u) => this.filterRole === 'all' || u.role === this.filterRole);
+
     if (import.meta.env.DEV) {
-      const bpCount = allUnits.filter(u => u.isBattlePass).length;
-      console.log(`[CollectionScene] Rendering ${units.length} units (${bpCount} BP units) for faction: ${this.selectedFaction}`);
+      const bpCount = allUnits.filter((u) => u.isBattlePass).length;
+      console.log(
+        `[CollectionScene] Rendering ${units.length}/${allUnits.length} units (${bpCount} BP) faction=${this.selectedFaction} rarity=${this.filterRarity} role=${this.filterRole}`,
+      );
     }
-    
-    if (units.length === 0) {
-      // Показываем сообщение если нет юнитов
-      const fonts = getFonts();
+
+    if (allUnits.length === 0) {
       this.contentContainer.add(
-        // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
         createText(this, Math.round(this.width / 2), Math.round(100), 'Нет доступных юнитов', {
           size: 'md',
           font: 'primary',
           color: '#6b7280',
-        }).setOrigin(0.5)
+        }).setOrigin(0.5),
       );
       return;
     }
-    
-    // Сортируем по редкости (сначала легендарные, потом эпики, редкие, обычные)
+
+    if (units.length === 0) {
+      this.contentContainer.add(
+        createText(this, Math.round(this.width / 2), Math.round(100), COLLECTION_RU.filters.emptyFiltered, {
+          size: 'md',
+          font: 'primary',
+          color: '#6b7280',
+          align: 'center',
+          maxWidth: this.width - 48,
+        }).setOrigin(0.5),
+      );
+      return;
+    }
+
+    const rarityOrder: UnitRarity[] = ['legendary', 'epic', 'rare', 'common'];
     const sortedUnits = [...units].sort((a, b) => {
-      const rarityOrder: UnitRarity[] = ['legendary', 'epic', 'rare', 'common'];
-      return rarityOrder.indexOf(a.rarity) - rarityOrder.indexOf(b.rarity);
+      const byRarity = rarityOrder.indexOf(a.rarity) - rarityOrder.indexOf(b.rarity);
+      if (byRarity !== 0) return byRarity;
+      return this.roleSortOrder.indexOf(a.role) - this.roleSortOrder.indexOf(b.role);
     });
 
     // Сетка 3xN с увеличенными размерами

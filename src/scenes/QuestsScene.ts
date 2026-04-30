@@ -220,6 +220,15 @@ export class QuestsScene extends Phaser.Scene {
     
     const tabY = this.headerHeight + 5 * s;
     this.tabContainer = this.add.container(0, tabY).setDepth(100);
+
+    const tabsBar = this.add.graphics();
+    tabsBar.fillGradientStyle(0x0f172a, 0x0b1220, 0x0b1220, 0x0f172a, 1, 1, 1, 1);
+    tabsBar.fillRect(0, -20 * s, width, 44 * s);
+    tabsBar.lineStyle(1, 0xfbbf24, 0.15);
+    tabsBar.strokeRoundedRect(10 * s, -18 * s, width - 20 * s, 40 * s, 10 * s);
+    tabsBar.lineStyle(1, 0x334155, 0.55);
+    tabsBar.lineBetween(14 * s, 20 * s, width - 14 * s, 20 * s);
+    this.tabContainer.addAt(tabsBar, 0);
     
     const tabs: { id: string; label: string; icon: string; badge?: number }[] = [
       { id: 'path', label: 'ПУТЬ', icon: '🌟' },  // НОВАЯ ВКЛАДКА - ПЕРВАЯ!
