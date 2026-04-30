@@ -28,6 +28,10 @@ const fallbackImageKeys = new Set<string>();
 
 function getBaseUrlPrefix(): string {
   const baseUrl = import.meta.env.BASE_URL || '/';
+  if (baseUrl === './' || baseUrl === '.') {
+    const pathname = window.location.pathname;
+    return pathname.endsWith('/') ? pathname : `${pathname.substring(0, pathname.lastIndexOf('/') + 1)}`;
+  }
   return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
 }
 
@@ -147,7 +151,7 @@ export function ensureSafeImageLoading(scene: Phaser.Scene): void {
           ...key,
           url: typeof key.url === 'string' ? normalizeAssetPath(key.url) : key.url,
         };
-        if (typeof normalizedConfig.url === 'string') {
+        if (import.meta.env.DEV && typeof normalizedConfig.url === 'string') {
           console.log(`[ImageLoader] Queue image: key="${normalizedConfig.key}", url="${toResolvedUrl(normalizedConfig.url)}"`);
         }
         return originalImage(normalizedConfig, url, xhrSettings);
@@ -158,7 +162,7 @@ export function ensureSafeImageLoading(scene: Phaser.Scene): void {
       if (!prepareImageKeyForRealAsset(scene, imageKey)) {
         return loader;
       }
-      if (typeof normalizedUrl === 'string') {
+      if (import.meta.env.DEV && typeof normalizedUrl === 'string') {
         console.log(`[ImageLoader] Queue image: key="${imageKey}", url="${toResolvedUrl(normalizedUrl)}"`);
       }
       return originalImage(imageKey, normalizedUrl, xhrSettings);

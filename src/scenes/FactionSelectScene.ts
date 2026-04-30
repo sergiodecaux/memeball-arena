@@ -15,6 +15,7 @@ import { hapticSelection } from '../utils/Haptics';
 import { tgApp } from '../utils/TelegramWebApp';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { safeSceneStart } from '../utils/SceneHelpers';
+import { loadImagesMenu } from '../assets/loading/ImageLoader';
 
 export class FactionSelectScene extends Phaser.Scene {
   private currentUIFaction: UIFactionId = 'magma';
@@ -52,6 +53,10 @@ export class FactionSelectScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'FactionSelectScene' });
+  }
+
+  preload(): void {
+    loadImagesMenu(this);
   }
 
   shutdown(): void {

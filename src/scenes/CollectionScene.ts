@@ -14,7 +14,7 @@ import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { BattlePassUnitPreview } from '../ui/previews/BattlePassUnitPreview';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { createText } from '../utils/TextFactory';
-import { isRealImageLoaded, loadImagesRepository } from '../assets/loading/ImageLoader';
+import { loadImagesRepository } from '../assets/loading/ImageLoader';
 import { AssetPackManager } from '../assets/AssetPackManager';
 import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 
@@ -49,7 +49,6 @@ export class CollectionScene extends Phaser.Scene {
   private contentContainer!: Phaser.GameObjects.Container;
   private modalContainer?: Phaser.GameObjects.Container;
   private factionBg?: Phaser.GameObjects.Image;
-  private missingTextureKeys = new Set<string>();
   private unitPngLoadToken = 0;
   /** Инкремент при каждом renderUnitsGrid — отменяет отложенные createBatch от предыдущего прохода */
   private unitsGridRenderGen = 0;
@@ -197,42 +196,6 @@ export class CollectionScene extends Phaser.Scene {
     }
   }
   
-  /**
-   * Пытается обеспечить наличие текстуры: лог, генерация fallback
-   */
-  private ensureUnitTexture(textureKey: string, assetPath: string): void {
-    try {
-      const hdKey = `${textureKey}_512`;
-      
-      if (this.textures.exists(textureKey)) return;
-      
-      // Если есть _512 версия, создаем alias
-      if (this.textures.exists(hdKey) && isRealImageLoaded(hdKey)) {
-        try {
-          const hdTexture = this.textures.get(hdKey);
-          const sourceImage = hdTexture.getSourceImage();
-          if (sourceImage instanceof HTMLImageElement) {
-            this.textures.addImage(textureKey, sourceImage);
-            if (import.meta.env.DEV) {
-              console.log(`[CollectionScene] ✅ Created alias: "${textureKey}" -> "${hdKey}"`);
-            }
-          }
-        } catch (aliasError) {
-          console.warn(`[CollectionScene] Failed to create alias for ${textureKey}:`, aliasError);
-        }
-        return;
-      }
-
-      if (!this.missingTextureKeys.has(textureKey)) {
-        console.warn(`[CollectionScene] ❌ Texture missing: "${textureKey}" (hdKey: "${hdKey}")`);
-        this.missingTextureKeys.add(textureKey);
-      }
-      
-    } catch (error) {
-      console.error(`[CollectionScene] Error in ensureUnitTexture for ${textureKey}:`, error);
-    }
-  }
-
   /**
    * Красивый плейсхолдер, если текстура не загрузилась
    */
@@ -654,8 +617,6 @@ export class CollectionScene extends Phaser.Scene {
     container.add(cardGraphics);
 
     // Изображение юнита (всегда показываем, но затемняем если не открыт)
-    const textureKey = unit.assetKey;
-    const hdKey = `${unit.assetKey}_512`;
     const bestTextureKey = getRealUnitTextureKey(this, unit);
     
     const addUnitImage = (keyToUse: string) => {
@@ -683,21 +644,7 @@ export class CollectionScene extends Phaser.Scene {
     }
     
     if (!imageAdded) {
-      // Доп. попытка сгенерировать/дозагрузить текстуру + улучшенный плейсхолдер
-      try {
-        this.ensureUnitTexture(textureKey, unit.assetPath);
-        const ensuredTextureKey = getRealUnitTextureKey(this, unit);
-        if (ensuredTextureKey) {
-          imageAdded = addUnitImage(ensuredTextureKey);
-        }
-      } catch (error) {
-        console.error(`[CollectionScene] Error ensuring texture for "${textureKey}":`, error);
-      }
-      
       if (!imageAdded) {
-        if (import.meta.env.DEV) {
-          console.warn(`[CollectionScene] ⚠️ Texture not found: "${textureKey}" (hdKey: "${hdKey}", unit.id="${unit.id}", assetPath="${unit.assetPath}")`);
-        }
         this.addUnitPlaceholder(container, size, rarityColor.border, unit);
       }
     }
