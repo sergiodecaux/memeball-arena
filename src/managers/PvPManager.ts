@@ -190,6 +190,8 @@ export class PvPManager {
         opponentId: data.opponentId,
         opponentName: data.opponentName,
         yourTeam: data.yourTeam,
+        isBotOpponent: data.isBotOpponent === true,
+        opponentFactionId: data.opponentFactionId,
       });
     };
 

@@ -9,7 +9,7 @@ import { loadImagesBoot } from '../assets/loading/ImageLoader';
 import { loadAudioVS } from '../assets/loading/AudioLoader';
 
 export interface MatchVSSceneData {
-  matchContext: 'league' | 'tournament' | 'casual' | 'campaign' | 'freeplay';
+  matchContext: 'league' | 'tournament' | 'casual' | 'campaign' | 'freeplay' | 'ranked';
   playerFaction: FactionId;
   opponentFaction: FactionId;
   opponentName: string;
@@ -103,6 +103,7 @@ export class MatchVSScene extends Phaser.Scene {
       league: '⚔️ GALACTIC LEAGUE',
       tournament: '🏆 TOURNAMENT',
       casual: '🎮 QUICK MATCH',
+      ranked: '⭐ RANKED PVP',
       campaign: '📖 CAMPAIGN',
       freeplay: '🎯 FREE PLAY',
     };
@@ -148,9 +149,13 @@ export class MatchVSScene extends Phaser.Scene {
     this.vsContainer.setDepth(25).setAlpha(0).setScale(0);
     
     // Карточка противника
-    const opponentName = this.sceneData.isAI 
-      ? `AI ${this.getAIDifficultyName()}` 
-      : this.sceneData.opponentName;
+    const rawName = this.sceneData.opponentName?.trim();
+    const opponentName =
+      rawName?.length
+        ? rawName
+        : this.sceneData.isAI
+          ? `AI ${this.getAIDifficultyName()}`
+          : 'Opponent';
     
     this.opponentCard = this.createPlayerCard(
       width / 2 + cardWidth / 2 + cardSpacing,

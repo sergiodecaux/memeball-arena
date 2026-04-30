@@ -722,29 +722,16 @@ export class RewardCalculator {
   }
 
   /**
-   * Рассчитать награды за PvP матч
+   * Рассчитать награды за онлайн PvP матч (после локального applyStats)
    */
-  static calculatePvPRewards(
-    isWin: boolean,
-    isDraw: boolean,
-    playerGoals: number,
-    opponentGoals: number,
-    playerFaction?: FactionId
-  ): RewardResult {
-    // PvP имеет увеличенные награды
+  static calculatePvPRewards(matchStats: MatchStats): RewardResult {
     const multiplier = 1.5;
-    
+
     const stats: MatchStats = {
-      winner: isWin ? 1 : isDraw ? null : 2,
-      playerGoals,
-      opponentGoals,
-      matchDurationSeconds: 0,
-      shotsCount: 0,
-      isSurrender: false,
-      playerFaction,
-      matchType: 'pvp', // ✅ Устанавливаем тип матча
+      ...matchStats,
+      matchType: 'pvp',
     };
-    
+
     const base = this.calculateStandardRewards(stats);
     
     // ✅ ИСПРАВЛЕНО: Увеличиваем весь breakdown для PvP с правильными именами полей

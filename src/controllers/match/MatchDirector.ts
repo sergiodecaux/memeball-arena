@@ -731,16 +731,9 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
       // ===== КОНЕЦ ИСПРАВЛЕНИЯ =====
       
     } else if (mode === 'pvp') {
-      // ✅ PvP: награды рассчитываем, но НЕ применяем локально
-      rewards = RewardCalculator.calculatePvPRewards(
-        isWin,
-        isDraw,
-        score.player1,
-        score.player2,
-        playerFaction
-      );
-      // applyResult остаётся undefined — награды применит сервер
-      
+      this.applyStats(isWin, isDraw, score.player1, score.player2);
+      rewards = RewardCalculator.calculatePvPRewards(matchStats);
+      applyResult = RewardCalculator.applyRewards(rewards, playerFaction);
     } else if (mode === 'tournament') {
       // 🏆 TOURNAMENT: Повышенные награды
       // ✅ КРИТИЧНО: Сначала применяем статистику, потом проверяем достижения

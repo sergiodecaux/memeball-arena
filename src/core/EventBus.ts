@@ -660,6 +660,8 @@ export interface EventPayloadMap {
     opponentId: string;
     opponentName?: string;
     yourTeam: number;
+    isBotOpponent?: boolean;
+    opponentFactionId?: string;
   };
   
   // PVP Match

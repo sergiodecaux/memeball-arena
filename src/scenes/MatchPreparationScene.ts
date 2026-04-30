@@ -16,11 +16,15 @@ import { getUnitsByFaction } from '../data/UnitsRepository';
 import { loadImagesBoot, loadImagesTactics } from '../assets/loading/ImageLoader';
 
 interface MatchPreparationData {
-  matchContext: 'league' | 'tournament' | 'casual';
+  matchContext: 'league' | 'tournament' | 'casual' | 'ranked';
   opponentName: string;
   opponentFaction?: FactionId;
   isAI?: boolean;
   aiDifficulty?: number;
+
+  pvpRoomId?: string;
+  pvpOpponentId?: string;
+  pvpYourTeam?: number;
   
   // 🎮 Размер команды (количество фишек)
   teamSize?: number;
@@ -704,7 +708,7 @@ export class MatchPreparationScene extends Phaser.Scene {
       }
       
       // ✅ ДЛЯ AI РЕЖИМА (casual): Автоматически делаем игрока готовым, если он выбрал фракцию
-      if (this.matchData.isAI && this.matchData.matchContext === 'casual' && this.playerSelectedFaction && !this.playerReady) {
+      if (this.matchData.isAI && (this.matchData.matchContext === 'casual' || this.matchData.matchContext === 'ranked') && this.playerSelectedFaction && !this.playerReady) {
         this.playerReady = true;
         if (this.playerStatusText) {
           this.playerStatusText.setText('READY!').setColor('#00ff00');
@@ -1029,6 +1033,17 @@ export class MatchPreparationScene extends Phaser.Scene {
       round: this.matchData.round,
       majorAbilityBonus: this.matchData.majorAbilityBonus,
       aimAssistDisabled: this.matchData.aimAssistDisabled,
+      ...(this.matchData.isAI === false &&
+      this.matchData.pvpRoomId &&
+      this.matchData.pvpOpponentId !== undefined
+        ? {
+            mode: 'pvp' as const,
+            roomId: this.matchData.pvpRoomId,
+            opponentId: this.matchData.pvpOpponentId,
+            yourTeam: this.matchData.pvpYourTeam ?? 1,
+            useFactions: true,
+          }
+        : {}),
     };
     
     if (import.meta.env.DEV) {

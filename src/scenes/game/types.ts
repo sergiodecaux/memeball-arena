@@ -5,7 +5,7 @@ import { FactionId, CapClassStats, CapClass, FactionArena, FactionConfig, UnitSt
 import { GameStartData, PvPPlayer } from '../../managers/MultiplayerManager';
 import { Formation } from '../../data/PlayerData';
 
-export type MatchContext = 'casual' | 'league' | 'tournament' | 'campaign';
+export type MatchContext = 'casual' | 'league' | 'tournament' | 'campaign' | 'ranked';
 
 export interface GameSceneData {
   vsAI?: boolean;

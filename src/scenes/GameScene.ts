@@ -1151,7 +1151,13 @@ export class GameScene extends Phaser.Scene {
 
     // вњ… League & Tournament: РњР°СЃРєРёСЂСѓРµРј Р±РѕС‚Р° РїРѕРґ СЂРµР°Р»СЊРЅРѕРіРѕ РёРіСЂРѕРєР°
     let opponentName: string | undefined = undefined;
-    if ((this.matchContext === 'league' || this.matchContext === 'tournament' || this.matchContext === 'casual') && this.isAIEnabled) {
+    if (
+      (this.matchContext === 'league' ||
+        this.matchContext === 'tournament' ||
+        this.matchContext === 'casual' ||
+        this.matchContext === 'ranked') &&
+      this.isAIEnabled
+    ) {
       // вњ… РРЎРџР РђР’Р›Р•РќРћ: РСЃРїРѕР»СЊР·СѓРµРј СѓР¶Рµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРЅРѕРµ РёРјСЏ, РµСЃР»Рё РѕРЅРѕ РµСЃС‚СЊ
       if (this.opponentName) {
         opponentName = this.opponentName;
@@ -2688,9 +2694,20 @@ export class GameScene extends Phaser.Scene {
     const playerName = playerData.getNickname() || 'You';
     // вњ… League & Tournament: РњР°СЃРєРёСЂСѓРµРј Р±РѕС‚Р° РїРѕРґ СЂРµР°Р»СЊРЅРѕРіРѕ РёРіСЂРѕРєР°
     let opponentName: string;
-    if ((this.matchContext === 'league' || this.matchContext === 'tournament') && this.isAIEnabled && this.opponentName) {
-      opponentName = this.opponentName; // РСЃРїРѕР»СЊР·СѓРµРј СЃРіРµРЅРµСЂРёСЂРѕРІР°РЅРЅРѕРµ РёРјСЏ
-      console.log(`[GameScene] Using league/tournament opponentName: "${opponentName}"`);
+    const displayOpponent =
+      typeof this.opponentName === 'string' ? this.opponentName.trim() : '';
+
+    if (
+      ((this.matchContext === 'league' ||
+        this.matchContext === 'tournament' ||
+        this.matchContext === 'casual' ||
+        this.matchContext === 'ranked') &&
+        this.isAIEnabled &&
+        displayOpponent.length > 0) ||
+      (this.isRealtimePvP && displayOpponent.length > 0)
+    ) {
+      opponentName = displayOpponent;
+      console.log(`[GameScene] Using preset opponent display name: "${opponentName}"`);
     } else if (this.isAIEnabled) {
       opponentName = 'AI Opponent';
       console.log('[GameScene] Using AI opponent name');
