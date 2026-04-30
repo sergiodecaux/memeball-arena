@@ -120,10 +120,8 @@ export class CollectionScene extends Phaser.Scene {
       
       // Показываем первую фракцию
       this.updateFactionBackground();
-      this.renderUnitsGrid();
-      this.time.delayedCall(50, () => {
-        void this.loadVisibleUnitPngs();
-      });
+      this.showFactionLoadingState(this.selectedFaction);
+      void this.loadVisibleUnitPngs(true);
       
       // Скролл
       this.setupScroll();
@@ -151,7 +149,7 @@ export class CollectionScene extends Phaser.Scene {
     }
   }
 
-  private async loadVisibleUnitPngs(): Promise<void> {
+  private async loadVisibleUnitPngs(renderAfterLoad = false): Promise<void> {
     if (!this.selectedFaction || !this.scene.isActive()) {
       return;
     }
@@ -160,36 +158,115 @@ export class CollectionScene extends Phaser.Scene {
     const loadToken = ++this.unitPngLoadToken;
     const units = getRepositoryUnitsByFaction(selectedFaction);
     const unitIds = units.map((unit) => unit.id);
+    let fallbackRendered = false;
 
     if (this.loadedFactionPngs.has(selectedFaction)) {
-      this.renderUnitsGrid();
+      if (renderAfterLoad) {
+        this.renderUnitsGrid();
+      }
       return;
     }
 
-    const batchSize = 6;
-    try {
-      for (let index = 0; index < unitIds.length && this.scene.isActive(); index += batchSize) {
-        if (this.selectedFaction !== selectedFaction || this.unitPngLoadToken !== loadToken) {
-          return;
-        }
-
-        await AssetPackManager.loadUnitAssets(this, unitIds.slice(index, index + batchSize));
-        if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
-          this.renderUnitsGrid();
-        }
-
-        if (index + batchSize < unitIds.length) {
-          await new Promise<void>((resolve) => this.time.delayedCall(60, () => resolve()));
-        }
+    this.loadingFallbackTimer?.destroy();
+    this.loadingFallbackTimer = this.time.delayedCall(4500, () => {
+      if (!this.scene.isActive() || this.selectedFaction !== selectedFaction || this.unitPngLoadToken !== loadToken) {
+        return;
       }
 
+      fallbackRendered = true;
+      console.warn(`[CollectionScene] Unit PNG loading timed out for ${selectedFaction}, rendering fallback grid`);
+      if (renderAfterLoad) {
+        this.renderUnitsGrid();
+      }
+    });
+
+    try {
+      await AssetPackManager.loadUnitAssets(this, unitIds);
       this.loadedFactionPngs.add(selectedFaction);
+      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
+        this.loadingFallbackTimer?.destroy();
+        this.loadingFallbackTimer = undefined;
+      }
+      if (
+        this.scene.isActive()
+        && this.selectedFaction === selectedFaction
+        && this.unitPngLoadToken === loadToken
+        && renderAfterLoad
+        && !fallbackRendered
+      ) {
+        this.renderUnitsGrid();
+      }
     } catch (error) {
       console.warn('[CollectionScene] Failed to lazy-load unit PNGs:', error);
       if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
+        this.loadingFallbackTimer?.destroy();
+        this.loadingFallbackTimer = undefined;
+      }
+      if (
+        this.scene.isActive()
+        && this.selectedFaction === selectedFaction
+        && this.unitPngLoadToken === loadToken
+        && renderAfterLoad
+        && !fallbackRendered
+      ) {
         this.renderUnitsGrid();
       }
     }
+  }
+
+  private showFactionLoadingState(factionId: FactionId): void {
+    this.unitsGridRenderGen++;
+    this.highlightedCard = undefined;
+    this.loadingFallbackTimer?.destroy();
+    this.loadingFallbackTimer = undefined;
+    this.contentContainer.removeAll(true);
+    this.scrollY = 0;
+    this.maxScrollY = 0;
+    this.scrollVelocity = 0;
+    this.contentContainer.y = this.topOffset;
+
+    const faction = FACTIONS[factionId];
+    const container = this.add.container(this.width / 2, (this.height - this.topOffset) / 2);
+    const panelWidth = Math.min(this.width - 44, 320);
+    const panelHeight = 150;
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0f172a, 0.92);
+    bg.fillRoundedRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 18);
+    bg.lineStyle(2, faction.color, 0.65);
+    bg.strokeRoundedRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 18);
+    container.add(bg);
+
+    const spinner = this.add.graphics();
+    spinner.lineStyle(4, faction.color, 1);
+    spinner.arc(0, -30, 24, 0, Math.PI * 1.45, false);
+    spinner.strokePath();
+    container.add(spinner);
+
+    const title = createText(this, 0, 18, 'Загрузка коллекции...', {
+      size: 'md',
+      font: 'tech',
+      color: '#ffffff',
+      stroke: true,
+    }).setOrigin(0.5);
+    container.add(title);
+
+    const hint = createText(this, 0, 48, faction.name, {
+      size: 'sm',
+      font: 'primary',
+      color: '#cbd5e1',
+      stroke: true,
+    }).setOrigin(0.5);
+    container.add(hint);
+
+    this.contentContainer.add(container);
+    this.tweens.add({
+      targets: spinner,
+      angle: 360,
+      duration: 1000,
+      repeat: -1,
+      ease: 'Linear',
+    });
   }
 
   /**
@@ -435,9 +512,9 @@ export class CollectionScene extends Phaser.Scene {
         
         this.selectedFaction = factionId;
         this.updateFactionBackground();
-        this.renderUnitsGrid();
+        this.showFactionLoadingState(factionId);
         this.createFactionTabs(); // Перерисовываем табы
-        void this.loadVisibleUnitPngs();
+        void this.loadVisibleUnitPngs(true);
       }
     });
 
