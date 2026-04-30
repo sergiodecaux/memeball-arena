@@ -658,6 +658,7 @@ export interface EventPayloadMap {
   [GameEvents.PVP_MATCH_FOUND]: {
     roomId: string;
     opponentId: string;
+    opponentName?: string;
     yourTeam: number;
   };
   

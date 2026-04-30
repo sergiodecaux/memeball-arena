@@ -1151,7 +1151,7 @@ export class GameScene extends Phaser.Scene {
 
     // вњ… League & Tournament: РњР°СЃРєРёСЂСѓРµРј Р±РѕС‚Р° РїРѕРґ СЂРµР°Р»СЊРЅРѕРіРѕ РёРіСЂРѕРєР°
     let opponentName: string | undefined = undefined;
-    if ((this.matchContext === 'league' || this.matchContext === 'tournament') && this.isAIEnabled) {
+    if ((this.matchContext === 'league' || this.matchContext === 'tournament' || this.matchContext === 'casual') && this.isAIEnabled) {
       // вњ… РРЎРџР РђР’Р›Р•РќРћ: РСЃРїРѕР»СЊР·СѓРµРј СѓР¶Рµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРЅРѕРµ РёРјСЏ, РµСЃР»Рё РѕРЅРѕ РµСЃС‚СЊ
       if (this.opponentName) {
         opponentName = this.opponentName;
@@ -1166,7 +1166,7 @@ export class GameScene extends Phaser.Scene {
         console.log(`[GameScene] createUI(): Generated new opponentName: "${opponentName}"`);
       }
     } else if (this.isRealtimePvP) {
-      opponentName = 'Opponent';
+      opponentName = this.opponentName || 'Opponent';
     }
 
     this.gameHUD = new GameHUD(this, {

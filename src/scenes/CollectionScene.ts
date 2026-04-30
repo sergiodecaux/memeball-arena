@@ -117,24 +117,7 @@ export class CollectionScene extends Phaser.Scene {
       this.selectedFaction = FACTION_IDS[0];
       this.updateFactionBackground();
       
-      // ✅ FIX: Оборачиваем renderUnitsGrid в try-catch для предотвращения вылетов
-      try {
-        this.renderUnitsGrid();
-      } catch (error) {
-        console.error('[CollectionScene] Error rendering units grid:', error);
-        // Показываем сообщение об ошибке вместо вылета
-        // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
-        const errorText = createText(this, Math.round(this.width / 2), Math.round(this.height / 2), 'Ошибка загрузки коллекции', {
-          size: 'md',
-          font: 'tech',
-          color: '#ff0000',
-        }).setOrigin(0.5);
-        this.contentContainer.add(errorText);
-      }
-
-      this.time.delayedCall(50, () => {
-        void this.loadVisibleUnitPngs();
-      });
+      void this.loadVisibleUnitPngs(true);
       
       // Скролл
       this.setupScroll();
@@ -162,7 +145,7 @@ export class CollectionScene extends Phaser.Scene {
     }
   }
 
-  private async loadVisibleUnitPngs(): Promise<void> {
+  private async loadVisibleUnitPngs(renderAfterLoad = false): Promise<void> {
     if (!this.selectedFaction || !this.scene.isActive()) {
       return;
     }
@@ -171,26 +154,14 @@ export class CollectionScene extends Phaser.Scene {
     const loadToken = ++this.unitPngLoadToken;
     const units = getRepositoryUnitsByFaction(selectedFaction);
     const unitIds = units.map((unit) => unit.id);
-    const batchSize = 6;
-
     try {
-      for (let index = 0; index < unitIds.length && this.scene.isActive(); index += batchSize) {
-        if (this.selectedFaction !== selectedFaction || this.unitPngLoadToken !== loadToken) {
-          return;
-        }
-
-        await AssetPackManager.loadUnitAssets(this, unitIds.slice(index, index + batchSize));
-        if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
-          this.renderUnitsGrid();
-        }
-
-        if (index + batchSize < unitIds.length) {
-          await new Promise<void>((resolve) => this.time.delayedCall(16, () => resolve()));
-        }
+      await AssetPackManager.loadUnitAssets(this, unitIds);
+      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken && renderAfterLoad) {
+        this.renderUnitsGrid();
       }
     } catch (error) {
       console.warn('[CollectionScene] Failed to lazy-load unit PNGs:', error);
-      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken) {
+      if (this.scene.isActive() && this.selectedFaction === selectedFaction && this.unitPngLoadToken === loadToken && renderAfterLoad) {
         this.renderUnitsGrid();
       }
     }
@@ -439,9 +410,9 @@ export class CollectionScene extends Phaser.Scene {
         
         this.selectedFaction = factionId;
         this.updateFactionBackground();
-        this.renderUnitsGrid();
+        this.contentContainer.removeAll(true);
         this.createFactionTabs(); // Перерисовываем табы
-        void this.loadVisibleUnitPngs();
+        void this.loadVisibleUnitPngs(true);
       }
     });
 
@@ -502,8 +473,8 @@ export class CollectionScene extends Phaser.Scene {
     const startX = padding + (availableWidth - totalCardsWidth) / 2 + cardSize / 2;
     const startY = topPadding;
 
-    // Создаем карточки батчами для оптимизации
-    const batchSize = 6; // Создаем по 6 карточек за раз
+    // PNGs are preloaded before this point, so render the faction grid in one pass.
+    const batchSize = sortedUnits.length;
     let currentIndex = 0;
     const gridGen = ++this.unitsGridRenderGen;
 

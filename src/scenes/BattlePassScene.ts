@@ -1624,8 +1624,11 @@ export class BattlePassScene extends Phaser.Scene {
   // Helper to refresh UI without full scene restart (Smoother UX)
   private updateUIState(): void {
       if (this.scrollContainer) {
+        this.visibleTierNodes.clear();
+        this.lastVisibleRange = { start: -1, end: -1 };
         this.scrollContainer.removeAll(true);
         this.createDualTrackScroll(); // Re-render tracks to show 'claimed' state
+        this.updateVisibleTiers();
       }
       this.updateProgressBar();
   }

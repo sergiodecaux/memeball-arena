@@ -47,6 +47,8 @@ export class ResultScreen {
   private confettiEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
   private rewardTexts: { coins?: Phaser.GameObjects.Text; xp?: Phaser.GameObjects.Text } = {};
   private opponentData: OpponentData; // ✅ НОВОЕ: Данные противника
+  private backgroundImage?: Phaser.GameObjects.Image;
+  private isDestroying = false;
 
   constructor(scene: Phaser.Scene, result: MatchResult, isAIMode: boolean, opponentData: OpponentData, callbacks: ResultScreenCallbacks) {
     this.scene = scene;
@@ -188,10 +190,13 @@ export class ResultScreen {
       return;
     }
     
-    console.log(`[ResultScreen] ✅ Loading background: ${bgKey}`);
+    if (import.meta.env.DEV) {
+      console.log(`[ResultScreen] ✅ Loading background: ${bgKey}`);
+    }
     
     // Create background image
     const bg = this.scene.add.image(width / 2, height / 2, bgKey);
+    this.backgroundImage = bg;
     bg.setDepth(400.4); // Between overlay (400) and effects (400.5)
     
     // Scale to cover screen while maintaining aspect ratio
@@ -200,7 +205,9 @@ export class ResultScreen {
     const scale = Math.max(scaleX, scaleY);
     bg.setScale(scale);
     
-    console.log(`[ResultScreen] ✅ Background scaled: ${scale.toFixed(2)}x (${bg.width}x${bg.height} -> ${width}x${height})`);
+    if (import.meta.env.DEV) {
+      console.log(`[ResultScreen] ✅ Background scaled: ${scale.toFixed(2)}x (${bg.width}x${bg.height} -> ${width}x${height})`);
+    }
     
     // Fade in animation
     bg.setAlpha(0);
@@ -815,8 +822,8 @@ export class ResultScreen {
     if (isNetworkPvP) {
       const mp = MultiplayerManager.getInstance();
       const opp = mp.getOpponent();
-      opponentName = opp?.name || 'Opponent';
-      opponentAvatarId = opp?.avatarId;
+      opponentName = this.opponentData.opponentName || opp?.name || 'Opponent';
+      opponentAvatarId = this.opponentData.opponentAvatarId || opp?.avatarId;
     } else if (isAIMode) {
       // ✅ ИСПРАВЛЕНО: Используем ПЕРЕДАННЫЕ данные противника для консистентности
       opponentName = this.opponentData.opponentName || 'AI';
@@ -1378,6 +1385,9 @@ export class ResultScreen {
   }
 
   hide(onComplete?: () => void): void {
+    if (this.isDestroying) return;
+    this.isDestroying = true;
+
     this.scene.tweens.add({
       targets: [this.container, this.overlay],
       alpha: 0,
@@ -1391,13 +1401,32 @@ export class ResultScreen {
   }
 
   destroy(): void {
+    if (!this.scene?.sys?.isActive()) return;
+
+    this.scene.tweens.killTweensOf([
+      this.container,
+      this.overlay,
+      this.godRaysContainer,
+      this.backgroundImage,
+    ].filter(Boolean) as Phaser.GameObjects.GameObject[]);
+
     if (this.confettiEmitter) {
       this.confettiEmitter.destroy();
+      this.confettiEmitter = undefined;
     }
     if (this.godRaysContainer) {
       this.godRaysContainer.destroy();
+      this.godRaysContainer = undefined;
     }
-    this.overlay.destroy();
-    this.container.destroy();
+    if (this.backgroundImage?.active) {
+      this.backgroundImage.destroy();
+      this.backgroundImage = undefined;
+    }
+    if (this.overlay.active) {
+      this.overlay.destroy();
+    }
+    if (this.container.active) {
+      this.container.destroy();
+    }
   }
 }

@@ -10,6 +10,7 @@ import { DEFAULT_PVP_CONFIG } from '../types/pvp';
 import { hapticImpact, hapticSelection } from '../utils/Haptics';
 import { tgApp } from '../utils/TelegramWebApp';
 import { safeSceneStart } from '../utils/SceneHelpers';
+import { FACTION_IDS, type FactionId } from '../constants/gameConstants';
 
 type MatchmakingMode = 'casual' | 'ranked';
 
@@ -29,7 +30,18 @@ export class MatchmakingScene extends Phaser.Scene {
   private searchAnimation?: Phaser.GameObjects.Container;
   
   private timerEvent?: Phaser.Time.TimerEvent;
+  private botMatchTimer?: Phaser.Time.TimerEvent;
   private s = 1; // UI scale
+  private readonly botNames = [
+    'NeonStrike#214',
+    'CyberBlade#508',
+    'VoidWalker#733',
+    'QuantumFlux#091',
+    'NovaPrime#326',
+    'AstroTitan#647',
+    'PlasmaEdge#882',
+    'ShadowPrime#159',
+  ];
   
   constructor() {
     super({ key: 'MatchmakingScene' });
@@ -251,16 +263,18 @@ export class MatchmakingScene extends Phaser.Scene {
     });
   }
   
-  private onMatchFound(payload: { roomId: string; opponentId: string; yourTeam: number }): void {
+  private onMatchFound(payload: { roomId: string; opponentId: string; opponentName?: string; yourTeam: number }): void {
     console.log('[MatchmakingScene] 🎮 Матч найден!', payload);
     
     this.isSearching = false;
+    this.botMatchTimer?.destroy();
+    this.botMatchTimer = undefined;
     this.updateStatus('Оппонент найден!', '#39ff14');
     hapticImpact('heavy');
     
     // Показываем VS
     this.time.delayedCall(500, () => {
-      this.updateStatus(`VS OPPONENT`, '#fbbf24');
+      this.updateStatus(`VS ${payload.opponentName || 'OPPONENT'}`, '#fbbf24');
     });
     
     // Запуск матча через 2 секунды
@@ -309,11 +323,24 @@ export class MatchmakingScene extends Phaser.Scene {
         loop: true,
       });
       
-      // Получаем данные игрока
       const player = playerData.get();
+      const factionId = playerData.getFaction() || 'magma';
       
       // Начинаем поиск матча
-      this.pvpManager.findGame(this.mode);
+      this.pvpManager.findGame(this.mode, {
+        playerName: playerData.getNickname?.() || player.username || 'Player',
+        mmr: player.pvpStats?.[this.mode]?.rating,
+        factionId,
+        teamUnitIds: playerData.getTeamUnits(factionId),
+        teamSize: playerData.getAllowedTeamSize(factionId),
+      });
+
+      if (this.mode === 'casual') {
+        this.botMatchTimer?.destroy();
+        this.botMatchTimer = this.time.delayedCall(6500, () => {
+          this.startCasualBotMatch();
+        });
+      }
       
     } catch (error) {
       console.error('[MatchmakingScene] Ошибка подключения:', error);
@@ -349,7 +376,7 @@ export class MatchmakingScene extends Phaser.Scene {
   }
   
   // ✅ NEW PVP: Запуск матча
-  private startMatch(matchData: { roomId: string; opponentId: string; yourTeam: number }): void {
+  private startMatch(matchData: { roomId: string; opponentId: string; opponentName?: string; yourTeam: number }): void {
     console.log('[MatchmakingScene] Запуск матча:', matchData);
     
     // Store match mode in player data
@@ -367,9 +394,43 @@ export class MatchmakingScene extends Phaser.Scene {
       roomId: matchData.roomId,
       yourTeam: matchData.yourTeam,
       opponentId: matchData.opponentId,
+      opponentName: matchData.opponentName,
       matchContext: 'casual',
       useFactions: true,
     });
+  }
+
+  private startCasualBotMatch(): void {
+    if (!this.isSearching) return;
+
+    const playerFaction = playerData.getFaction() || 'magma';
+    const opponentFaction = this.getRandomOpponentFaction(playerFaction);
+    const opponentName = this.botNames[Math.floor(Math.random() * this.botNames.length)];
+
+    this.isSearching = false;
+    this.pvpManager?.cancelSearch();
+    this.updateStatus(`VS ${opponentName}`, '#fbbf24');
+    hapticImpact('heavy');
+
+    this.time.delayedCall(800, async () => {
+      this.cleanup();
+      this.scene.stop('MatchmakingScene');
+      await safeSceneStart(this, 'GameScene', {
+        isAI: true,
+        vsAI: true,
+        difficulty: 'medium',
+        matchContext: 'casual',
+        useFactions: true,
+        playerFaction,
+        opponentFaction,
+        opponentName,
+      });
+    });
+  }
+
+  private getRandomOpponentFaction(playerFaction: FactionId): FactionId {
+    const available = FACTION_IDS.filter((faction) => faction !== playerFaction);
+    return Phaser.Math.RND.pick(available) || 'magma';
   }
   
   private async handleBack(): Promise<void> {
@@ -396,6 +457,11 @@ export class MatchmakingScene extends Phaser.Scene {
     if (this.timerEvent) {
       this.timerEvent.destroy();
       this.timerEvent = undefined;
+    }
+
+    if (this.botMatchTimer) {
+      this.botMatchTimer.destroy();
+      this.botMatchTimer = undefined;
     }
     
     if (this.tweens) {

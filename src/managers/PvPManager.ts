@@ -13,6 +13,14 @@ export interface PvPMatchInfo {
   yourTeam: number;
 }
 
+export interface PvPMatchmakingProfile {
+  playerName?: string;
+  mmr?: number;
+  factionId?: string;
+  teamUnitIds?: string[];
+  teamSize?: number;
+}
+
 /**
  * Менеджер для PVP подключения и обмена сообщениями с сервером
  */
@@ -169,8 +177,8 @@ export class PvPManager {
   private setupListeners(): void {
     if (!this.socket) return;
     
-    // Matchmaking
-    this.socket.on('match_found', (data: any) => {
+    // Matchmaking. Support both the current client event and the legacy server event.
+    const handleMatchFound = (data: any) => {
       if (import.meta.env.DEV) {
         console.log('[PvPManager] 🎮 Match found!', data);
       }
@@ -180,9 +188,13 @@ export class PvPManager {
       EventBus.emit(GameEvents.PVP_MATCH_FOUND, {
         roomId: data.roomId,
         opponentId: data.opponentId,
+        opponentName: data.opponentName,
         yourTeam: data.yourTeam,
       });
-    });
+    };
+
+    this.socket.on('match_found', handleMatchFound);
+    this.socket.on('matchmaking:found', handleMatchFound);
     
     this.socket.on('match_start', (data: any) => {
       if (import.meta.env.DEV) {
@@ -260,7 +272,7 @@ export class PvPManager {
   /**
    * Поиск матча
    */
-  public findGame(mode: string = 'ranked'): void {
+  public findGame(mode: string = 'ranked', profile: PvPMatchmakingProfile = {}): void {
     if (!this.socket || !this.isConnected) {
       if (import.meta.env.DEV) {
         console.error('[PvPManager] Not connected to server');
@@ -274,6 +286,12 @@ export class PvPManager {
     this.socket.emit('matchmaking:join', {
       mode,
       playerId: this.socket.id,
+      playerData: profile,
+      playerName: profile.playerName,
+      mmr: profile.mmr,
+      factionId: profile.factionId,
+      teamUnitIds: profile.teamUnitIds,
+      teamSize: profile.teamSize,
       timestamp: Date.now(),
     });
   }
