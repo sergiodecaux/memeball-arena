@@ -1002,7 +1002,7 @@ export class GameScene extends Phaser.Scene {
 
   private pulsePassiveFeedbackThrottled(): void {
     const now = Date.now();
-    if (now - this.lastPassiveHudHapticAt < 260) return;
+    if (now - this.lastPassiveHudHapticAt < 420) return;
     this.lastPassiveHudHapticAt = now;
     HapticManager.trigger('light');
   }
@@ -1010,18 +1010,20 @@ export class GameScene extends Phaser.Scene {
   /** Всплывающая подпись у фишки на поле */
   private showPassiveFloatingLabel(wx: number, wy: number, text: string, color: number): void {
     const textObj = this.add.text(wx, wy, text, {
-      fontSize: '13px',
+      fontSize: '15px',
       fontStyle: 'bold',
       color: this.passiveColorToCss(color),
       stroke: '#000000',
-      strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(920);
+      strokeThickness: 4,
+      align: 'center',
+      wordWrap: { width: Math.min(280, this.cameras.main.width * 0.42) },
+    }).setOrigin(0.5).setDepth(25000);
 
     this.tweens.add({
       targets: textObj,
-      y: wy - 36,
+      y: wy - 44,
       alpha: 0,
-      duration: 1100,
+      duration: 1250,
       ease: 'Power2',
       onComplete: () => textObj.destroy(),
     });
@@ -1030,21 +1032,23 @@ export class GameScene extends Phaser.Scene {
   /** Компактная полоска у нижнего края (видна при любой камере) */
   private showPassiveHudBanner(text: string, color: number): void {
     const cam = this.cameras.main;
-    const yBase = cam.height - Math.min(130, Math.max(96, cam.height * 0.2));
+    const yTopBand = Math.max(52, Math.min(108, cam.height * 0.11));
 
     if (this.passiveHudToast) {
       this.passiveHudToast.destroy();
       this.passiveHudToast = undefined;
     }
 
-    const w = Math.min(cam.width * 0.88, 400);
-    const container = this.add.container(cam.centerX, yBase).setDepth(930).setScrollFactor(0);
-    const bg = this.add.rectangle(0, 0, w, 34, 0x0a0a12, 0.74).setStrokeStyle(2, (color >>> 0) & 0xffffff, 0.88);
+    const w = Math.min(cam.width * 0.92, 460);
+    const container = this.add.container(cam.centerX, yTopBand).setDepth(25001).setScrollFactor(0);
+    const bg = this.add.rectangle(0, 0, w, 38, 0x050508, 0.82).setStrokeStyle(2, (color >>> 0) & 0xffffff, 0.92);
     const label = this.add.text(0, 0, text, {
-      fontSize: '13px',
+      fontSize: '14px',
       fontFamily: 'Arial',
       fontStyle: 'bold',
       color: this.passiveColorToCss(color),
+      align: 'center',
+      wordWrap: { width: w - 24 },
     }).setOrigin(0.5);
 
     container.add([bg, label]);
@@ -1054,16 +1058,16 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({
       targets: container,
       alpha: 1,
-      duration: 100,
+      duration: 110,
       ease: 'Sine.out',
       onComplete: () => {
-        this.time.delayedCall(760, () => {
+        this.time.delayedCall(1050, () => {
           if (!this.passiveHudToast || container !== this.passiveHudToast) return;
           this.tweens.add({
             targets: container,
             alpha: 0,
-            y: yBase - 10,
-            duration: 220,
+            y: yTopBand - 8,
+            duration: 260,
             ease: 'Sine.in',
             onComplete: () => {
               container.destroy();
@@ -1958,7 +1962,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private subscribeToEvents(): void {
-    // Очищаем старые обработчики если есть
+    this.eventHandlers.forEach((handler, eventName) => {
+      try {
+        eventBus.unsubscribe(eventName as GameEvents, handler as any, this);
+      } catch {
+        /* noop */
+      }
+    });
     this.eventHandlers.clear();
     
     // UI_TIMER_UPDATED
@@ -1991,8 +2001,9 @@ export class GameScene extends Phaser.Scene {
 
     // Пассивки: подписи на поле + компактная полоска + лёгкая вибрация (Telegram / Vibration API)
     const onPassiveActivated = (data: { x: number; y: number; text: string; color: number }) => {
-      this.showPassiveFloatingLabel(data.x, data.y, data.text, data.color);
-      this.showPassiveHudBanner(data.text, data.color);
+      const label = `Пассивка: ${data.text}`;
+      this.showPassiveFloatingLabel(data.x, data.y, label, data.color);
+      this.showPassiveHudBanner(label, data.color);
       this.pulsePassiveFeedbackThrottled();
     };
     this.eventHandlers.set(GameEvents.PASSIVE_ACTIVATED, onPassiveActivated);

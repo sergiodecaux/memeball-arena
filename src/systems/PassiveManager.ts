@@ -24,6 +24,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private ball: Ball | null = null;
   /** Эффекты мяча от пассивок (slow_on_hit и т.д.) — раньше только слали событие без хранения */
   private ballPassiveEffects = new Map<string, { value: number; sourceUnitId: string }>();
+  /** Анти-спам подсказок для аур, влияющих на мяч (гравитация / притягивание) */
+  private lastBallAuraTipAtMs = 0;
+  /** Анти-спам для stat_boost-пассивок при каждом ударе */
+  private lastStatBoostPingAt = new Map<string, number>();
   
   /** Стабильные ссылки для корректной отписки в destroy() */
   private readonly boundOnGoalScored = this.onGoalScored.bind(this);
@@ -92,7 +96,16 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       }
       
       if (passive.params.condition === 'goal_conceded' && !isOwnGoal) {
-        this.applyConditionalPassive(unit, passive, 'goal_conceded');
+        if (passive.name === 'Возрождение феникса') {
+          const st = this.state.units[unitId];
+          if (st && !st.hasUsedOncePerMatch) {
+            st.hasUsedOncePerMatch = true;
+            this.teleportToOwnGoal(unit);
+            this.showPassiveActivation(unit, passive.name, 0xff9933);
+          }
+        } else {
+          this.applyConditionalPassive(unit, passive, 'goal_conceded');
+        }
       }
       
       // Risk/Reward пассивки (например, Ragnaros)
@@ -195,16 +208,19 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     // Lava Sniper: мяч проходит сквозь первого врага
     if (passive.name === 'Расплавление') {
       this.setBallPassThrough(1);
+      this.showPassiveActivation(unit, passive.name, 0xff5522);
     }
     
     // Voidbolt: 25% телепорт мяча вперёд
     if (passive.name === 'Хаотичный выстрел' && Math.random() < (params.chance || 0.25)) {
       this.scheduleBallTeleport(force, params.value || 50);
+      this.showPassiveActivation(unit, 'Скачок мяча!', 0x22ffff);
     }
     
     // Venom: мяч замедляет первого врага
     if (passive.name === 'Коррозийный выстрел') {
       this.setBallSlowOnHit(unit, params.value || 0.10);
+      this.showPassiveActivation(unit, passive.name, 0x66ff88);
     }
     
     return modifiedForce;
@@ -231,6 +247,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     if (condition === 'enemy_half' && this.isOnEnemyHalf(unit)) {
       const bonus = 1 + (params.value || 0.10);
       modifiedForce.scale(bonus);
+      this.showPassiveActivation(unit, passive.name, 0xffee66);
     }
     
     return modifiedForce;
@@ -254,7 +271,13 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     
     // Wild Hellion: +25% curve, -5% accuracy (accuracy handled in ShootingController)
     if (passive.name === 'Хаотичное пламя') {
-      // Curve bonus применяется в Unit.ts
+      const uid = unit.getUnitId();
+      const now = Date.now();
+      const prev = this.lastStatBoostPingAt.get(uid) || 0;
+      if (now - prev > 2800) {
+        this.lastStatBoostPingAt.set(uid, now);
+        this.showPassiveActivation(unit, passive.name, 0xff7733);
+      }
     }
     
     // Schrodinger: 40% телепорт после удара
@@ -273,8 +296,16 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   private applyStatBoostOnHit(unit: Unit, force: Phaser.Math.Vector2, passive: PassiveAbility): Phaser.Math.Vector2 {
-    // Curve boost применяется в Unit.ts через getCurveBonus()
-    // Mass boost применяется при создании юнита
+    // Curve/mass применяются в Unit / матче — показываем реже, чтобы не забивать экран
+    if (passive.name !== 'Стабильность') {
+      const uid = unit.getUnitId();
+      const now = Date.now();
+      const prev = this.lastStatBoostPingAt.get(uid) || 0;
+      if (now - prev > 2800) {
+        this.lastStatBoostPingAt.set(uid, now);
+        this.showPassiveActivation(unit, passive.name, 0xddddff);
+      }
+    }
     return force;
   }
   
@@ -321,6 +352,8 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     // Extra knockback (Juggernaut)
     if (passive.name === 'Сейсмический удар') {
       this.applyExtraKnockback(enemy, params.value || 0.30);
+      this.showPassiveActivation(unit, passive.name, 0xffcc44);
+      this.showPassiveActivation(enemy, 'Отброс!', 0xffaa33);
     }
     
     // Absorb impulse (Ironclad, Abyssal)
@@ -406,10 +439,20 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
           // Gravity Well: slow ball by 20%
           if (passive.name === 'Гравитационный колодец') {
             this.applyBallSlow(params.value || 0.20);
+            const now = Date.now();
+            if (now - this.lastBallAuraTipAtMs > 2600) {
+              this.lastBallAuraTipAtMs = now;
+              this.showPassiveActivation(unit, passive.name, 0x8899ff);
+            }
           }
           // Black Hole: attract ball when defending
           if (passive.name === 'Космическая броня' && this.isDefending(unit)) {
             this.attractBallToUnit(unit, params.radius || 60);
+            const now = Date.now();
+            if (now - this.lastBallAuraTipAtMs > 2600) {
+              this.lastBallAuraTipAtMs = now;
+              this.showPassiveActivation(unit, passive.name, 0x4b0082);
+            }
           }
         }
       }
@@ -475,6 +518,21 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     }
     
     return result;
+  }
+
+  /** UI: карта способности усилена пассивкой активного бойца */
+  public notifyCardEnhancement(unitId: string, cardTypeKey: string): void {
+    const passive = this.getUnitPassive(unitId);
+    if (passive.type !== 'card_enhance') return;
+    const e = this.getCardEnhancement(unitId, cardTypeKey);
+    if (!e.special && e.radiusBonus <= 0 && e.durationBonus <= 0) return;
+    const unit = this.units.get(unitId);
+    if (!unit) return;
+    const parts: string[] = [passive.name];
+    if (e.radiusBonus > 0) parts.push(`+${Math.round(e.radiusBonus * 100)}% зона`);
+    if (e.durationBonus > 0) parts.push(`+${e.durationBonus} ход`);
+    if (e.special) parts.push('★');
+    this.showPassiveActivation(unit, parts.join(' '), 0x7dd3fc);
   }
   
   // ========== ИММУНИТЕТЫ И КОНТРЫ ==========
@@ -544,12 +602,14 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     // After miss: +accuracy boost
     if (triggerCondition === 'after_miss' && params.value) {
       this.applyBuff(unit, 'accuracy', params.value, 1, unitId);
+      this.showPassiveActivation(unit, passive.name, 0xaaccff);
     }
     
     // After hit received: +defense
     if (triggerCondition === 'after_hit' && params.value) {
       const maxStacks = params.maxStacks || 3;
       this.stackBuff(unit, 'defense', params.value, params.duration || 1, unitId, maxStacks);
+      this.showPassiveActivation(unit, passive.name, 0x88cc99);
     }
     
     // After goal: +speed
@@ -561,28 +621,39 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     // After ally hit: +power
     if (triggerCondition === 'ally_hit' && params.value) {
       this.applyBuff(unit, 'power', params.value, params.duration || 1, unitId);
+      this.showPassiveActivation(unit, passive.name, 0xffaa77);
     }
     
     // Defending: +mass or +defense
     if (triggerCondition === 'defending' && this.isDefending(unit)) {
       if (passive.name === 'Био-крепость') {
         this.applyBuff(unit, 'mass', params.value || 0.30, 1, unitId);
+        this.showPassiveActivation(unit, passive.name, 0x88ff99);
       }
     }
     
     // Own half: +defense
     if (triggerCondition === 'own_half' && this.isOnOwnHalf(unit)) {
       this.applyBuff(unit, 'defense', params.value || 0.15, 1, unitId);
+      this.showPassiveActivation(unit, passive.name, 0x99bbff);
     }
     
     // After swap: +defense
     if (triggerCondition === 'after_swap' && params.value) {
       this.applyBuff(unit, 'defense', params.value, params.duration || 2, unitId);
+      this.showPassiveActivation(unit, passive.name, 0xaabbee);
     }
     
     // No goal in 3 turns: +power
     if (triggerCondition === 'no_goal_3_turns' && params.value) {
       this.applyBuff(unit, 'power', params.value, 1, unitId);
+      this.showPassiveActivation(unit, passive.name, 0xffdd66);
+    }
+
+    // Общий случай: пропущенный гол (если появятся баффы с value в данных)
+    if (triggerCondition === 'goal_conceded' && typeof params.value === 'number') {
+      this.applyBuff(unit, 'defense', params.value, params.duration || 2, unitId);
+      this.showPassiveActivation(unit, passive.name, 0xff8888);
     }
   }
   

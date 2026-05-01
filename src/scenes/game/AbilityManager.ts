@@ -713,6 +713,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
         'magma_lava'
       );
       radiusMultiplier += enhancement.radiusBonus;
+      this.passiveManager.notifyCardEnhancement(activeUnit.getUnitId(), 'magma_lava');
     }
     
     this.lavaIdCounter++;
@@ -864,6 +865,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       const enhancement = this.passiveManager.getCardEnhancement(unitId, 'cyborg_shield');
       radiusMultiplier += enhancement.radiusBonus;
       durationBonus = enhancement.durationBonus;
+      this.passiveManager.notifyCardEnhancement(unitId, 'cyborg_shield');
     }
     
     const baseRadius = ABILITY_CONFIG.CYBORG_SHIELD_RADIUS || 60;
