@@ -1,6 +1,7 @@
 // src/scenes/game/types.ts
 
 import { PlayerNumber, AIDifficulty, FieldBounds } from '../../types';
+import type { AIOpponentProfile } from '../../ai/AIProfile';
 import { FactionId, CapClassStats, CapClass, FactionArena, FactionConfig, UnitStatus } from '../../constants/gameConstants';
 import { GameStartData, PvPPlayer } from '../../managers/MultiplayerManager';
 import { Formation } from '../../data/PlayerData';
@@ -38,6 +39,9 @@ export interface GameSceneData {
   isAI?: boolean; // true если против бота (для лиги/турнира)
   /** Число (1–10, 0–1), строка уровня или `expert` из лиги — нормализуется в GameSceneSetup */
   aiDifficulty?: number | string;
+
+  /** Явный профиль бота (иначе выводится из имени/режима в GameSceneSetup) */
+  aiOpponentProfile?: AIOpponentProfile;
   
   // ✅ NEW PVP Mode
   mode?: 'pvp' | 'campaign' | 'casual';
@@ -147,6 +151,8 @@ export interface GameSceneState {
   isPvPMode: boolean;
   isAIEnabled: boolean;
   aiDifficulty: AIDifficulty;
+  /** Виртуальный «аккаунт» соперника: бедный / обычный / донатер */
+  aiOpponentProfile?: AIOpponentProfile;
   useFactions: boolean;
   
   playerFaction: FactionId;

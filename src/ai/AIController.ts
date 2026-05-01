@@ -10,6 +10,8 @@ import { AbilityScorer, AIUnit, CardScore, GameState } from './scoring/AbilitySc
 import { CardDefinition, getCardsByFaction } from '../data/CardsCatalog';
 import { getAIFormationsForTeamSize, getDefaultAIFormation } from './AIFormations';
 import { AIUtils } from './AIUtils';
+import type { AIOpponentProfile } from './AIProfile';
+import { getProfileCardModifiers, getProfilePlaystyleNoise } from './AIProfile';
 
 // === ТИПЫ ===
 
@@ -81,9 +83,9 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
     shotPower: { min: 0.65, max: 0.9 },
     formationAdaptation: true,
     useClassAbilities: true,
-    cardUsageChance: 0.3,
-    minCardScore: 60,
-    maxCardsPerMatch: 2,
+    cardUsageChance: 0.42,
+    minCardScore: 38,
+    maxCardsPerMatch: 3,
   },
   hard: {
     reactionTime: { min: 300, max: 500 },
@@ -93,9 +95,9 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
     shotPower: { min: 0.8, max: 1.0 },
     formationAdaptation: true,
     useClassAbilities: true,
-    cardUsageChance: 0.5,
-    minCardScore: 40,
-    maxCardsPerMatch: 3,
+    cardUsageChance: 0.58,
+    minCardScore: 26,
+    maxCardsPerMatch: 4,
   },
   impossible: {
     reactionTime: { min: 100, max: 300 },
@@ -105,9 +107,9 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
     shotPower: { min: 0.9, max: 1.0 },
     formationAdaptation: true,
     useClassAbilities: true,
-    cardUsageChance: 0.75, // Very high card usage
-    minCardScore: 20,
-    maxCardsPerMatch: 6,   // Maximum cards
+    cardUsageChance: 0.82,
+    minCardScore: 12,
+    maxCardsPerMatch: 8,
   },
 };
 
@@ -159,7 +161,11 @@ export class AIController {
   
   // ✅ ADDED: Boss tracking
   private bossId?: string;
-  
+
+  private profile: AIOpponentProfile;
+  private profileCardMods: ReturnType<typeof getProfileCardModifiers>;
+  private profileNoise: ReturnType<typeof getProfilePlaystyleNoise>;
+
   private moveCompleteCallback?: () => void;
   private thinkingTimer?: Phaser.Time.TimerEvent;
   
@@ -168,14 +174,18 @@ export class AIController {
   private lastMoveTime = 0;
   private readonly MOVE_COOLDOWN = 800;
 
-  constructor(scene: Phaser.Scene, difficulty: AIDifficultyInput = 'medium') {
+  constructor(scene: Phaser.Scene, difficulty: AIDifficultyInput = 'medium', profile?: AIOpponentProfile) {
     this.scene = scene;
     this.difficulty = normalizeGameAIDifficulty(difficulty);
     this.settings = { ...DIFFICULTY_SETTINGS[this.difficulty] };
 
+    this.profile = profile ?? { tier: 'standard', seed: 0 };
+    this.profileCardMods = getProfileCardModifiers(this.profile.tier);
+    this.profileNoise = getProfilePlaystyleNoise(this.profile.seed);
+
     this.calculateFieldBounds();
 
-    console.log(`[AI] 🤖 Created: ${this.difficulty}`);
+    console.log(`[AI] 🤖 Created: ${this.difficulty}, profile=${this.profile.tier}`);
   }
 
   private calculateFieldBounds(): void {
@@ -319,7 +329,23 @@ export class AIController {
         break;
     }
 
+    if (this.settings.maxCardsPerMatch > 0 && !this.bossId) {
+      this.appendBonusCardsFromFaction(this.profileCardMods.bonusPickCount);
+    }
+
     this.cardsUsedThisMatch = 0;
+  }
+
+  /** Дополнительные карты «донатного» профиля и разнообразие колоды */
+  private appendBonusCardsFromFaction(count: number): void {
+    if (count <= 0) return;
+    const have = new Set(this.availableCards.map(c => c.id));
+    const pool = getCardsByFaction(this.factionId).filter(c => !have.has(c.id));
+    const shuffled = Phaser.Utils.Array.Shuffle([...pool]);
+    for (let i = 0; i < count && i < shuffled.length; i++) {
+      this.availableCards.push(shuffled[i]);
+      have.add(shuffled[i].id);
+    }
   }
 
   // ⭐ NEW: Коллбэк для использования карты
@@ -403,7 +429,14 @@ export class AIController {
     } else if (diff === -1 && this.state.turnsSinceLastGoal > 5) {
       formationType = 'counter';
     } else {
-      formationType = 'balanced';
+      const roll = (Math.abs(this.profile.seed) + this.state.turnsSinceLastGoal * 11) % 100;
+      if (roll < 24 && formations.counter) {
+        formationType = 'counter';
+      } else if (roll < 40 && formations.aggressive && diff >= -1) {
+        formationType = 'aggressive';
+      } else {
+        formationType = 'balanced';
+      }
     }
 
     const newFormation = formations[formationType] || formations.balanced;
@@ -441,7 +474,11 @@ export class AIController {
     
     this.isThinking = true;
     this.state.turnsSinceLastGoal++;
-    
+
+    if (this.settings.formationAdaptation) {
+      this.selectFormation();
+    }
+
     const delay = Phaser.Math.Between(
       this.settings.reactionTime.min,
       this.settings.reactionTime.max
@@ -527,10 +564,10 @@ export class AIController {
       return Math.random() < 0.7;
     }
 
-    let chance = this.settings.cardUsageChance;
+    let chance = this.settings.cardUsageChance * this.profileCardMods.cardUsageMultiplier;
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
     if (bunker > 0.58) {
-      chance = Math.min(0.92, chance + 0.22);
+      chance = Math.min(0.95, chance + 0.22);
     }
 
     return Math.random() < chance;
@@ -541,16 +578,17 @@ export class AIController {
     const gameState = this.buildGameState();
 
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
-    const minScore =
-      this.difficulty === 'easy'
-        ? this.settings.minCardScore
-        : this.settings.minCardScore * (bunker > 0.55 ? 0.58 : 1);
+    const preferred = Math.max(
+      6,
+      Math.floor(this.settings.minCardScore * this.profileCardMods.minScoreMultiplier * (bunker > 0.55 ? 0.85 : 1))
+    );
 
-    const bestCard = AbilityScorer.getBestCard(
+    const bestCard = AbilityScorer.pickBestExecutableCardForAI(
       this.availableCards,
       gameState,
       this.factionId,
-      minScore
+      preferred,
+      5
     );
     
     if (!bestCard) {
@@ -592,7 +630,7 @@ export class AIController {
     const danger = AIUtils.evaluateDangerLevel(this.ball, this.fieldBounds, true);
     const attackOpportunity = AIUtils.evaluateAttackOpportunity(this.ball, this.fieldBounds, true);
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
-    const bunkerAttackBoost = 1 + bunker * 0.62;
+    const bunkerAttackBoost = (1 + bunker * 0.62) * (1 + this.profileNoise.bunkerOffset * 0.35);
 
     for (const unit of this.aiUnits) {
       const goal = this.evaluateGoalShot(unit);
@@ -620,7 +658,7 @@ export class AIController {
         candidates.push(defend);
       }
 
-      if (Math.random() < this.settings.passChance) {
+      if (Math.random() < Phaser.Math.Clamp(this.settings.passChance + this.profileNoise.passOffset, 0, 0.92)) {
         const pass = this.evaluatePass(unit);
         if (pass) {
           if (danger > 0.8) {
@@ -700,7 +738,8 @@ export class AIController {
     }
     
     score *= (0.5 + this.state.aggression * 0.5);
-    
+    score *= 1 + this.profileNoise.aggressionOffset * 0.28;
+
     // ✅ BOSS OVERRIDES
     if (this.bossId === 'boss_krag') {
       score *= 1.5; // Krag always wants to shoot

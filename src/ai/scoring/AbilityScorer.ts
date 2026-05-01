@@ -696,4 +696,89 @@ export class AbilityScorer {
 
     return false;
   }
+
+  /** Цели для AI: всегда валидны для AbilityManager.applyCard */
+  private static finalizeAITargetData(card: CardDefinition, score: CardScore, state: GameState): CardScore | null {
+    const ballPos = state.ball.getPosition();
+    const td = { ...(score.targetData || {}) };
+
+    switch (card.targetType) {
+      case 'none':
+        return { ...score, targetData: Object.keys(td).length ? td : undefined };
+
+      case 'point': {
+        let pos = td.position;
+        if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') {
+          pos = {
+            x: Phaser.Math.Clamp(ballPos.x, state.fieldBounds.left + 48, state.fieldBounds.right - 48),
+            y: Phaser.Math.Clamp(
+              (ballPos.y + state.playerGoalY) / 2,
+              state.fieldBounds.top + 40,
+              state.fieldBounds.bottom - 40
+            ),
+          };
+        }
+        return { ...score, targetData: { ...td, position: pos } };
+      }
+
+      case 'unit_self': {
+        let ids = td.unitIds;
+        if (!ids?.length && state.aiUnits.length) {
+          const pick = this.getClosestUnitToPoint(state.aiUnits, ballPos) ?? state.aiUnits[0];
+          ids = [pick.id];
+        }
+        if (!ids?.length) return null;
+        return { ...score, targetData: { ...td, unitIds: ids } };
+      }
+
+      case 'unit_enemy': {
+        let ids = td.unitIds;
+        if (!ids?.length && state.playerUnits.length) {
+          const pick = this.getClosestUnitToPoint(state.playerUnits, ballPos) ?? state.playerUnits[0];
+          ids = [pick.id];
+        }
+        if (!ids?.length) return null;
+        return { ...score, targetData: { ...td, unitIds: ids } };
+      }
+
+      case 'unit_ally_pair': {
+        let ids = td.unitIds?.filter(Boolean);
+        if (!ids || ids.length < 2) {
+          if (state.aiUnits.length < 2) return null;
+          ids = [state.aiUnits[0].id, state.aiUnits[1].id];
+        }
+        return { ...score, targetData: { ...td, unitIds: ids } };
+      }
+
+      default:
+        return null;
+    }
+  }
+
+  /** Лучшая карта с гарантированно заполненными целями под applyCard. */
+  public static pickBestExecutableCardForAI(
+    availableCards: CardDefinition[],
+    state: GameState,
+    factionId: FactionId,
+    preferredMinScore: number,
+    absoluteFloor: number = 8
+  ): CardScore | null {
+    const scored = this.evaluateCards(availableCards, state, factionId);
+    const ready: CardScore[] = [];
+
+    for (const s of scored) {
+      const fixed = this.finalizeAITargetData(s.card, s, state);
+      if (fixed) ready.push(fixed);
+    }
+
+    if (!ready.length) return null;
+
+    ready.sort((a, b) => b.score - a.score);
+    const best = ready[0];
+
+    if (best.score >= preferredMinScore) return best;
+    if (best.score >= absoluteFloor) return best;
+
+    return null;
+  }
 }

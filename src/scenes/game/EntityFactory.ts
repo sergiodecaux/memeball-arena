@@ -16,6 +16,8 @@ import {
 import { Formation, playerData, DEFAULT_FORMATIONS, CapUpgrades, STARTER_UNITS_BY_FACTION } from '../../data/PlayerData';
 import { AIDifficulty } from '../../types';
 import { getAIFormationsForTeamSize, getDefaultAIFormation } from '../../ai/AIFormations';
+import type { AIOpponentProfile } from '../../ai/AIProfile';
+import { getProfileCardModifiers } from '../../ai/AIProfile';
 import { GameStartData, MultiplayerManager, PvPPlayer } from '../../managers/MultiplayerManager';
 import { getUnit, getStarterUnits, UnitData, TUTORIAL_LEGENDARY_UNITS } from '../../data/UnitsCatalog';
 import { UNITS_REPOSITORY, UnitRarity, getUnitById as getRepositoryUnit, getUnitsByFactionAndRole } from '../../data/UnitsRepository';
@@ -46,6 +48,8 @@ export interface EntityFactoryConfig {
   bossUnitId?: string;
   // ✅ NEW: Tutorial match flag
   isTutorialMatch?: boolean;  // Флаг обучающего матча
+  /** Профиль экономики бота — смещение раритетности юнитов */
+  aiProfile?: AIOpponentProfile;
 }
 
 export class EntityFactory {
@@ -456,7 +460,10 @@ export class EntityFactory {
       return this.getDefaultTeam(factionId, teamSize);
     }
 
-    const rarityPool = this.getRarityPoolForDifficulty(difficulty);
+    const rarityPool = this.getRarityPoolForDifficulty(
+      difficulty,
+      this.config.aiProfile ? getProfileCardModifiers(this.config.aiProfile.tier).rarityWeightShift : 0
+    );
     const factionUnits = UNITS_REPOSITORY.filter(u => u.factionId === factionId);
     const roles = this.pickAIRoleSlots(teamSize);
     const team: string[] = [];
@@ -494,33 +501,47 @@ export class EntityFactory {
   /**
    * ⭐ NEW: Возвращает пул рарностей с вероятностями для сложности
    */
-  private getRarityPoolForDifficulty(difficulty: AIDifficulty): { rarity: UnitRarity; weight: number }[] {
+  private getRarityPoolForDifficulty(difficulty: AIDifficulty, rarityShift = 0): { rarity: UnitRarity; weight: number }[] {
+    const skew = (pool: { rarity: UnitRarity; weight: number }[]) => {
+      if (!rarityShift) return pool;
+      const dir = rarityShift > 0 ? 1 : -1;
+      const mag = Math.abs(rarityShift);
+      return pool.map((p) => {
+        let w = p.weight;
+        if (p.rarity === 'common') w = Math.max(8, w - dir * mag * 0.35);
+        if (p.rarity === 'rare') w = Math.max(5, w + dir * mag * 0.2);
+        if (p.rarity === 'epic') w = Math.max(5, w + dir * mag * 0.35);
+        if (p.rarity === 'legendary') w = Math.max(4, w + dir * mag * 0.28);
+        return { rarity: p.rarity, weight: w };
+      });
+    };
+
     switch (difficulty) {
       case 'easy':
-        return [{ rarity: 'common', weight: 100 }];
-      
+        return skew([{ rarity: 'common', weight: 100 }]);
+
       case 'medium':
-        return [
+        return skew([
           { rarity: 'common', weight: 60 },
           { rarity: 'rare', weight: 40 },
-        ];
-      
+        ]);
+
       case 'hard':
-        return [
+        return skew([
           { rarity: 'common', weight: 10 },
           { rarity: 'rare', weight: 50 },
           { rarity: 'epic', weight: 40 },
-        ];
-      
+        ]);
+
       case 'impossible':
-        return [
+        return skew([
           { rarity: 'rare', weight: 20 },
           { rarity: 'epic', weight: 50 },
           { rarity: 'legendary', weight: 30 },
-        ];
-      
+        ]);
+
       default:
-        return [{ rarity: 'common', weight: 100 }];
+        return skew([{ rarity: 'common', weight: 100 }]);
     }
   }
 

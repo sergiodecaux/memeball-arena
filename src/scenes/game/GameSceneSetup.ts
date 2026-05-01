@@ -6,6 +6,7 @@
 import Phaser from 'phaser';
 import { FIELD, GOAL, COLLISION_CATEGORIES, GAME, FACTIONS, FactionId, getFactionArena, WALL_PHYSICS } from '../../constants/gameConstants';
 import { FieldBounds, PlayerNumber, normalizeGameAIDifficulty } from '../../types';
+import { deriveAIProfileFromKey } from '../../ai/AIProfile';
 import { Unit } from '../../entities/Unit';
 import { Ball } from '../../entities/Ball';
 import { playerData } from '../../data/PlayerData';
@@ -238,6 +239,10 @@ export class GameSceneSetup {
     state.matchRemainingTime = state.matchDuration;
     state.fieldSkinId = playerData.get().equippedFieldSkin || 'field_default';
 
+    state.aiOpponentProfile = deriveAIProfileFromKey(
+      `campaign|${levelConfig.id}|${levelConfig.aiDifficulty}`
+    );
+
     console.log(`[GameSceneSetup] Campaign Level: ${levelConfig.name}, AI: ${levelConfig.aiDifficulty}`);
   }
 
@@ -290,7 +295,9 @@ export class GameSceneSetup {
       {
         const raw = data?.aiDifficulty ?? data?.difficulty;
         state.aiDifficulty = normalizeGameAIDifficulty(raw, 'medium');
-        console.log(`[GameSceneSetup] AI difficulty normalized: ${raw} → ${state.aiDifficulty}`);
+        const profileKey = `${data?.opponentName ?? 'cpu'}|${state.aiDifficulty}|${data?.matchContext ?? 'casual'}`;
+        state.aiOpponentProfile = data?.aiOpponentProfile ?? deriveAIProfileFromKey(profileKey);
+        console.log(`[GameSceneSetup] AI difficulty normalized: ${raw} → ${state.aiDifficulty}, profile: ${state.aiOpponentProfile?.tier}`);
       }
       state.matchDuration = data?.matchDuration ?? GAME.DEFAULT_MATCH_DURATION;
       state.fieldSkinId = playerData.get().equippedFieldSkin || 'field_default';
@@ -498,6 +505,7 @@ export class GameSceneSetup {
         : undefined,
       // ✅ NEW: Tutorial match flag
       isTutorialMatch: isTutorialMatch,
+      aiProfile: state.aiOpponentProfile,
     });
 
     const ballResult = factory.createBall();

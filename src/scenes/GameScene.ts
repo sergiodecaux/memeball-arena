@@ -3,7 +3,7 @@
 
 import Phaser from 'phaser';
 import { GAME, GOAL, FactionId } from '../constants/gameConstants';
-import { FieldBounds, PlayerNumber } from '../types';
+import { FieldBounds, PlayerNumber, AIDifficulty } from '../types';
 import { Unit } from '../entities/Unit';
 import { Ball } from '../entities/Ball';
 import { FieldRenderer } from '../renderers/FieldRenderer';
@@ -25,6 +25,7 @@ import { MatchStateMachine, MatchPhase } from '../core/MatchStateMachine';
 import { MatchDirector } from '../controllers/match/MatchDirector';
 import { ShootingController, ShootEventData } from '../controllers/ShootingController';
 import { AIController } from '../ai/AIController';
+import type { AIOpponentProfile } from '../ai/AIProfile';
 
 // Game modules
 import { GameSceneSetup, GameSceneSetupResult } from './game/GameSceneSetup';
@@ -190,6 +191,9 @@ export class GameScene extends Phaser.Scene {
   private isAIEnabled = false;
   private aiTurnScheduled = false;
   private lastSyncedAIFormationId?: string;
+  /** Сложность матча из GameSceneSetup (лига/кастом/кампания), не только кампания */
+  private matchAIDifficulty: AIDifficulty = 'medium';
+  private aiOpponentProfile?: AIOpponentProfile;
 
   // === Р’РЅСѓС‚СЂРµРЅРЅРёРµ С„Р»Р°РіРё ===
   private lastShootingCap?: GameUnit;
@@ -300,6 +304,8 @@ export class GameScene extends Phaser.Scene {
     this.selectedCapId = undefined;
     this.aiTurnScheduled = false;
     this.lastSyncedAIFormationId = undefined;
+    this.matchAIDifficulty = 'medium';
+    this.aiOpponentProfile = undefined;
     this.isAbilityInputActive = false;
     
     // ✅ NEW: Поддержка skipIntro (если пришли из MatchVSScene)
@@ -652,6 +658,8 @@ export class GameScene extends Phaser.Scene {
     this.isAIEnabled = result.state.isAIEnabled;
     this.storedPlayerFaction = result.state.playerFaction as FactionId;
     this.storedOpponentFaction = result.state.opponentFaction as FactionId;
+    this.matchAIDifficulty = result.state.aiDifficulty;
+    this.aiOpponentProfile = result.state.aiOpponentProfile;
     
     // ✅ NEW PVP: Регистрируем сущности в PvPHelper
     if (this.isRealtimePvP && this.pvpHelper) {
@@ -806,33 +814,35 @@ export class GameScene extends Phaser.Scene {
     this.shootingController.onCapSelected(this.onCapSelected.bind(this));
     this.shootingController.onShoot(this.onShoot.bind(this));
     this.shootingController.onSwap(this.onSwap.bind(this));
+  }
 
-    if (this.isAIEnabled && !this.isRealtimePvP) {
-      const state = this.getState();
-      this.aiController = new AIController(this, state.aiDifficulty);
+  /** После AbilityManager P2 — колбэк карт и корректный init ИИ */
+  private setupAIController(): void {
+    if (!this.isAIEnabled || this.isRealtimePvP) return;
 
-      const aiUnits = this.caps.filter(c => c.owner === 2);
-      const playerUnits = this.caps.filter(c => c.owner === 1);
+    this.aiController = new AIController(this, this.matchAIDifficulty, this.aiOpponentProfile);
 
-      this.aiController.init(aiUnits as any[], this.ball, playerUnits as any[]);
+    const aiUnits = this.caps.filter(c => c.owner === 2);
+    const playerUnits = this.caps.filter(c => c.owner === 1);
 
-      // вњ… NEW: Wire AI card callback to AbilityManager
-      this.aiController.setCardUsedCallback((cardId, targetData) => {
-        console.log(`[GameScene] AI using card: ${cardId}`, targetData);
-        if (this.player2AbilityManager) {
-          // Delegate to AbilityManager for actual effect
-          this.player2AbilityManager.handleAICardUsage(cardId, targetData);
-        }
-      });
+    this.aiController.init(aiUnits as any[], this.ball, playerUnits as any[]);
 
-      this.aiController.onMoveComplete(() => {
-        this.aiTurnScheduled = false;
-        this.matchDirector.onShot('ai_unit');
-      });
+    this.aiController.setCardUsedCallback((cardId, targetData) => {
+      console.log(`[GameScene] AI using card: ${cardId}`, targetData);
+      if (this.player2AbilityManager) {
+        this.player2AbilityManager.handleAICardUsage(cardId, targetData);
+      } else {
+        console.warn('[GameScene] player2AbilityManager missing — AI card skipped');
+      }
+    });
 
-      this.syncAIFormationPositions('match-start');
-      this.lastSyncedAIFormationId = this.aiController.getCurrentFormation().id;
-    }
+    this.aiController.onMoveComplete(() => {
+      this.aiTurnScheduled = false;
+      this.matchDirector.onShot('ai_unit');
+    });
+
+    this.syncAIFormationPositions('match-start');
+    this.lastSyncedAIFormationId = this.aiController.getCurrentFormation().id;
   }
 
   private createManagers(): void {
@@ -894,7 +904,10 @@ export class GameScene extends Phaser.Scene {
     // Подключаем PassiveManager ко всем системам
     this.shootingController.setPassiveManager(this.passiveManager);
     this.abilityManager.setPassiveManager(this.passiveManager);
+    this.player2AbilityManager?.setPassiveManager(this.passiveManager);
     this.collisionHandler.setPassiveManager(this.passiveManager);
+
+    this.setupAIController();
     
     // Initialize CampaignDialogueSystem for campaign mode
     if (this.isCampaignMode && this.campaignLevelConfig) {
@@ -3602,7 +3615,7 @@ export class GameScene extends Phaser.Scene {
       playerFaction: pFaction,
       opponentFaction: oFaction,
       useFactions: !!playerData.getFaction(),
-      aiDifficulty: this.campaignLevelConfig?.aiDifficulty || 'medium',
+      aiDifficulty: this.campaignLevelConfig?.aiDifficulty ?? this.matchAIDifficulty ?? 'medium',
       fieldSkinId: playerData.get().equippedFieldSkin || 'field_default',
       currentArena: undefined,
       isPvPMode: this.isRealtimePvP,
