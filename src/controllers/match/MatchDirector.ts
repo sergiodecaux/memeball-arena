@@ -811,7 +811,7 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
       xpEarned: rewards.xpEarned,
       coinsEarned: rewards.coinsEarned,
       isPerfectGame: rewards.isPerfectGame,
-      newAchievements: rewards.newAchievements,
+      newAchievements: rewards.newAchievements ?? [],
       reason,
       matchDuration: matchStats.matchDurationSeconds,
       // ✅ ИСПРАВЛЕНО: Mastery XP информация для UI

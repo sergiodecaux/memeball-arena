@@ -54,11 +54,18 @@ export class ResultScreen {
     this.scene = scene;
     this.callbacks = callbacks;
     this.opponentData = opponentData; // ✅ Сохраняем данные противника
+
+    const safeResult: MatchResult = {
+      ...result,
+      newAchievements: Array.isArray(result.newAchievements) ? result.newAchievements : [],
+      playerGoals: result.playerGoals ?? 0,
+      opponentGoals: result.opponentGoals ?? 0,
+    };
     
     // Determine theme
-    if (result.isWin) {
+    if (safeResult.isWin) {
       this.theme = 'victory';
-    } else if (result.isDraw) {
+    } else if (safeResult.isDraw) {
       this.theme = 'draw';
     } else {
       this.theme = 'defeat';
@@ -87,12 +94,12 @@ export class ResultScreen {
     this.createBackgroundEffects();
     
     // ✅ FIX: Special screen for tutorial completion
-    if (result.isCampaign && result.levelName === '1-1' && result.isWin) {
-      this.createTutorialResult(result);
-    } else if (result.isCampaign) {
-      this.createCampaignResult(result);
+    if (safeResult.isCampaign && safeResult.levelName === '1-1' && safeResult.isWin) {
+      this.createTutorialResult(safeResult);
+    } else if (safeResult.isCampaign) {
+      this.createCampaignResult(safeResult);
     } else {
-      this.createStandardResult(result, isAIMode);
+      this.createStandardResult(safeResult, isAIMode);
     }
     
     // Animate entrance
@@ -1088,9 +1095,10 @@ export class ResultScreen {
     panelWidth: number
   ): void {
     const fonts = getFonts();
-    
+    const list = Array.isArray(achievements) ? achievements : [];
+
     if (import.meta.env.DEV) {
-      console.debug('[ResultScreen] Creating achievements section', { y, achievementsCount: achievements.length, panelWidth });
+      console.debug('[ResultScreen] Creating achievements section', { y, achievementsCount: list.length, panelWidth });
     }
     
     // Определяем цвет по редкости
@@ -1114,8 +1122,8 @@ export class ResultScreen {
     
     // Показываем максимум 2 строки — иначе перекрывают кнопки и сливаются иконки
     const maxDisplay = 2;
-    const displayAchievements = achievements.slice(0, maxDisplay);
-    const remainingCount = Math.max(0, achievements.length - maxDisplay);
+    const displayAchievements = list.slice(0, maxDisplay);
+    const remainingCount = Math.max(0, list.length - maxDisplay);
     const heightPerAchievement = 48;
     const totalHeight = displayAchievements.length * heightPerAchievement + 22;
     
@@ -1178,7 +1186,7 @@ export class ResultScreen {
         const sy = cap / Math.max(iconObject.height, 1);
         iconObject.setScale(Math.min(sx, sy));
       } else {
-        iconObject = this.scene.add.text(iconX, achY, ach.icon, {
+        iconObject = this.scene.add.text(iconX, achY, ach.icon ?? '🏆', {
           fontSize: '13px',
         });
       }
@@ -1187,7 +1195,7 @@ export class ResultScreen {
       
       // ✅ УЛУЧШЕНО: Название достижения с тенью для читаемости
       const textStartX = iconX + 14;
-      const achName = this.scene.add.text(textStartX, achY - 6, ach.name, {
+      const achName = this.scene.add.text(textStartX, achY - 6, ach.name ?? '', {
         fontSize: '10px',
         fontFamily: fonts.tech,
         color: '#ffffff',
@@ -1200,7 +1208,7 @@ export class ResultScreen {
       achContainer.add(achName);
       
       // ✅ УЛУЧШЕНО: Описание с тенью для читаемости
-      const achDesc = this.scene.add.text(textStartX, achY + 8, ach.description, {
+      const achDesc = this.scene.add.text(textStartX, achY + 8, ach.description ?? '', {
         fontSize: '8px',
         fontFamily: fonts.tech,
         color: '#cccccc',

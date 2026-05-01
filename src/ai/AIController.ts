@@ -363,10 +363,7 @@ export class AIController {
     this.state.playerScore = playerScore;
     this.state.aiScore = aiScore;
     this.updateAggression();
-    
-    if (this.settings.formationAdaptation) {
-      this.selectFormation();
-    }
+    // Формация меняется только после гола (recordGoal), не между ходами
   }
 
   recordGoal(scoredBy: 'player' | 'ai'): void {
@@ -475,9 +472,7 @@ export class AIController {
     this.isThinking = true;
     this.state.turnsSinceLastGoal++;
 
-    if (this.settings.formationAdaptation) {
-      this.selectFormation();
-    }
+    // Схема не пересчитывается во время хода — только после забитого гола (recordGoal)
 
     const delay = Phaser.Math.Between(
       this.settings.reactionTime.min,
