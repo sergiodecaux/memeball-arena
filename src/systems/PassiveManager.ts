@@ -16,9 +16,11 @@ import {
   PassiveCondition 
 } from '../types/passives';
 import { eventBus, GameEvents } from '../core/EventBus';
+import type { FieldBounds } from '../types';
 
 export class PassiveManager extends Phaser.Events.EventEmitter {
   private scene: Phaser.Scene;
+  private readonly getFieldBounds: () => FieldBounds;
   private state: MatchPassiveState;
   private units: Map<string, Unit> = new Map();
   private ball: Ball | null = null;
@@ -34,9 +36,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private readonly boundOnTurnStarted = this.onTurnStarted.bind(this);
   private readonly boundOnTurnEnded = this.onTurnEnded.bind(this);
   
-  constructor(scene: Phaser.Scene, _playerId?: number) {
+  constructor(scene: Phaser.Scene, getFieldBounds: () => FieldBounds) {
     super();
     this.scene = scene;
+    this.getFieldBounds = getFieldBounds;
     this.state = this.createInitialState();
     this.setupEventListeners();
   }
@@ -115,7 +118,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     });
   }
   
-  private onTurnStarted(data: { turn: number; playerId: number }): void {
+  private onTurnStarted(_data: { player?: number; turnNumber?: number }): void {
     this.state.turnsSinceLastGoal++;
     
     // Обновляем ауры
@@ -132,7 +135,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     }
   }
   
-  private onTurnEnded(data: { turn: number }): void {
+  private onTurnEnded(_data: { player?: number; turnNumber?: number }): void {
     // Уменьшаем длительность эффектов
     this.tickEffectDurations();
   }
@@ -691,9 +694,9 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   private isOnEnemyHalf(unit: Unit): boolean {
-    const fieldWidth = this.scene.scale.width;
+    const b = this.getFieldBounds();
     const isPlayer1 = unit.owner === 1;
-    return isPlayer1 ? unit.x > fieldWidth / 2 : unit.x < fieldWidth / 2;
+    return isPlayer1 ? unit.y < b.centerY : unit.y > b.centerY;
   }
   
   private isOnOwnHalf(unit: Unit): boolean {
@@ -701,10 +704,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   private isDefending(unit: Unit): boolean {
-    const fieldWidth = this.scene.scale.width;
+    const b = this.getFieldBounds();
+    const zone = b.height * 0.2;
     const isPlayer1 = unit.owner === 1;
-    const goalZone = fieldWidth * 0.2;
-    return isPlayer1 ? unit.x < goalZone : unit.x > fieldWidth - goalZone;
+    return isPlayer1 ? unit.y > b.bottom - zone : unit.y < b.top + zone;
   }
   
   private getUnitsInRadius(centerUnit: Unit, radius: number): Unit[] {
@@ -905,15 +908,14 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   private scheduleUnitTeleport(unit: Unit): void {
-    const fieldWidth = this.scene.scale.width;
-    const fieldHeight = this.scene.scale.height;
+    const b = this.getFieldBounds();
     const isPlayer1 = unit.owner === 1;
-    
-    // Random position on own half
-    const x = isPlayer1 
-      ? Phaser.Math.Between(50, fieldWidth / 2 - 50)
-      : Phaser.Math.Between(fieldWidth / 2 + 50, fieldWidth - 50);
-    const y = Phaser.Math.Between(50, fieldHeight - 50);
+    const padX = Math.min(48, b.width * 0.08);
+    const padY = Math.min(48, b.height * 0.08);
+    const x = Phaser.Math.Between(b.left + padX, b.right - padX);
+    const y = isPlayer1
+      ? Phaser.Math.Between(b.centerY + padY, b.bottom - padY)
+      : Phaser.Math.Between(b.top + padY, b.centerY - padY);
     
     eventBus.dispatch(GameEvents.UNIT_TELEPORT, {
       unitId: unit.getUnitId(),
@@ -933,12 +935,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     if (enemies.length === 0) return;
     
     const randomEnemy = enemies[Math.floor(Math.random() * enemies.length)];
-    const fieldWidth = this.scene.scale.width;
-    const fieldHeight = this.scene.scale.height;
-    
-    // Random position anywhere
-    const x = Phaser.Math.Between(100, fieldWidth - 100);
-    const y = Phaser.Math.Between(100, fieldHeight - 100);
+    const b = this.getFieldBounds();
+    const pad = Math.min(56, b.width * 0.07);
+    const x = Phaser.Math.Between(b.left + pad, b.right - pad);
+    const y = Phaser.Math.Between(b.top + pad, b.bottom - pad);
     
     eventBus.dispatch(GameEvents.UNIT_TELEPORT, {
       unitId: randomEnemy.getUnitId(),
@@ -948,12 +948,11 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   private teleportToOwnGoal(unit: Unit): void {
-    const fieldWidth = this.scene.scale.width;
-    const fieldHeight = this.scene.scale.height;
+    const b = this.getFieldBounds();
     const isPlayer1 = unit.owner === 1;
-    
-    const x = isPlayer1 ? 80 : fieldWidth - 80;
-    const y = fieldHeight / 2;
+    const inset = Math.min(72, b.height * 0.12);
+    const x = b.centerX + Phaser.Math.Between(-b.width * 0.12, b.width * 0.12);
+    const y = isPlayer1 ? b.bottom - inset : b.top + inset;
     
     eventBus.dispatch(GameEvents.UNIT_TELEPORT, {
       unitId: unit.getUnitId(),
@@ -989,12 +988,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   private createLavaAtCenter(): void {
-    const fieldWidth = this.scene.scale.width;
-    const fieldHeight = this.scene.scale.height;
-    
+    const b = this.getFieldBounds();
     eventBus.dispatch(GameEvents.CREATE_LAVA_POOL, {
-      x: fieldWidth / 2,
-      y: fieldHeight / 2,
+      x: b.centerX,
+      y: b.centerY,
       fromPassive: true,
     });
   }

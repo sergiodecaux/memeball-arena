@@ -29,6 +29,7 @@ import { globalCleanup } from '../utils/GlobalCleanup';
 import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
 import { loadAudioMenu } from '../assets/loading/AudioLoader';
 import { addAssetLoadingBackdrop, destroyAssetLoadingBackdrop } from '../ui/AssetsLoadingBackdrop';
+import { LuckyWheelOverlay } from '../ui/menu/LuckyWheelOverlay';
 
 export class MainMenuScene extends Phaser.Scene {
   private s: number = 1;
@@ -44,6 +45,7 @@ export class MainMenuScene extends Phaser.Scene {
   private achievementManager?: any; // AchievementManager
   private battlePassBanner?: BattlePassBanner;
   private updateOverlay?: UpdateNotificationOverlay;
+  private luckyWheelOverlay?: LuckyWheelOverlay;
   /** Фон во время preload (до появления меню) */
   private preloadBackdropObjs: Phaser.GameObjects.GameObject[] = [];
 
@@ -107,6 +109,8 @@ export class MainMenuScene extends Phaser.Scene {
     this.achievementManager?.destroy();
     this.bottomNav?.destroy();
     this.battlePassBanner?.destroy();
+    this.luckyWheelOverlay?.destroy(true);
+    this.luckyWheelOverlay = undefined;
 
     this.background = undefined;
     this.header = undefined;
@@ -512,18 +516,18 @@ export class MainMenuScene extends Phaser.Scene {
   private createActionGrid(): void {
     const { width, height } = this.cameras.main;
     const s = this.s;
-    const gridY = height * 0.38; // Центр свободной зоны
+    const gridY = height * 0.38;
 
     const container = this.add.container(width / 2, gridY);
     this.mainContainer?.add(container);
 
-    const btnSize = 80 * s;
-    const gap = 20 * s;
+    const btnSize = 72 * s;
+    const gap = 12 * s;
+    const step = btnSize * 0.72 + gap;
 
-    // Кнопка ЗАДАЧИ (слева)
     this.createCircularActionButton(
       container,
-      -btnSize / 1.5 - gap,
+      -step,
       0,
       btnSize,
       'ЗАДАЧИ',
@@ -532,10 +536,20 @@ export class MainMenuScene extends Phaser.Scene {
       () => this.safeSceneStart('QuestsScene')
     );
 
-    // Кнопка КОЛЛЕКЦИЯ (справа)
     this.createCircularActionButton(
       container,
-      btnSize / 1.5 + gap,
+      0,
+      0,
+      btnSize,
+      'УДАЧА',
+      0xf59e0b,
+      '',
+      () => this.openLuckyWheel()
+    );
+
+    this.createCircularActionButton(
+      container,
+      step,
       0,
       btnSize,
       'КОЛЛЕКЦИЯ',
@@ -543,6 +557,18 @@ export class MainMenuScene extends Phaser.Scene {
       'icon_repository_sci',
       () => this.safeSceneStart('CollectionScene')
     );
+  }
+
+  private openLuckyWheel(): void {
+    if (this.luckyWheelOverlay) return;
+    AudioManager.getInstance().playUIClick();
+    hapticSelection();
+    this.luckyWheelOverlay = new LuckyWheelOverlay(this, () => {
+      this.luckyWheelOverlay = undefined;
+    });
+    this.luckyWheelOverlay.once('destroy', () => {
+      this.luckyWheelOverlay = undefined;
+    });
   }
 
   private createCircularActionButton(
@@ -566,10 +592,18 @@ export class MainMenuScene extends Phaser.Scene {
     bg.strokeRoundedRect(-size / 2, -size / 2, size, size, 16 * s);
     btn.add(bg);
 
-    if (this.textures.exists(iconKey)) {
+    if (iconKey && this.textures.exists(iconKey)) {
       const icon = this.add.image(0, -5 * s, iconKey);
       icon.setDisplaySize(size * 0.5, size * 0.5);
       btn.add(icon);
+    } else if (!iconKey) {
+      btn.add(
+        this.add
+          .text(0, -6 * s, '🎡', {
+            fontSize: `${30 * s}px`,
+          })
+          .setOrigin(0.5)
+      );
     } else {
       btn.add(this.add.circle(0, -5 * s, size * 0.2, color, 0.3));
     }

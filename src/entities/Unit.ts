@@ -198,14 +198,15 @@ export class Unit {
 
   /**
    * Активация способности юнита (вызывается из UI или контроллера)
+   * @param opts.fromAbilityCard — эффект с карты разрешён даже при кулдауне юнита (не обнуляет кулдаун заранее)
    */
-  public activateAbility(): boolean {
+  public activateAbility(opts?: { fromAbilityCard?: boolean }): boolean {
     if (this.status === UnitStatus.STUNNED) {
       console.log(`[Unit ${this.id}] Cannot activate ability while stunned`);
       return false;
     }
 
-    if (this.abilityCooldown > 0) {
+    if (!opts?.fromAbilityCard && this.abilityCooldown > 0) {
       console.log(`[Unit ${this.id}] Ability on cooldown: ${this.abilityCooldown} turns`);
       return false;
     }

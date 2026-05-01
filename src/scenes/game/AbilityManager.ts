@@ -180,6 +180,22 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     return aiCards;
   }
 
+  /** Первые уникальные карты из руки ИИ — чтобы колода P2 совпадала с AIController. */
+  public alignAIDeckFromHand(cardIds: string[]): void {
+    if (this.playerId !== 2) return;
+    const slots: CardSlot[] = [];
+    const seen = new Set<string>();
+    for (const id of cardIds) {
+      if (!id || seen.has(id)) continue;
+      if (!getCard(id)) continue;
+      seen.add(id);
+      slots.push({ cardId: id, used: false });
+      if (slots.length >= 3) break;
+    }
+    while (slots.length < 3) slots.push({ cardId: null, used: false });
+    this.deck = slots;
+  }
+
   // ============================================================
   // PUBLIC API — КУЛДАУН И КАРТЫ
   // ============================================================
@@ -593,6 +609,14 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     }
   }
 
+  private resolveCapByUnitRef(unitRef: string): GameUnit | undefined {
+    for (const c of this.getCaps()) {
+      if (c.id === unitRef) return c;
+      if (c instanceof Unit && c.getUnitId() === unitRef) return c;
+    }
+    return undefined;
+  }
+
   public applyCard(cardId: string, data: { position?: { x: number; y: number } | null; unitIds?: string[]; }): boolean {
     const card = getCard(cardId);
     if (!card) {
@@ -650,11 +674,11 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   /**
    * ✅ NEW: Handle AI card usage (bypasses UI and directly applies the card)
    */
-  public handleAICardUsage(cardId: string, targetData: any): void {
+  public handleAICardUsage(cardId: string, targetData: any): boolean {
     const card = getCard(cardId);
     if (!card) {
       console.warn(`[AbilityManager] AI card not found: ${cardId}`);
-      return;
+      return false;
     }
 
     console.log(`[AbilityManager] AI activating card: ${card.name} (${cardId})`, targetData);
@@ -670,17 +694,12 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       data.unitIds = targetData.unitIds;
     }
 
-    // Apply the card using existing logic
     const success = this.applyCard(cardId, data);
 
     if (success) {
-      // Mark card as used if it's in the deck
       this.markCardAsUsed(cardId);
-
-      // Trigger global cooldown
       this.lastGlobalActivationTime = Date.now();
 
-      // Emit event for consistency with player usage
       eventBus.dispatch(GameEvents.ABILITY_ACTIVATED, {
         playerId: this.playerId,
         abilityType: cardId,
@@ -695,6 +714,8 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     } else {
       console.warn(`[AbilityManager] AI card execution failed: ${card.name}`);
     }
+
+    return success;
   }
 
   // ============================================================
@@ -852,10 +873,10 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   private applyEnergyShield(unitId: string): boolean {
-    const unit = this.getCaps().find(c => c.id === unitId);
+    const unit = this.resolveCapByUnitRef(unitId);
     if (!unit || !(unit instanceof Unit)) return false;
 
-    const success = unit.activateAbility();
+    const success = unit.activateAbility({ fromAbilityCard: true });
     if (!success) return false;
 
     // ✅ ПАССИВКА: Проверка усиления
@@ -909,7 +930,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       const updateHandler = () => {
         const effect = this.activeEffects.find(e => e.id === effectId);
         if (effect) {
-          const currentUnit = this.getCaps().find(c => c.id === unitId);
+          const currentUnit = this.resolveCapByUnitRef(unitId);
           if (currentUnit) {
             effect.data.shieldEffect.update(currentUnit.x, currentUnit.y);
             // ✅ Синхронизируем позицию и скорость физического тела щита
@@ -943,7 +964,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   private applyMagneticTether(unitId: string): boolean {
-    const unit = this.getCaps().find(c => c.id === unitId);
+    const unit = this.resolveCapByUnitRef(unitId);
     if (!unit) return false;
 
     const ball = this.getBall();
@@ -964,7 +985,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       const updateHandler = () => {
         const activeEffect = this.activeEffects.find(e => e.id === effectId);
         if (activeEffect && activeEffect.data.tetherEffect) {
-          const currentUnit = this.getCaps().find(c => c.id === unitId);
+          const currentUnit = this.resolveCapByUnitRef(unitId);
           const currentBall = this.getBall();
           if (currentUnit && currentBall) {
             const ballPos = currentBall.getPosition();
@@ -1031,8 +1052,8 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   private applyPhaseSwap(unitId1: string, unitId2: string): boolean {
-    const unit1 = this.getCaps().find(c => c.id === unitId1);
-    const unit2 = this.getCaps().find(c => c.id === unitId2);
+    const unit1 = this.resolveCapByUnitRef(unitId1);
+    const unit2 = this.resolveCapByUnitRef(unitId2);
 
     // ✅ Расширенные проверки
     if (!unit1 || !unit2) {
@@ -1105,7 +1126,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   private applyGhostPhase(unitId: string): boolean {
-    const unit = this.getCaps().find(c => c.id === unitId);
+    const unit = this.resolveCapByUnitRef(unitId);
 
     // ✅ Полная проверка валидности
     if (!unit) {
@@ -1167,7 +1188,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
           }
 
           // ✅ Проверка перед восстановлением (юнит/боди/мир могут быть уже уничтожены)
-          const u = this.getCaps().find(c => c.id === unitId);
+          const u = this.resolveCapByUnitRef(unitId);
           if (u && u.body && this.scene?.matter?.world) {
             try {
               u.sprite?.setAlpha?.(1);
@@ -1189,7 +1210,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
         try {
           const effect = this.activeEffects.find(e => e.id === effectId);
           if (effect && effect.data?.ghostEffect) {
-            const currentUnit = this.getCaps().find(c => c.id === unitId);
+            const currentUnit = this.resolveCapByUnitRef(unitId);
             if (currentUnit) {
               effect.data.ghostEffect.update?.(currentUnit.x, currentUnit.y);
             }
@@ -1396,10 +1417,10 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   private applyNeurotoxin(unitId: string): boolean {
-    const unit = this.getCaps().find(c => c.id === unitId);
+    const unit = this.resolveCapByUnitRef(unitId);
     if (!unit || !(unit instanceof Unit)) return false;
 
-    const success = unit.activateAbility();
+    const success = unit.activateAbility({ fromAbilityCard: true });
     if (!success) return false;
 
     eventBus.dispatch(GameEvents.VFX_STATUS_EFFECT, {
@@ -1478,7 +1499,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   private applyNeuralParasite(unitId: string): boolean {
-    const unit = this.getCaps().find(c => c.id === unitId);
+    const unit = this.resolveCapByUnitRef(unitId);
     if (!unit) return false;
 
     if (this.vfxManager) {
@@ -1632,7 +1653,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     if (highlight && selected) {
       highlight.clear();
       highlight.lineStyle(4, 0xffff00, 1);
-      const cap = this.getCaps().find(c => c.id === unitId);
+      const cap = this.resolveCapByUnitRef(unitId);
       if (cap) {
         highlight.strokeCircle(0, 0, cap.getRadius() + 10);
       }
@@ -1939,7 +1960,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       this.clearUnitHighlights();
     } else {
       this.unitHighlights.forEach((highlight, unitId) => {
-        const cap = this.getCaps().find(c => c.id === unitId);
+        const cap = this.resolveCapByUnitRef(unitId);
         if (cap) {
           highlight.setPosition(cap.x, cap.y);
         }
@@ -1949,7 +1970,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     // Обновляем щиты
     this.activeEffects.forEach(effect => {
       if (effect.type === 'energy_shield' && effect.data.shieldEffect) {
-        const unit = this.getCaps().find(c => c.id === effect.data.unitId);
+        const unit = this.resolveCapByUnitRef(effect.data.unitId);
         if (unit) {
           effect.data.shieldEffect.update(unit.x, unit.y);
         }

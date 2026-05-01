@@ -11,7 +11,7 @@ import { getCurrentSeason, BP_XP_REWARDS, getXPProgress } from '../data/BattlePa
 import { getFonts } from '../config/themes';
 import { rookiePathManager, ROOKIE_PATH_FINAL_REWARD } from '../data/RookiePath';
 import { FactionId } from '../constants/gameConstants';
-import { RookieFactionRewardOverlay } from '../ui/RookieFactionRewardOverlay';
+import { RookieFactionWheelOverlay } from '../ui/RookieFactionWheelOverlay';
 import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
 import { loadAudioMenu, loadAudioRewardClaim } from '../assets/loading/AudioLoader';
 
@@ -29,6 +29,10 @@ export class QuestsScene extends Phaser.Scene {
   private isDragging = false;
   private lastPointerY = 0;
   private scrollVelocity = 0;
+  /** Чтобы не двигать контейнер каждый кадр при инерции */
+  private lastAppliedContentY = Number.NaN;
+  private headerCoinText?: Phaser.GameObjects.Text;
+  private headerCrystalText?: Phaser.GameObjects.Text;
   
   private topInset = 0;
   private bottomInset = 0;
@@ -73,7 +77,9 @@ export class QuestsScene extends Phaser.Scene {
     this.createBackground();
     this.createHeader();
     this.createTabs();
+    this.contentContainer = this.add.container(0, this.topOffset).setDepth(1);
     this.createContent();
+    this.applyScrollPosition();
     this.setupScrolling();
     
     this.swipeManager = new SwipeNavigationManager(this, {
@@ -93,7 +99,7 @@ export class QuestsScene extends Phaser.Scene {
     if (!this.isDragging && Math.abs(this.scrollVelocity) > 0.5) {
       this.scrollY = Phaser.Math.Clamp(this.scrollY + this.scrollVelocity, 0, this.maxScrollY);
       this.scrollVelocity *= 0.92;
-      this.updateCardPositions();
+      this.applyScrollPosition();
     }
   }
   
@@ -115,7 +121,6 @@ export class QuestsScene extends Phaser.Scene {
     blobs.fillCircle(width + base * 0.06, height * 0.36, base * 0.48);
     blobs.fillStyle(0xfbbf24, 0.045);
     blobs.fillCircle(width * 0.45, height * 0.92, base * 0.35);
-    blobs.setBlendMode(Phaser.BlendModes.ADD);
 
     this.add.rectangle(width / 2, height - 72, width, 160, 0x000000, 0.35);
   }
@@ -192,7 +197,7 @@ export class QuestsScene extends Phaser.Scene {
     coinsIcon.setOrigin(0, 0.5);
     coinsIcon.setDepth(101);
     
-    this.add.text(width / 2 - 25, currencyY, `${data.coins}`, {
+    this.headerCoinText = this.add.text(width / 2 - 25, currencyY, `${data.coins}`, {
       fontSize: `${13 * s}px`,
       fontFamily: fonts.tech,
       color: '#fde68a',
@@ -205,12 +210,49 @@ export class QuestsScene extends Phaser.Scene {
     crystalsIcon.setOrigin(0, 0.5);
     crystalsIcon.setDepth(101);
     
-    this.add.text(width / 2 + 85, currencyY, `${data.crystals}`, {
+    this.headerCrystalText = this.add.text(width / 2 + 85, currencyY, `${data.crystals}`, {
       fontSize: `${13 * s}px`,
       fontFamily: fonts.tech,
       color: '#e9d5ff',
       fontStyle: 'bold',
     }).setOrigin(1, 0.5).setDepth(101);
+  }
+
+  private refreshHeaderCurrency(): void {
+    const data = playerData.get();
+    this.headerCoinText?.setText(`${data.coins}`);
+    this.headerCrystalText?.setText(`${data.crystals}`);
+  }
+
+  private clearContentArea(): void {
+    this.cards = [];
+    this.scrollY = 0;
+    this.scrollVelocity = 0;
+    this.lastAppliedContentY = Number.NaN;
+    if (this.contentContainer) {
+      this.contentContainer.removeAll(true);
+    }
+  }
+
+  /** Перерисовка без полного scene.restart — дешевле для WebView */
+  private redrawQuestsUI(): void {
+    if (!this.scene.isActive()) return;
+    this.refreshHeaderCurrency();
+    this.tabContainer?.destroy(true);
+    this.clearContentArea();
+    this.createTabs();
+    this.createContent();
+    this.applyScrollPosition();
+  }
+
+  private switchTab(tabId: string): void {
+    if (this.activeTab === tabId) return;
+    this.activeTab = tabId as QuestsScene['activeTab'];
+    this.tabContainer.destroy(true);
+    this.clearContentArea();
+    this.createTabs();
+    this.createContent();
+    this.applyScrollPosition();
   }
 
   private createTabs(): void {
@@ -314,8 +356,8 @@ export class QuestsScene extends Phaser.Scene {
       tabBtn.setInteractive({ useHandCursor: true });
       tabBtn.on('pointerdown', () => {
         if (this.activeTab !== tab.id) {
-          this.activeTab = tab.id as any;
-          this.scene.restart({ tab: tab.id });
+          AudioManager.getInstance().playUIClick();
+          this.switchTab(tab.id);
         }
       });
       
@@ -325,9 +367,7 @@ export class QuestsScene extends Phaser.Scene {
   
   private createContent(): void {
     const { width, height } = this.cameras.main;
-    
-    this.contentContainer = this.add.container(0, this.topOffset).setDepth(1);
-    
+
     if (this.activeTab === 'path') {
       this.renderRookiePath();
     } else if (this.activeTab === 'battlepass') {
@@ -377,15 +417,16 @@ export class QuestsScene extends Phaser.Scene {
   
   private createTaskCard(x: number, y: number, width: number, task: DailyTask, isWeekly: boolean = false): TaskCard {
     const fonts = getFonts();
+    const s = this.s;
     const container = this.add.container(x, y);
-    const height = 150;
-    const padding = 14;
+    const iconCol = isWeekly && (task as any).icon ? Math.round(34 * s) : 0;
+    const height = Math.round(160 * s);
+    const padding = Math.round(14 * s);
     
     const isCompleted = task.completed;
     const isClaimed = task.claimed;
     const isClaimable = isCompleted && !isClaimed;
     
-    // Фон карточки (тёмная панель + рамка статуса)
     const bg = this.add.graphics();
     bg.fillGradientStyle(0x111b2e, 0x141e35, 0x0c1220, 0x0c1220, 0.98, 0.98, 0.98, 0.98);
     bg.fillRoundedRect(-width / 2, 0, width, height, 14);
@@ -408,103 +449,80 @@ export class QuestsScene extends Phaser.Scene {
       bg.strokeRoundedRect(-width / 2 + 2, 2, width - 4, height - 4, 12);
     }
     container.add(bg);
-    
-    // Заголовок
-    const title = this.add.text(-width / 2 + padding, padding, task.title, {
-      fontSize: '16px',
+
+    if (iconCol > 0) {
+      container.add(
+        this.add
+          .text(-width / 2 + padding + iconCol / 2, padding + Math.round(20 * s), String((task as any).icon), {
+            fontSize: `${24 * s}px`,
+          })
+          .setOrigin(0.5, 0.5)
+      );
+    }
+
+    const titleX = -width / 2 + padding + iconCol;
+    const title = this.add.text(titleX, padding, task.title, {
+      fontSize: `${15 * s}px`,
       fontFamily: fonts.tech,
       color: '#fef9c3',
       fontStyle: 'bold',
-      wordWrap: { width: width - padding * 2 - 24 },
+      wordWrap: { width: width - padding * 2 - iconCol },
+      maxLines: 2,
     }).setOrigin(0, 0);
     container.add(title);
-    
-    // Описание
-    const desc = this.add.text(-width / 2 + padding, padding + 24, task.description, {
-      fontSize: '12px',
+
+    const desc = this.add.text(titleX, padding + Math.round(38 * s), task.description, {
+      fontSize: `${11 * s}px`,
       fontFamily: fonts.primary,
       color: '#94a3b8',
-      wordWrap: { width: width - padding * 2 },
+      wordWrap: { width: width - padding * 2 - iconCol },
+      maxLines: 2,
     }).setOrigin(0, 0);
     container.add(desc);
-    
-    // Прогресс текст
-    const progressText = this.add.text(-width / 2 + padding, padding + 48, `Прогресс: ${task.progress}/${task.maxProgress}`, {
-      fontSize: '13px',
+
+    const progressLineY = padding + Math.round(62 * s);
+    const progressText = this.add.text(titleX, progressLineY, `Прогресс: ${task.progress} / ${task.maxProgress}`, {
+      fontSize: `${12 * s}px`,
       fontFamily: fonts.primary,
       color: '#e2e8f0',
     }).setOrigin(0, 0);
     container.add(progressText);
-    
-    // Прогресс-бар
+
     const barWidth = width - padding * 2;
-    const barHeight = 10;
-    const barY = padding + 70;
-    
+    const barHeight = Math.max(8, Math.round(9 * s));
+    const barY = progressLineY + Math.round(18 * s);
+
     const barBg = this.add.graphics();
     barBg.fillStyle(0x1f2937, 0.8);
     barBg.fillRoundedRect(-width / 2 + padding, barY, barWidth, barHeight, 5);
     container.add(barBg);
-    
+
     const progress = Math.min(task.progress / task.maxProgress, 1);
     const fillWidth = barWidth * progress;
-    
+
     if (fillWidth > 0) {
       const barFill = this.add.graphics();
       barFill.fillStyle(isCompleted ? 0x34d399 : 0x22d3ee, 1);
       barFill.fillRoundedRect(-width / 2 + padding, barY, fillWidth, barHeight, 5);
       container.add(barFill);
     }
-    
-    // Награды
-    const rewardY = barY + 24;
-    let rewardX = -width / 2 + padding;
-    
-    const rewardLabel = this.add.text(rewardX, rewardY, 'Награды:', {
-      fontSize: '12px',
-      fontFamily: fonts.tech,
-      color: '#fde68a',
-    }).setOrigin(0, 0);
-    container.add(rewardLabel);
-    rewardX += 70;
-    
-    if (task.reward.coins) {
-      const coinIcon = this.add.image(rewardX, rewardY + 8, 'ui_rewards_coins');
-      coinIcon.setDisplaySize(18, 18);
-      coinIcon.setOrigin(0, 0.5);
-      container.add(coinIcon);
-      
-      const coinText = this.add.text(rewardX + 22, rewardY, `${task.reward.coins}`, {
-        fontSize: '14px',
+
+    const rewardY = barY + barHeight + Math.round(14 * s);
+    const rewardSummary = this.rewardSubtitleLines(task.reward).join('  ·  ');
+    container.add(
+      this.add.text(-width / 2 + padding, rewardY, `Награды: ${rewardSummary}`, {
+        fontSize: `${11 * s}px`,
         fontFamily: fonts.tech,
-        color: '#fcd34d',
-        fontStyle: 'bold',
-      }).setOrigin(0, 0);
-      container.add(coinText);
-      rewardX += 80;
-    }
-    
-    if (task.reward.crystals) {
-      const crystalIcon = this.add.image(rewardX, rewardY + 8, 'ui_rewards_crystals');
-      crystalIcon.setDisplaySize(18, 18);
-      crystalIcon.setOrigin(0, 0.5);
-      container.add(crystalIcon);
-      
-      const crystalText = this.add.text(rewardX + 22, rewardY, `${task.reward.crystals}`, {
-        fontSize: '14px',
-        fontFamily: fonts.tech,
-        color: '#ddd6fe',
-        fontStyle: 'bold',
-      }).setOrigin(0, 0);
-      container.add(crystalText);
-    }
-    
-    // Кнопка
-    const btnY = height - padding - 16;
-    const btnWidth = 110;
-    const btnHeight = 36;
+        color: '#fde68a',
+        wordWrap: { width: width - padding * 2 },
+      }).setOrigin(0, 0)
+    );
+
+    const btnY = height - padding - Math.round(18 * s);
+    const btnWidth = Math.round(118 * s);
+    const btnHeight = Math.round(34 * s);
     const btnX = width / 2 - padding - btnWidth / 2;
-    
+
     if (isClaimable) {
       const btn = this.createClaimButton(btnX, btnY, btnWidth, btnHeight, () => {
         if (isWeekly) this.handleClaimWeeklyTask(task.id);
@@ -512,24 +530,21 @@ export class QuestsScene extends Phaser.Scene {
       });
       container.add(btn);
     } else if (isClaimed) {
-    const btnBg = this.add.graphics();
-    btnBg.fillStyle(0x1e293b, 0.82);
-    btnBg.fillRoundedRect(btnX - btnWidth / 2, btnY - btnHeight / 2, btnWidth, btnHeight, 999);
+      const btnBg = this.add.graphics();
+      btnBg.fillStyle(0x1e293b, 0.82);
+      btnBg.fillRoundedRect(btnX - btnWidth / 2, btnY - btnHeight / 2, btnWidth, btnHeight, 999);
       container.add(btnBg);
-      
-      const btnText = this.add.text(btnX, btnY, 'ЗАБРАНО', {
-        fontSize: '12px',
-        fontFamily: fonts.tech,
-        color: '#94a3b8',
-        fontStyle: 'bold',
-      }).setOrigin(0.5);
-      container.add(btnText);
+
+      container.add(
+        this.add.text(btnX, btnY, 'ЗАБРАНО', {
+          fontSize: `${11 * s}px`,
+          fontFamily: fonts.tech,
+          color: '#94a3b8',
+          fontStyle: 'bold',
+        }).setOrigin(0.5)
+      );
     }
-    
-    // ВАЖНО: Устанавливаем ТОЧНУЮ область нажатия для карточки
-    const cardHitArea = new Phaser.Geom.Rectangle(-width / 2, 0, width, height);
-    container.setInteractive(cardHitArea, Phaser.Geom.Rectangle.Contains);
-    
+
     return { container, y, height };
   }
   
@@ -567,13 +582,13 @@ export class QuestsScene extends Phaser.Scene {
   }
   
   private createEmptyState(): void {
-    const { width, height } = this.cameras.main;
-
-    this.add.text(width / 2, height / 2, 'Нет активных заданий', {
-      fontSize: '16px',
-      fontFamily: getFonts().primary,
-      color: '#94a3b8',
-    }).setOrigin(0.5).setDepth(10);
+    this.contentContainer.add(
+      this.add.text(this.cameras.main.width / 2, 120, 'Нет активных заданий', {
+        fontSize: `${15 * this.s}px`,
+        fontFamily: getFonts().primary,
+        color: '#cbd5e1',
+      }).setOrigin(0.5)
+    );
   }
 
   private rewardSubtitleLines(reward: {
@@ -591,10 +606,7 @@ export class QuestsScene extends Phaser.Scene {
   }
 
   private scheduleQuestsRestart(delayMs: number): void {
-    this.time.delayedCall(delayMs, () => {
-      if (!this.scene.isActive()) return;
-      this.scene.restart({ tab: this.activeTab });
-    });
+    this.time.delayedCall(delayMs, () => this.redrawQuestsUI());
   }
 
   private showClaimCelebration(category: string, detail: string): void {
@@ -620,9 +632,8 @@ export class QuestsScene extends Phaser.Scene {
     root.add(frame);
 
     const shine = this.add.graphics();
-    shine.fillStyle(0xfbbf24, 0.12);
-    shine.fillCircle(0, -panelH * 0.22, panelW * 0.35);
-    shine.setBlendMode(Phaser.BlendModes.ADD);
+    shine.fillStyle(0xfbbf24, 0.08);
+    shine.fillCircle(0, -panelH * 0.22, panelW * 0.32);
     root.add(shine);
 
     root.add(
@@ -658,13 +669,6 @@ export class QuestsScene extends Phaser.Scene {
       scale: 1,
       duration: 220,
       ease: 'Back.out',
-    });
-    this.tweens.add({
-      targets: shine,
-      alpha: 0.45,
-      duration: 420,
-      yoyo: true,
-      repeat: 1,
     });
 
     this.time.delayedCall(780, () => {
@@ -854,7 +858,7 @@ export class QuestsScene extends Phaser.Scene {
       this.lastPointerY = pointer.y;
       this.scrollVelocity = delta;
       
-      this.updateCardPositions();
+      this.applyScrollPosition();
     });
     
     this.input.on('pointerup', () => {
@@ -862,8 +866,12 @@ export class QuestsScene extends Phaser.Scene {
     });
   }
   
-  private updateCardPositions(): void {
-    this.contentContainer.y = this.topOffset - this.scrollY;
+  private applyScrollPosition(): void {
+    if (!this.contentContainer) return;
+    const y = this.topOffset - this.scrollY;
+    if (this.lastAppliedContentY === y) return;
+    this.lastAppliedContentY = y;
+    this.contentContainer.y = y;
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -1103,7 +1111,7 @@ export class QuestsScene extends Phaser.Scene {
 
     // Описание награды
     const rewardDesc = this.add.text(0, 45, 
-      `Бесплатная вторая фракция!\n+${ROOKIE_PATH_FINAL_REWARD.coins} 💰  +${ROOKIE_PATH_FINAL_REWARD.crystals} 💎`, {
+      `Вторая фракция на выбор (колесо)\n+${ROOKIE_PATH_FINAL_REWARD.coins} 💰  +${ROOKIE_PATH_FINAL_REWARD.crystals} 💎`, {
       fontSize: '12px',
       fontFamily: 'Rajdhani, Arial',
       color: canClaim ? '#1a1a2e' : '#cccccc',
@@ -1113,9 +1121,9 @@ export class QuestsScene extends Phaser.Scene {
 
     // Кнопка или статус
     if (canClaim) {
-      const btn = this.createRookieClaimButton(0, 90, 140, 32, () => {
+      const btn = this.createRookieClaimButton(0, 90, 155, 32, () => {
         this.showFactionSelectionOverlay();
-      }, 'ВЫБРАТЬ ФРАКЦИЮ');
+      }, 'КОЛЕСО ФРАКЦИЙ');
       container.add(btn);
     } else if (rookiePathManager.isRewardClaimed()) {
       const claimed = this.add.text(0, 90, '✓ Награда получена', {
@@ -1176,27 +1184,19 @@ export class QuestsScene extends Phaser.Scene {
 
   private showFactionSelectionOverlay(): void {
     const currentFaction = playerData.getFaction();
-    
-    // Фракции доступные для выбора (все кроме текущей)
-    const availableFactions: FactionId[] = ['magma', 'cyborg', 'void', 'insect']
-      .filter(f => f !== currentFaction) as FactionId[];
 
-    // Используем красивый overlay для выбора фракции
-    const overlay = new RookieFactionRewardOverlay(
-      this,
-      availableFactions,
-      (chosenFaction: FactionId) => {
-        if (rookiePathManager.claimFinalReward(chosenFaction)) {
-          // Показываем сообщение об успехе
-          this.showSuccessMessage(chosenFaction);
-          // Перезагружаем сцену
-          this.time.delayedCall(2000, () => {
-            this.scene.restart({ tab: 'path' });
-          });
-        }
+    const availableFactions: FactionId[] = ['magma', 'cyborg', 'void', 'insect'].filter(
+      (f) => f !== currentFaction
+    ) as FactionId[];
+
+    new RookieFactionWheelOverlay(this, availableFactions, (chosenFaction: FactionId) => {
+      if (rookiePathManager.claimFinalReward(chosenFaction)) {
+        this.showSuccessMessage(chosenFaction);
+        this.time.delayedCall(2000, () => {
+          this.redrawQuestsUI();
+        });
       }
-    );
-    overlay.show();
+    });
   }
 
   private showSimpleFactionSelection(availableFactions: FactionId[]): void {
@@ -1255,7 +1255,7 @@ export class QuestsScene extends Phaser.Scene {
           container.destroy();
           this.showSuccessMessage(factionId);
           this.time.delayedCall(2000, () => {
-            this.scene.restart({ tab: 'path' });
+            this.redrawQuestsUI();
           });
         }
       });

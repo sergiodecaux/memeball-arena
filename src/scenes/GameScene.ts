@@ -847,11 +847,13 @@ export class GameScene extends Phaser.Scene {
     this.aiController.setCardUsedCallback((cardId, targetData) => {
       console.log(`[GameScene] AI using card: ${cardId}`, targetData);
       if (this.player2AbilityManager) {
-        this.player2AbilityManager.handleAICardUsage(cardId, targetData);
-      } else {
-        console.warn('[GameScene] player2AbilityManager missing — AI card skipped');
+        return this.player2AbilityManager.handleAICardUsage(cardId, targetData);
       }
+      console.warn('[GameScene] player2AbilityManager missing — AI card skipped');
+      return false;
     });
+
+    this.player2AbilityManager?.alignAIDeckFromHand(this.aiController.getHandCardIds());
 
     this.aiController.onMoveComplete(() => {
       this.aiTurnScheduled = false;
@@ -907,7 +909,7 @@ export class GameScene extends Phaser.Scene {
     this.createAbilityManagers();
     
     // ✅ PASSIVE SYSTEM: Создаём PassiveManager
-    this.passiveManager = new PassiveManager(this, 1);
+    this.passiveManager = new PassiveManager(this, () => this.fieldBounds);
     
     // Регистрируем все юниты и мяч
     this.caps.forEach(cap => {
@@ -3285,6 +3287,9 @@ export class GameScene extends Phaser.Scene {
     this.matchDirector.reset();
     this.abilityManager?.resetForNewMatch();
     this.player2AbilityManager?.resetForNewMatch();
+    if (this.aiController && this.player2AbilityManager) {
+      this.player2AbilityManager.alignAIDeckFromHand(this.aiController.getHandCardIds());
+    }
     this.resetPositions();
     this.shootingController.setCurrentPlayer(1);
     this.gameHUD.setPauseEnabled(true);

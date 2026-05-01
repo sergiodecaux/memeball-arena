@@ -61,26 +61,26 @@ const ROOKIE_TASKS_CONFIG: Omit<RookieTask, 'progress' | 'completed' | 'claimed'
   {
     id: 'rookie_win_3',
     title: 'Серия побед',
-    description: 'Одержи 3 победы',
+    description: 'Одержи 3 победы в матчах',
     icon: '🔥',
     maxProgress: 3,
     reward: { coins: 500, crystals: 30 },
   },
   {
-    id: 'rookie_chapter1',
-    title: 'Покоритель Вулкана',
-    description: 'Пройди все уровни главы 1 кампании',
-    icon: '🌋',
-    maxProgress: 4,
-    reward: { coins: 600, crystals: 50 },
+    id: 'rookie_play_8',
+    title: 'В деле',
+    description: 'Сыграй 8 матчей в любом режиме',
+    icon: '🎮',
+    maxProgress: 8,
+    reward: { coins: 600, crystals: 45 },
   },
   {
-    id: 'rookie_boss_krag',
-    title: 'Победитель Крага',
-    description: 'Победи босса Крага (уровень 1-4)',
-    icon: '👹',
-    maxProgress: 1,
-    reward: { coins: 500, crystals: 40 },
+    id: 'rookie_win_6',
+    title: 'Опытный боец',
+    description: 'Набери 6 побед в матчах',
+    icon: '⚔️',
+    maxProgress: 6,
+    reward: { coins: 650, crystals: 50 },
   },
   {
     id: 'rookie_level_5',
@@ -146,8 +146,14 @@ class RookiePathManager {
     if (!data.rookiePath) {
       data.rookiePath = this.createDefaultProgress();
       playerData.save();
+    } else {
+      const migrated = this.migrateTaskKeys(data.rookiePath);
+      if (migrated) {
+        this.syncProgressFromStats(data.rookiePath);
+        playerData.save();
+      }
     }
-    
+
     return data.rookiePath;
   }
 
@@ -177,7 +183,7 @@ class RookiePathManager {
         progress: taskProgress.progress,
         completed: taskProgress.completed,
         claimed: taskProgress.claimed,
-        checkCondition: () => this.getTaskProgress(config.id),
+        checkCondition: () => this.computeTaskProgress(config.id),
       };
     });
   }
@@ -186,10 +192,50 @@ class RookiePathManager {
   // ПРОВЕРКА ПРОГРЕССА ЗАДАНИЙ
   // ═══════════════════════════════════════════════════════════════
 
-  private getTaskProgress(taskId: string): number {
+  private syncProgressFromStats(progress: RookiePathProgress): void {
+    ROOKIE_TASKS_CONFIG.forEach((config) => {
+      const taskProgress = progress.tasks[config.id];
+      if (!taskProgress || taskProgress.claimed) return;
+      const newProgress = Math.min(this.computeTaskProgress(config.id), config.maxProgress);
+      taskProgress.progress = newProgress;
+      if (newProgress >= config.maxProgress) taskProgress.completed = true;
+    });
+
+    const allCompleted = Object.values(progress.tasks).every((t) => t.completed);
+    const wasPathCompleted = progress.pathCompleted;
+    progress.pathCompleted = allCompleted;
+    if (allCompleted && !wasPathCompleted) {
+      progress.completedAt = Date.now();
+      eventBus.emit('ROOKIE_PATH_COMPLETED', {});
+    }
+    if (!allCompleted) {
+      progress.completedAt = undefined;
+    }
+  }
+
+  /** Удаляет устаревшие id заданий и добавляет новые (после смены конфига). */
+  private migrateTaskKeys(progress: RookiePathProgress): boolean {
+    if (progress.rewardClaimed) return false;
+    const validIds = new Set(ROOKIE_TASKS_CONFIG.map((t) => t.id));
+    let changed = false;
+    for (const key of Object.keys(progress.tasks)) {
+      if (!validIds.has(key)) {
+        delete progress.tasks[key];
+        changed = true;
+      }
+    }
+    for (const config of ROOKIE_TASKS_CONFIG) {
+      if (!progress.tasks[config.id]) {
+        progress.tasks[config.id] = { progress: 0, completed: false, claimed: false };
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  private computeTaskProgress(taskId: string): number {
     const data = playerData.get();
     const stats = data.stats;
-    const campaign = data.campaignProgress;
 
     switch (taskId) {
       case 'rookie_first_win':
@@ -201,16 +247,11 @@ class RookiePathManager {
       case 'rookie_win_3':
         return Math.min(stats.wins, 3);
 
-      case 'rookie_chapter1': {
-        const chapter1 = campaign?.chapters?.['chapter_1'];
-        if (!chapter1) return 0;
-        return Object.values(chapter1.levels).filter(l => l.completed).length;
-      }
+      case 'rookie_play_8':
+        return Math.min(stats.gamesPlayed, 8);
 
-      case 'rookie_boss_krag': {
-        const chapter1 = campaign?.chapters?.['chapter_1'];
-        return chapter1?.bossDefeated ? 1 : 0;
-      }
+      case 'rookie_win_6':
+        return Math.min(stats.wins, 6);
 
       case 'rookie_level_5':
         return Math.min(data.level, 5);
@@ -237,7 +278,7 @@ class RookiePathManager {
       const taskProgress = progress.tasks[config.id];
       if (taskProgress.claimed) return; // Уже забрано
 
-      const newProgress = this.getTaskProgress(config.id);
+      const newProgress = this.computeTaskProgress(config.id);
       
       if (newProgress !== taskProgress.progress) {
         taskProgress.progress = newProgress;
@@ -252,13 +293,17 @@ class RookiePathManager {
     });
 
     // Проверяем завершение всего пути
-    const allCompleted = Object.values(progress.tasks).every(t => t.completed);
-    if (allCompleted && !progress.pathCompleted) {
-      progress.pathCompleted = true;
+    const allCompleted = Object.values(progress.tasks).every((t) => t.completed);
+    const wasPathCompleted = progress.pathCompleted;
+    progress.pathCompleted = allCompleted;
+    if (allCompleted && !wasPathCompleted) {
       progress.completedAt = Date.now();
       changed = true;
       console.log('[RookiePath] 🎉 ROOKIE PATH COMPLETED!');
       eventBus.emit('ROOKIE_PATH_COMPLETED', {});
+    }
+    if (!allCompleted) {
+      progress.completedAt = undefined;
     }
 
     if (changed) {

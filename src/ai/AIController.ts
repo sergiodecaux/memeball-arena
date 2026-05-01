@@ -157,7 +157,7 @@ export class AIController {
   private factionId: FactionId = 'magma';
   private availableCards: CardDefinition[] = [];
   private cardsUsedThisMatch: number = 0;
-  private onCardUsed?: (cardId: string, targetData: any) => void;
+  private onCardUsed?: (cardId: string, targetData: any) => boolean;
   
   // ✅ ADDED: Boss tracking
   private bossId?: string;
@@ -349,7 +349,7 @@ export class AIController {
   }
 
   // ⭐ NEW: Коллбэк для использования карты
-  setCardUsedCallback(callback: (cardId: string, targetData: any) => void): void {
+  setCardUsedCallback(callback: (cardId: string, targetData: any) => boolean): void {
     this.onCardUsed = callback;
   }
 
@@ -592,16 +592,15 @@ export class AIController {
     }
     
     console.log(`[AI] 🃏 Using card: ${bestCard.card.name} (score: ${bestCard.score}) - ${bestCard.reason}`);
-    
-    // Убираем карту из доступных
+
+    const applied = this.onCardUsed?.(bestCard.cardId, bestCard.targetData) ?? false;
+    if (!applied) {
+      console.warn(`[AI] 🃏 Card apply failed: ${bestCard.card.name} — keeping in hand`);
+      return false;
+    }
+
     this.availableCards = this.availableCards.filter(c => c.id !== bestCard.cardId);
     this.cardsUsedThisMatch++;
-    
-    // Вызываем коллбэк
-    if (this.onCardUsed) {
-      this.onCardUsed(bestCard.cardId, bestCard.targetData);
-    }
-    
     return true;
   }
 
@@ -982,6 +981,11 @@ export class AIController {
   // ⭐ NEW: Получить доступные карты AI
   getAvailableCards(): CardDefinition[] {
     return [...this.availableCards];
+  }
+
+  /** ID карт в виртуальной руке (для синхронизации колоды AbilityManager P2). */
+  getHandCardIds(): string[] {
+    return this.availableCards.map(c => c.id);
   }
 
   // ⭐ NEW: Получить количество использованных карт
