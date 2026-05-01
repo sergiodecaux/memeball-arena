@@ -12,6 +12,7 @@ import { CampaignDialogueSystem } from '../../../managers/CampaignDialogueSystem
 import { AudioManager } from '../../../managers/AudioManager';
 import { playerData } from '../../../data/PlayerData';
 import { MatchResult } from '../../../types/MatchResult';
+import { generateHumanLikeOpponentNickname } from '../../../utils/humanLikeNickname';
 import { FactionId } from '../../../constants/gameConstants';
 import { MatchPhase } from '../../../core/MatchStateMachine';
 import { logInfo } from '../../../utils/ProductionLogger';
@@ -22,6 +23,8 @@ export interface GameLifecycleConfig {
   campaignLevelConfig?: any;
   matchContext: string;
   isAIEnabled: boolean;
+  /** When false (default), ranked/casual AI fallback hides BOT/AI on results HUD */
+  isRealtimePvP?: boolean;
   opponentName?: string;
   opponentAvatarId?: string;
   getState: () => any;
@@ -79,16 +82,15 @@ export class GameLifecycle {
 
     const state = this.config.getState();
     const playerName = playerData.getNickname() || 'You';
-    
-    // Определяем имя оппонента
+
     let opponentName: string;
-    if ((this.config.matchContext === 'league' || this.config.matchContext === 'tournament') 
-        && this.config.isAIEnabled && this.config.opponentName) {
-      opponentName = this.config.opponentName;
-    } else if (this.config.isAIEnabled) {
-      opponentName = 'AI Opponent';
-    } else {
+    const trimmed = this.config.opponentName?.trim();
+    if (trimmed) {
+      opponentName = trimmed;
+    } else if (!this.config.isAIEnabled) {
       opponentName = 'Player 2';
+    } else {
+      opponentName = generateHumanLikeOpponentNickname();
     }
 
     // Получаем аватарки
@@ -387,9 +389,14 @@ export class GameLifecycle {
     
     const matchDirector = this.config.getMatchDirector();
     matchDirector.pause();
-    
-    const isAIMode = this.config.isAIEnabled;
-    const opponentName = this.config.opponentName || 'Opponent';
+
+    const realtime = this.config.isRealtimePvP === true;
+    const disguisePvPBot =
+      (this.config.matchContext === 'ranked' || this.config.matchContext === 'casual') &&
+      this.config.isAIEnabled &&
+      !realtime;
+    const isAIMode = this.config.isAIEnabled && !disguisePvPBot;
+    const opponentName = this.config.opponentName?.trim() || 'Opponent';
     const opponentAvatarId = this.config.opponentAvatarId || 'avatar_recruit';
     
     this.resultScreen = new ResultScreen(

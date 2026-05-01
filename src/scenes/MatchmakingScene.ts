@@ -12,6 +12,7 @@ import { safeSceneStart } from '../utils/SceneHelpers';
 import { FACTION_IDS, type FactionId } from '../constants/gameConstants';
 import { eventBus, GameEvents, type EventPayload } from '../core/EventBus';
 import { getAccountLevelMatchCaps } from '../match/accountLevelMatchRules';
+import { generateHumanLikeOpponentNickname } from '../utils/humanLikeNickname';
 
 type MatchmakingMode = 'casual' | 'ranked';
 
@@ -234,8 +235,9 @@ export class MatchmakingScene extends Phaser.Scene {
     }
 
     if (!ok) {
-      this.updateStatus('Сервер недоступен — бот-соперник', '#ffaa00');
-      this.time.delayedCall(600, () => this.gotoOfflineFallback('Сервер недоступен'));
+      this.updateStatus('Матч найден!', '#39ff14');
+      hapticImpact('heavy');
+      this.time.delayedCall(550, () => this.gotoOfflineFallback('Сервер недоступен'));
       return;
     }
 
@@ -258,9 +260,10 @@ export class MatchmakingScene extends Phaser.Scene {
     this.fallbackTimer?.destroy();
     this.fallbackTimer = this.time.delayedCall(16000, () => {
       if (!this.isSearching) return;
-      this.updateStatus('Долго ждём — играем с ботом', '#fbbf24');
+      this.updateStatus('Матч найден!', '#39ff14');
+      hapticImpact('heavy');
       this.cancelQueueOnly();
-      this.gotoOfflineFallback('Таймаут поиска');
+      this.time.delayedCall(450, () => this.gotoOfflineFallback('Таймаут поиска'));
     });
   }
 
@@ -291,7 +294,7 @@ export class MatchmakingScene extends Phaser.Scene {
       this.pvpConnected = false;
     }
 
-    this.updateStatus(bot ? 'Соперник найден!' : 'Игрок найден!', '#39ff14');
+    this.updateStatus('Матч найден!', '#39ff14');
     hapticImpact('heavy');
 
     const pdata = playerData.get();
@@ -302,12 +305,7 @@ export class MatchmakingScene extends Phaser.Scene {
   }
 
   private generateBotNickname(): string {
-    const prefixes = ['Neon', 'Cyber', 'Quantum', 'Stellar', 'Nova', 'Orbit', 'Galaxy', 'Void'];
-    const suffixes = ['Strike', 'Blade', 'Master', 'Legend', 'Hero', 'King', 'Pro', 'Ace'];
-    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-    const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-    const number = Math.floor(Math.random() * 900) + 100;
-    return `${prefix}${suffix}#${number}`;
+    return generateHumanLikeOpponentNickname();
   }
 
   private avatarIdForNickname(name: string): string {

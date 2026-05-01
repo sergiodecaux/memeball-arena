@@ -352,10 +352,9 @@ export class ResultScreen {
     contentHeight += 70; // Rewards section
     if (result.masteryXP) contentHeight += 85; // Mastery section
     
-    // Achievements: показываем максимум 2 достижения чтобы всё влезло
+    // Compact achievements block (max 2 rows shown — synced with createAchievementsSection)
     if (result.newAchievements.length > 0) {
-      const displayCount = Math.min(2, result.newAchievements.length);
-      contentHeight += 30 + (displayCount * 60) + 10; // Header + achievements + spacing
+      contentHeight += this.achievementsReservedHeight(result.newAchievements.length);
     }
     
     contentHeight += 70; // Buttons section
@@ -723,8 +722,8 @@ export class ResultScreen {
       
       // ✅ ДОБАВЛЕНО: Достижения в кампании
       if (result.newAchievements && result.newAchievements.length > 0) {
-        this.createAchievementsSection(currentY + 30, result.newAchievements, panelWidth);
-        currentY += result.newAchievements.slice(0, 3).length * 50 + 60;
+        this.createAchievementsSection(currentY + 28, result.newAchievements, panelWidth);
+        currentY += this.achievementsReservedHeight(result.newAchievements.length) + 8;
       }
     }
     
@@ -824,12 +823,16 @@ export class ResultScreen {
       const opp = mp.getOpponent();
       opponentName = this.opponentData.opponentName || opp?.name || 'Opponent';
       opponentAvatarId = this.opponentData.opponentAvatarId || opp?.avatarId;
-    } else if (isAIMode) {
-      // ✅ ИСПРАВЛЕНО: Используем ПЕРЕДАННЫЕ данные противника для консистентности
-      opponentName = this.opponentData.opponentName || 'AI';
+    } else if (this.opponentData.opponentName?.trim()) {
+      opponentName = this.opponentData.opponentName.trim();
       opponentAvatarId = this.opponentData.opponentAvatarId;
-      
-      // Проверяем существование аватара
+      if (opponentAvatarId && !this.scene.textures.exists(opponentAvatarId)) {
+        console.warn(`[ResultScreen] Opponent avatar texture missing: ${opponentAvatarId}`);
+        opponentAvatarId = undefined;
+      }
+    } else if (isAIMode) {
+      opponentName = i18n.t('opponent');
+      opponentAvatarId = this.opponentData.opponentAvatarId;
       if (opponentAvatarId && !this.scene.textures.exists(opponentAvatarId)) {
         console.warn(`[ResultScreen] Opponent avatar texture missing: ${opponentAvatarId}`);
         opponentAvatarId = undefined;
@@ -1070,6 +1073,12 @@ export class ResultScreen {
     });
   }
 
+  private achievementsReservedHeight(achievementCount: number): number {
+    const rows = Math.min(2, achievementCount);
+    if (rows <= 0) return 0;
+    return 26 + rows * 48 + 14;
+  }
+
   /**
    * ✅ НОВОЕ: Создать красивую секцию достижений
    */
@@ -1103,12 +1112,12 @@ export class ResultScreen {
       }
     };
     
-    // ✅ ИСПРАВЛЕНО: Показываем максимум 3 достижения компактно
-    const maxDisplay = 3;
+    // Показываем максимум 2 строки — иначе перекрывают кнопки и сливаются иконки
+    const maxDisplay = 2;
     const displayAchievements = achievements.slice(0, maxDisplay);
     const remainingCount = Math.max(0, achievements.length - maxDisplay);
-    const heightPerAchievement = 48; // Было 60, уменьшили до 48
-    const totalHeight = displayAchievements.length * heightPerAchievement + 25; // Было +30
+    const heightPerAchievement = 48;
+    const totalHeight = displayAchievements.length * heightPerAchievement + 22;
     
     if (import.meta.env.DEV) {
       console.debug('[ResultScreen] Achievements section dimensions', {
@@ -1121,7 +1130,7 @@ export class ResultScreen {
     }
     
     // Заголовок секции
-    const headerY = y - totalHeight / 2 - 15;
+    const headerY = y - totalHeight / 2 - 12;
     this.container.add(this.scene.add.text(0, headerY, '🎉 НОВЫЕ ДОСТИЖЕНИЯ!', {
       fontSize: '14px',
       fontFamily: fonts.tech,
@@ -1130,7 +1139,7 @@ export class ResultScreen {
     }).setOrigin(0.5));
     
     // Контейнер для достижений
-    const achContainer = this.scene.add.container(0, y - totalHeight / 2 + 25);
+    const achContainer = this.scene.add.container(0, y - totalHeight / 2 + 20);
     this.container.add(achContainer);
     
     displayAchievements.forEach((ach, index) => {
@@ -1140,8 +1149,8 @@ export class ResultScreen {
       
       // ✅ ИСПРАВЛЕНО: Компактный фон для достижения с свечением
       const achBg = this.scene.add.graphics();
-      const achHeight = 38; // Было 45, уменьшили
-      const achPadding = 15; // Было 20
+      const achHeight = 34;
+      const achPadding = 14;
       
       // Внешнее свечение
       achBg.lineStyle(2, rarityColor, glowAlpha); // Было 3
@@ -1159,40 +1168,46 @@ export class ResultScreen {
       
       // ✅ ИСПРАВЛЕНО: Уменьшенная иконка (PNG или эмодзи для fallback)
       let iconObject: Phaser.GameObjects.Image | Phaser.GameObjects.Text;
-      const iconX = -panelWidth / 2 + 32; // Сместили ближе к краю
-      
+      const iconX = -panelWidth / 2 + 28;
+      const textWrap = Math.max(140, panelWidth - 96);
+
       if (ach.iconKey && this.scene.textures.exists(ach.iconKey)) {
-        // Используем PNG иконку (уменьшенный размер)
         iconObject = this.scene.add.image(iconX, achY, ach.iconKey);
-        iconObject.setDisplaySize(18, 18); // Еще меньше
+        const cap = 14;
+        const sx = cap / Math.max(iconObject.width, 1);
+        const sy = cap / Math.max(iconObject.height, 1);
+        iconObject.setScale(Math.min(sx, sy));
       } else {
-        // Fallback на эмодзи
         iconObject = this.scene.add.text(iconX, achY, ach.icon, {
-          fontSize: '16px', // Еще меньше
+          fontSize: '13px',
         });
       }
       iconObject.setOrigin(0.5);
       achContainer.add(iconObject);
       
       // ✅ УЛУЧШЕНО: Название достижения с тенью для читаемости
-      const textStartX = iconX + 20; // Текст начинается после иконки
+      const textStartX = iconX + 14;
       const achName = this.scene.add.text(textStartX, achY - 6, ach.name, {
-        fontSize: '11px',
+        fontSize: '10px',
         fontFamily: fonts.tech,
         color: '#ffffff',
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 2,
+        wordWrap: { width: textWrap },
+        maxLines: 2,
       }).setOrigin(0, 0.5);
       achContainer.add(achName);
       
       // ✅ УЛУЧШЕНО: Описание с тенью для читаемости
-      const achDesc = this.scene.add.text(textStartX, achY + 6, ach.description, {
-        fontSize: '9px',
+      const achDesc = this.scene.add.text(textStartX, achY + 8, ach.description, {
+        fontSize: '8px',
         fontFamily: fonts.tech,
         color: '#cccccc',
         stroke: '#000000',
         strokeThickness: 2,
+        wordWrap: { width: textWrap },
+        maxLines: 2,
       }).setOrigin(0, 0.5);
       achContainer.add(achDesc);
       
@@ -1239,13 +1254,15 @@ export class ResultScreen {
       
       // Анимация появления с задержкой
       const delay = 1500 + index * 200; // После анимации наград
-      
-      // Начальное состояние
+
+      const iconPopTo = iconObject.scaleX;
+      const iconPopFrom = Math.max(0.2, iconPopTo * 0.35);
+
       achBg.setAlpha(0);
-      iconObject.setAlpha(0).setScale(0);
+      iconObject.setAlpha(0).setScale(iconPopFrom);
       achName.setAlpha(0).setX(achName.x - 20);
       achDesc.setAlpha(0).setX(achDesc.x - 20);
-      
+
       // Анимация фона
       this.scene.tweens.add({
         targets: achBg,
@@ -1254,17 +1271,18 @@ export class ResultScreen {
         delay: delay,
         ease: 'Power2',
       });
-      
+
       // Анимация иконки (pop)
       this.scene.tweens.add({
         targets: iconObject,
         alpha: 1,
-        scale: 1,
+        scaleX: iconPopTo,
+        scaleY: iconPopTo,
         duration: 400,
         delay: delay + 100,
         ease: 'Back.easeOut',
       });
-      
+
       // Анимация текста (slide in)
       this.scene.tweens.add({
         targets: [achName, achDesc],
@@ -1274,19 +1292,6 @@ export class ResultScreen {
         delay: delay + 200,
         ease: 'Power2',
       });
-      
-      // Pulse эффект для легендарных достижений
-      if (ach.rarity === 'legendary') {
-        this.scene.tweens.add({
-          targets: iconObject,
-          scale: 1.15,
-          duration: 800,
-          delay: delay + 500,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
-        });
-      }
     });
     
     // ✅ ИСПРАВЛЕНО: Если достижений больше maxDisplay (2), показываем индикатор

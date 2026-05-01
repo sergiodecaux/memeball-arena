@@ -62,6 +62,7 @@ import { FallbackManager } from '../assets/fallback/FallbackManager';
 import { MatchResult } from '../types/MatchResult';
 import { logInfo, logWarn, logError } from '../utils/ProductionLogger';
 import { safeSceneStart } from '../utils/SceneHelpers';
+import { generateHumanLikeOpponentNickname } from '../utils/humanLikeNickname';
 import { TutorialManager } from '../tutorial/TutorialManager';
 import { TutorialStep } from '../tutorial/TutorialSteps';
 import { AppLifecycle } from '../utils/AppLifecycle';
@@ -186,6 +187,22 @@ export class GameScene extends Phaser.Scene {
   };
   private opponentName?: string; // РРјСЏ СЃРѕРїРµСЂРЅРёРєР° (РґР»СЏ РјР°СЃРєРёСЂРѕРІРєРё Р±РѕС‚РѕРІ РІ Р»РёРіРµ)
   private opponentAvatarId?: string; // вњ… РќРћР’РћР•: РђРІР°С‚Р°СЂ СЃРѕРїРµСЂРЅРёРєР° (РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё)
+
+  private get isDisguisedPvPBotMatch(): boolean {
+    return (
+      (this.matchContext === 'ranked' || this.matchContext === 'casual') &&
+      this.isAIEnabled &&
+      !this.isRealtimePvP
+    );
+  }
+
+  private get hudShowsAiBranding(): boolean {
+    return this.isAIEnabled && !this.isDisguisedPvPBotMatch;
+  }
+
+  private get hudTreatAsNetworkPvP(): boolean {
+    return this.isRealtimePvP || this.isDisguisedPvPBotMatch;
+  }
 
   // === AI ===
   private isAIEnabled = false;
@@ -1216,10 +1233,7 @@ export class GameScene extends Phaser.Scene {
         opponentName = this.opponentName;
         console.log(`[GameScene] createUI(): Using existing opponentName: "${opponentName}"`);
       } else {
-        // Р“РµРЅРµСЂРёСЂСѓРµРј СЃР»СѓС‡Р°Р№РЅРѕРµ РёРјСЏ С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРѕ РµС‰Рµ РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ
-        const names = ['NeonStrike', 'CyberBlade', 'VoidWalker', 'QuantumFlux', 'NovaPrime', 'AstroTitan', 'PlasmaEdge', 'ShadowPrime'];
-        const numbers = Math.floor(Math.random() * 999) + 1;
-        opponentName = `${names[Math.floor(Math.random() * names.length)]}${numbers}`;
+        opponentName = generateHumanLikeOpponentNickname();
         // вњ… РЎРѕС…СЂР°РЅСЏРµРј РґР»СЏ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ РІ VS preview
         this.opponentName = opponentName;
         console.log(`[GameScene] createUI(): Generated new opponentName: "${opponentName}"`);
@@ -1229,9 +1243,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.gameHUD = new GameHUD(this, {
-      isAIMode: this.isAIEnabled,
+      isAIMode: this.hudShowsAiBranding,
       aiDifficulty: state.aiDifficulty,
-      isPvP: this.isRealtimePvP,
+      isPvP: this.hudTreatAsNetworkPvP,
       opponentName: opponentName,
       matchDuration: state.matchDuration,
       fieldSkinId: state.fieldSkinId,
@@ -2849,8 +2863,8 @@ export class GameScene extends Phaser.Scene {
       opponentName = displayOpponent;
       console.log(`[GameScene] Using preset opponent display name: "${opponentName}"`);
     } else if (this.isAIEnabled) {
-      opponentName = 'AI Opponent';
-      console.log('[GameScene] Using AI opponent name');
+      opponentName = generateHumanLikeOpponentNickname();
+      console.log('[GameScene] Using generated opponent display name for AI match');
     } else {
       opponentName = 'Player 2';
       console.log('[GameScene] Using Player 2 name');
@@ -3182,7 +3196,7 @@ export class GameScene extends Phaser.Scene {
       opponentAvatarId: this.opponentAvatarId,
     };
     
-    this.resultScreen = new ResultScreen(this, result, this.isAIEnabled, resultScreenData, {
+    this.resultScreen = new ResultScreen(this, result, this.hudShowsAiBranding, resultScreenData, {
       onRematch: () => {
         AudioManager.getInstance().playSFX('sfx_click');
         this.resultScreen = undefined;
