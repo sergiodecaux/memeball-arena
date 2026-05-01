@@ -189,6 +189,7 @@ export class GameScene extends Phaser.Scene {
   // === AI ===
   private isAIEnabled = false;
   private aiTurnScheduled = false;
+  private lastSyncedAIFormationId?: string;
 
   // === Р’РЅСѓС‚СЂРµРЅРЅРёРµ С„Р»Р°РіРё ===
   private lastShootingCap?: GameUnit;
@@ -298,6 +299,7 @@ export class GameScene extends Phaser.Scene {
     this.lastShootingCap = undefined;
     this.selectedCapId = undefined;
     this.aiTurnScheduled = false;
+    this.lastSyncedAIFormationId = undefined;
     this.isAbilityInputActive = false;
     
     // ✅ NEW: Поддержка skipIntro (если пришли из MatchVSScene)
@@ -827,6 +829,9 @@ export class GameScene extends Phaser.Scene {
         this.aiTurnScheduled = false;
         this.matchDirector.onShot('ai_unit');
       });
+
+      this.syncAIFormationPositions('match-start');
+      this.lastSyncedAIFormationId = this.aiController.getCurrentFormation().id;
     }
   }
 
@@ -2124,6 +2129,11 @@ export class GameScene extends Phaser.Scene {
     this.abilityManager.forceClearTargetingUI();
     this.hideCardInfo();
 
+    if (this.aiController) {
+      this.aiController.updateScore(data.newScore.player1, data.newScore.player2);
+      this.aiController.recordGoal(data.player === 1 ? 'player' : 'ai');
+    }
+
     this.abilityButton.hide();
     this.cardPanel?.setVisible(false);
     this.shootingController.setEnabled(false);
@@ -2611,10 +2621,11 @@ export class GameScene extends Phaser.Scene {
       const currentPlayer = this.matchDirector.getCurrentPlayer();
 
       // Only start AI if conditions are still valid
-      if (currentPlayer === 2 && 
-          phase === MatchPhase.WAITING && 
-          this.aiController && 
+      if (currentPlayer === 2 &&
+          phase === MatchPhase.WAITING &&
+          this.aiController &&
           !this.aiController.isThinking) {
+        this.maybeSyncAIFormationBeforeAITurn();
         this.aiController.startTurn();
       }
       // Don't set aiTurnScheduled to false here - it's reset at the start of next turn
@@ -2698,21 +2709,23 @@ export class GameScene extends Phaser.Scene {
     
     // вњ… РРЎРџР РђР’Р›Р•РќРћ: РџРµСЂРµСЃС‡РёС‚С‹РІР°РµРј РїРѕР·РёС†РёРё РёРіСЂРѕРєР° РЅР° РѕСЃРЅРѕРІРµ Р°РєС‚СѓР°Р»СЊРЅРѕР№ С„РѕСЂРјР°С†РёРё
     this.updatePlayerPositionsFromFormation();
-    
-    // РџРѕР·РёС†РёРё РѕРїРїРѕРЅРµРЅС‚Р° (AI) РѕСЃС‚Р°СЋС‚СЃСЏ РїСЂРµР¶РЅРёРјРё
-    const playerTeamSize = this.caps.filter(c => c.owner === 1).length;
-    this.caps.forEach((cap, i) => {
-      if (cap.owner === 1) {
-        // РџРѕР·РёС†РёРё РёРіСЂРѕРєР° СѓР¶Рµ РѕР±РЅРѕРІР»РµРЅС‹ РІ updatePlayerPositionsFromFormation
-        return;
-      }
-      // РџРѕР·РёС†РёРё РѕРїРїРѕРЅРµРЅС‚Р° (AI) РёСЃРїРѕР»СЊР·СѓРµРј РёР· startPositions
-      const oppIndex = i - playerTeamSize;
-      if (oppIndex >= 0 && this.startPositions.caps[playerTeamSize + oppIndex]) {
-        cap.reset(this.startPositions.caps[playerTeamSize + oppIndex].x, this.startPositions.caps[playerTeamSize + oppIndex].y);
-      }
-    });
-    
+
+    if (this.aiController && this.isAIEnabled && !this.isRealtimePvP) {
+      this.syncAIFormationPositions('goal-reset');
+      this.lastSyncedAIFormationId = this.aiController.getCurrentFormation().id;
+    } else {
+      const playerTeamSize = this.caps.filter(c => c.owner === 1).length;
+      this.caps.forEach((cap, i) => {
+        if (cap.owner === 1) {
+          return;
+        }
+        const oppIndex = i - playerTeamSize;
+        if (oppIndex >= 0 && this.startPositions.caps[playerTeamSize + oppIndex]) {
+          cap.reset(this.startPositions.caps[playerTeamSize + oppIndex].x, this.startPositions.caps[playerTeamSize + oppIndex].y);
+        }
+      });
+    }
+
     this.updateCardPanelUI();
   }
 
@@ -2756,6 +2769,35 @@ export class GameScene extends Phaser.Scene {
     // РџСЂРµРѕР±СЂР°Р·СѓРµРј: relY РѕС‚ 0.5 РґРѕ 1.0 -> y РѕС‚ centerY РґРѕ bottom
     const y = bounds.top + relY * (bounds.bottom - bounds.top);
     return { x, y };
+  }
+
+  /** Выставляет фишки AI по текущей тактической схеме AIController (те же относительные координаты, что у игрока). */
+  private syncAIFormationPositions(reason: string): void {
+    if (!this.aiController || !this.isAIEnabled || this.isRealtimePvP) return;
+
+    const formation = this.aiController.getCurrentFormation();
+    const aiCaps = this.caps.filter(c => c.owner === 2);
+    if (!formation.slots?.length || aiCaps.length !== formation.slots.length) {
+      return;
+    }
+
+    formation.slots.forEach((slot, index) => {
+      const absPos = this.relativeToAbsolute(slot.x, slot.y);
+      const cap = aiCaps[index];
+      cap?.reset(absPos.x, absPos.y);
+    });
+
+    if (import.meta.env.DEV) {
+      console.log(`[GameScene] AI formation synced (${reason}): ${formation.name}`);
+    }
+  }
+
+  private maybeSyncAIFormationBeforeAITurn(): void {
+    if (!this.aiController) return;
+    const fid = this.aiController.getCurrentFormation().id;
+    if (this.lastSyncedAIFormationId === fid) return;
+    this.lastSyncedAIFormationId = fid;
+    this.syncAIFormationPositions('formation-change');
   }
 
   // ============================================================

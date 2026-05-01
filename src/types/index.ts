@@ -140,6 +140,48 @@ export interface SkinVisualConfig {
 // ==================== AI ====================
 
 export type AIDifficulty = 'easy' | 'medium' | 'hard' | 'impossible';
+
+/** League/UI может передавать `expert` или число (1–10 или 0–1). Внутри матча всегда используйте normalizeGameAIDifficulty(). */
+export type AIDifficultyInput =
+  | AIDifficulty
+  | 'expert'
+  | number
+  | string
+  | undefined
+  | null;
+
+export function normalizeGameAIDifficulty(
+  input: AIDifficultyInput,
+  fallback: AIDifficulty = 'medium'
+): AIDifficulty {
+  if (input === undefined || input === null) return fallback;
+
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input)) return fallback;
+
+    const n = Math.round(input);
+    if (n >= 1 && n <= 10) {
+      if (n <= 2) return 'easy';
+      if (n <= 5) return 'medium';
+      if (n <= 8) return 'hard';
+      return 'impossible';
+    }
+
+    if (input <= 0.32) return 'easy';
+    if (input <= 0.55) return 'medium';
+    if (input <= 0.82) return 'hard';
+    return 'impossible';
+  }
+
+  const s = String(input).trim().toLowerCase();
+  if (s === 'expert') return 'impossible';
+  if (s === 'easy' || s === 'medium' || s === 'hard' || s === 'impossible') {
+    return s;
+  }
+
+  return fallback;
+}
+
 export type AIStrategy = 'attack' | 'defend' | 'intercept' | 'block';
 
 export interface AIMoveEvaluation {

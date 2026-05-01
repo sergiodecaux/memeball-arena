@@ -2,7 +2,7 @@
 
 import Phaser from 'phaser';
 import { Ball } from '../entities/Ball';
-import { AIDifficulty, PlayerNumber } from '../types';
+import { AIDifficulty, PlayerNumber, normalizeGameAIDifficulty, AIDifficultyInput } from '../types';
 import { FIELD, GOAL, CapClass, FactionId } from '../constants/gameConstants';
 import { Formation, playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
@@ -168,14 +168,14 @@ export class AIController {
   private lastMoveTime = 0;
   private readonly MOVE_COOLDOWN = 800;
 
-  constructor(scene: Phaser.Scene, difficulty: AIDifficulty = 'medium') {
+  constructor(scene: Phaser.Scene, difficulty: AIDifficultyInput = 'medium') {
     this.scene = scene;
-    this.difficulty = difficulty;
-    this.settings = DIFFICULTY_SETTINGS[difficulty];
-    
+    this.difficulty = normalizeGameAIDifficulty(difficulty);
+    this.settings = { ...DIFFICULTY_SETTINGS[this.difficulty] };
+
     this.calculateFieldBounds();
-    
-    console.log(`[AI] 🤖 Created: ${difficulty}`);
+
+    console.log(`[AI] 🤖 Created: ${this.difficulty}`);
   }
 
   private calculateFieldBounds(): void {
@@ -271,31 +271,54 @@ export class AIController {
     }
     
     const factionCards = getCardsByFaction(this.factionId);
-    
+    this.availableCards = [];
+
     switch (this.difficulty) {
       case 'easy':
         // 1 common карта
+        {
         const commonCards = factionCards.filter(c => c.rarity === 'common');
         if (commonCards.length > 0) {
           this.availableCards = [commonCards[0]];
+        }
         }
         break;
         
       case 'medium':
         // 2 карты (1 common + 1 rare если есть)
+        {
         const commons = factionCards.filter(c => c.rarity === 'common');
         const rares = factionCards.filter(c => c.rarity === 'rare');
         this.availableCards = [];
         if (commons.length > 0) this.availableCards.push(commons[0]);
         if (rares.length > 0) this.availableCards.push(rares[0]);
+        }
         break;
         
       case 'hard':
         // 3 карты (все типы)
         this.availableCards = factionCards.slice(0, 3);
         break;
+
+      case 'impossible': {
+        const rarityRank: Record<string, number> = {
+          common: 0,
+          rare: 1,
+          epic: 2,
+          legendary: 3,
+        };
+        const ranked = [...factionCards].sort(
+          (a, b) => (rarityRank[b.rarity] ?? 0) - (rarityRank[a.rarity] ?? 0)
+        );
+        this.availableCards = ranked.slice(0, Math.min(6, ranked.length));
+        break;
+      }
+
+      default:
+        this.availableCards = [];
+        break;
     }
-    
+
     this.cardsUsedThisMatch = 0;
   }
 
@@ -323,11 +346,15 @@ export class AIController {
   recordGoal(scoredBy: 'player' | 'ai'): void {
     this.state.lastGoalBy = scoredBy;
     this.state.turnsSinceLastGoal = 0;
-    
+
     if (scoredBy === 'player') {
       this.state.consecutiveGoalsAgainst++;
     } else {
       this.state.consecutiveGoalsAgainst = 0;
+    }
+
+    if (this.settings.formationAdaptation) {
+      this.selectFormation();
     }
   }
 
@@ -361,10 +388,14 @@ export class AIController {
   private selectFormation(): void {
     const formations = this.getFormationsForTeamSize();
     const diff = this.state.aiScore - this.state.playerScore;
+    const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
+
     let formationType: string;
-    
+
     if (diff >= 2) {
       formationType = 'defensive';
+    } else if (bunker > 0.62 && diff <= 1) {
+      formationType = diff <= -1 ? 'aggressive' : 'counter';
     } else if (diff <= -2) {
       formationType = 'aggressive';
     } else if (this.state.consecutiveGoalsAgainst >= 2) {
@@ -374,7 +405,7 @@ export class AIController {
     } else {
       formationType = 'balanced';
     }
-    
+
     const newFormation = formations[formationType] || formations.balanced;
     
     if (newFormation.id !== this.state.currentFormation.id) {
@@ -457,11 +488,15 @@ export class AIController {
     }
     
     candidates.sort((a, b) => b.score - a.score);
-    
-    // ✅ IMPROVED: Difficulty-based move selection
+
     let selected: ShotCandidate;
-    if (this.difficulty === 'hard') {
-      // Hard: always pick the best candidate
+    if (this.difficulty === 'impossible') {
+      const topN = Math.min(2, candidates.length);
+      selected = candidates[0];
+      if (topN > 1 && Math.random() < 0.14) {
+        selected = Phaser.Math.RND.pick(candidates.slice(0, topN));
+      }
+    } else if (this.difficulty === 'hard') {
       selected = candidates[0];
     } else if (this.difficulty === 'medium') {
       // Medium: random among top 2-3 candidates
@@ -491,19 +526,31 @@ export class AIController {
     if (this.bossId) {
       return Math.random() < 0.7;
     }
-    
-    return Math.random() < this.settings.cardUsageChance;
+
+    let chance = this.settings.cardUsageChance;
+    const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
+    if (bunker > 0.58) {
+      chance = Math.min(0.92, chance + 0.22);
+    }
+
+    return Math.random() < chance;
   }
 
   // ⭐ NEW: Попытка использовать карту
   private tryUseCard(): boolean {
     const gameState = this.buildGameState();
-    
+
+    const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
+    const minScore =
+      this.difficulty === 'easy'
+        ? this.settings.minCardScore
+        : this.settings.minCardScore * (bunker > 0.55 ? 0.58 : 1);
+
     const bestCard = AbilityScorer.getBestCard(
       this.availableCards,
       gameState,
       this.factionId,
-      this.settings.minCardScore
+      minScore
     );
     
     if (!bestCard) {
@@ -541,60 +588,63 @@ export class AIController {
 
   private generateAllCandidates(): ShotCandidate[] {
     const candidates: ShotCandidate[] = [];
-    
-    // ✅ NEW: Evaluate danger level for defensive weighting
+
     const danger = AIUtils.evaluateDangerLevel(this.ball, this.fieldBounds, true);
     const attackOpportunity = AIUtils.evaluateAttackOpportunity(this.ball, this.fieldBounds, true);
-    
-    // ✅ Универсальный цикл для любого количества юнитов
+    const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
+    const bunkerAttackBoost = 1 + bunker * 0.62;
+
     for (const unit of this.aiUnits) {
-      // Голевой удар
       const goal = this.evaluateGoalShot(unit);
       if (goal) {
-        // Boost goal shots when attack opportunity is high
         if (attackOpportunity > 0.6) {
           goal.score *= 1.2;
         }
+        if (bunker > 0.52) {
+          goal.score *= bunkerAttackBoost;
+        }
         candidates.push(goal);
       }
-      
-      // Защита
+
       const defend = this.evaluateDefenseShot(unit);
       if (defend) {
-        // ✅ NEW: Increase defense weight when danger is high
         if (danger > 0.7) {
-          defend.score *= 1.3; // Prioritize defense in dangerous situations
+          defend.score *= 1.3;
         }
-        // Suppress defense when danger is very low
         if (danger < 0.3) {
           defend.score *= 0.7;
         }
+        if (bunker > 0.55 && danger < 0.68) {
+          defend.score *= 1 - bunker * 0.24;
+        }
         candidates.push(defend);
       }
-      
-      // Пас
+
       if (Math.random() < this.settings.passChance) {
         const pass = this.evaluatePass(unit);
         if (pass) {
-          // Suppress passes when danger is extremely high (prioritize clearing)
           if (danger > 0.8) {
             pass.score *= 0.5;
+          }
+          if (bunker > 0.48) {
+            pass.score *= 1.12;
           }
           candidates.push(pass);
         }
       }
-      
-      // Давление
+
       const pressure = this.evaluatePressure(unit);
       if (pressure) {
-        // Suppress pressure when danger is high
-        if (danger > 0.7) {
+        if (danger > 0.7 && bunker < 0.38) {
           pressure.score *= 0.6;
+        }
+        if (bunker > 0.45) {
+          pressure.score *= 1 + bunker * 0.48;
         }
         candidates.push(pressure);
       }
     }
-    
+
     return candidates;
   }
 

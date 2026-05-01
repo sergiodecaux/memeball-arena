@@ -18,7 +18,7 @@ import { AIDifficulty } from '../../types';
 import { getAIFormationsForTeamSize, getDefaultAIFormation } from '../../ai/AIFormations';
 import { GameStartData, MultiplayerManager, PvPPlayer } from '../../managers/MultiplayerManager';
 import { getUnit, getStarterUnits, UnitData, TUTORIAL_LEGENDARY_UNITS } from '../../data/UnitsCatalog';
-import { UNITS_REPOSITORY, UnitRarity, getUnitById as getRepositoryUnit } from '../../data/UnitsRepository';
+import { UNITS_REPOSITORY, UnitRarity, getUnitById as getRepositoryUnit, getUnitsByFactionAndRole } from '../../data/UnitsRepository';
 
 // === AI UPGRADE PRESETS BY DIFFICULTY ===
 
@@ -433,6 +433,18 @@ export class EntityFactory {
   }
 
   /**
+   * Роли по слотам: танк, универсал, снайпер, трикстер — без одинаковых «стартовых» клонов на высоких уровнях.
+   */
+  private pickAIRoleSlots(teamSize: number): CapClass[] {
+    const cycle: CapClass[] = ['tank', 'balanced', 'sniper', 'trickster'];
+    const roles: CapClass[] = [];
+    for (let i = 0; i < teamSize; i++) {
+      roles.push(cycle[i % cycle.length]);
+    }
+    return roles;
+  }
+
+  /**
    * ⭐ NEW: Выбирает команду AI в зависимости от сложности
    * easy: только базовые стартовые юниты
    * medium: может добавить некоторые Common юниты из 80 новых
@@ -441,34 +453,41 @@ export class EntityFactory {
    */
   private getAITeamForDifficulty(factionId: FactionId, teamSize: number, difficulty: AIDifficulty | undefined): string[] {
     if (!difficulty || difficulty === 'easy') {
-      // Easy: только стартовые юниты
       return this.getDefaultTeam(factionId, teamSize);
     }
 
     const rarityPool = this.getRarityPoolForDifficulty(difficulty);
     const factionUnits = UNITS_REPOSITORY.filter(u => u.factionId === factionId);
-    
+    const roles = this.pickAIRoleSlots(teamSize);
     const team: string[] = [];
-    
+
     for (let i = 0; i < teamSize; i++) {
-      // Выбираем рарность по вероятностям
+      const role = roles[i];
       const rarity = this.selectRarityFromPool(rarityPool);
-      
-      // Фильтруем юниты по рарности
-      const availableUnits = factionUnits.filter(u => u.rarity === rarity);
-      
-      if (availableUnits.length > 0) {
-        // Выбираем случайный юнит из доступных
-        const randomUnit = availableUnits[Math.floor(Math.random() * availableUnits.length)];
-        team.push(randomUnit.id);
+
+      let candidates = factionUnits.filter(
+        u => u.rarity === rarity && u.role === role && !team.includes(u.id)
+      );
+
+      if (candidates.length === 0) {
+        candidates = factionUnits.filter(u => u.rarity === rarity && !team.includes(u.id));
+      }
+
+      if (candidates.length === 0) {
+        const byRole = getUnitsByFactionAndRole(factionId, role).filter(u => !team.includes(u.id));
+        candidates = byRole.length > 0 ? byRole : factionUnits.filter(u => !team.includes(u.id));
+      }
+
+      if (candidates.length > 0) {
+        const pick = candidates[Math.floor(Math.random() * candidates.length)];
+        team.push(pick.id);
       } else {
-        // Fallback: используем стартового юнита
-        const defaultTeam = this.getDefaultTeam(factionId, 1);
-        team.push(defaultTeam[0]);
+        const fallback = this.getDefaultTeam(factionId, 1);
+        team.push(fallback[0]);
       }
     }
-    
-    console.log(`[EntityFactory] 🎲 AI Team (${difficulty}):`, team);
+
+    console.log(`[EntityFactory] 🎲 AI Team (${difficulty}, roles):`, team);
     return team;
   }
 

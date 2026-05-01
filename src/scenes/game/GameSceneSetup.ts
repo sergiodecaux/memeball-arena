@@ -5,7 +5,7 @@
 
 import Phaser from 'phaser';
 import { FIELD, GOAL, COLLISION_CATEGORIES, GAME, FACTIONS, FactionId, getFactionArena, WALL_PHYSICS } from '../../constants/gameConstants';
-import { FieldBounds, PlayerNumber } from '../../types';
+import { FieldBounds, PlayerNumber, normalizeGameAIDifficulty } from '../../types';
 import { Unit } from '../../entities/Unit';
 import { Ball } from '../../entities/Ball';
 import { playerData } from '../../data/PlayerData';
@@ -287,13 +287,10 @@ export class GameSceneSetup {
     } else {
       // ✅ ИСПРАВЛЕНО: Поддержка обоих полей isAI и vsAI
       state.isAIEnabled = data?.isAI ?? data?.vsAI ?? true;
-      // ✅ ИСПРАВЛЕНО: Поддержка aiDifficulty (number) и difficulty (string)
-      if (typeof data?.aiDifficulty === 'number') {
-        // League mode: aiDifficulty передается как число 1-10
-        state.aiDifficulty = 'medium'; // Конвертируем в строку (можно сделать маппинг)
-        console.log(`[GameSceneSetup] League AI difficulty: ${data.aiDifficulty}/10`);
-      } else {
-        state.aiDifficulty = data?.difficulty ?? 'medium';
+      {
+        const raw = data?.aiDifficulty ?? data?.difficulty;
+        state.aiDifficulty = normalizeGameAIDifficulty(raw, 'medium');
+        console.log(`[GameSceneSetup] AI difficulty normalized: ${raw} → ${state.aiDifficulty}`);
       }
       state.matchDuration = data?.matchDuration ?? GAME.DEFAULT_MATCH_DURATION;
       state.fieldSkinId = playerData.get().equippedFieldSkin || 'field_default';

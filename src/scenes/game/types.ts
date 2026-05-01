@@ -36,7 +36,8 @@ export interface GameSceneData {
   
   // ✅ AI флаг
   isAI?: boolean; // true если против бота (для лиги/турнира)
-  aiDifficulty?: number; // Сложность AI (для лиги)
+  /** Число (1–10, 0–1), строка уровня или `expert` из лиги — нормализуется в GameSceneSetup */
+  aiDifficulty?: number | string;
   
   // ✅ NEW PVP Mode
   mode?: 'pvp' | 'campaign' | 'casual';
