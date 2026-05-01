@@ -11,6 +11,7 @@ import {
   FactionConfig,
   ABILITY_CONFIG,
   UnitStatus,
+  FIELD,
 } from '../constants/gameConstants';
 import { PlayerNumber, CapUpgrades } from '../types';
 import { playerData } from '../data/PlayerData';
@@ -20,6 +21,7 @@ import { VFXManager } from '../managers/VFXManager';
 import { getMysticCapById } from '../data/CapCollectionCatalog';
 import { PassiveManager } from '../systems/PassiveManager';
 import { getRealUnitTextureKey } from '../utils/TextureHelpers';
+import { getUnitPhysicsModifier } from '../data/UnitsRepository';
 
 export interface UnitOptions {
   factionId?: FactionId;
@@ -51,6 +53,8 @@ export class Unit {
   private scale: number;
   // ⚠️ REMOVED: private upgrades: CapUpgrades; - прокачка убрана
   private readonly unitId: string;
+  /** Идентификатор уникальной физики — см. unitPhysicsModifiers.ts */
+  private readonly physicsModifier: string | undefined;
 
   private lastHitOffset = 0;
   private lastShotTime = 0;
@@ -144,6 +148,7 @@ export class Unit {
     this.factionId = options?.factionId || defaultFaction;
     this.faction = FACTIONS[this.factionId];
     this.unitId = options?.unitId || id;
+    this.physicsModifier = getUnitPhysicsModifier(this.unitId);
     
     if (options?.capClass) {
       this.capClass = options.capClass;
@@ -1201,7 +1206,35 @@ export class Unit {
     // 9. 🧬 SHIELD ROTATION ANIMATION
     this.updateShieldRotation();
 
+    // 10. Якорь у своих ворот (Bunker Bot)
+    this.updateAnchorGoalFriction();
+
+    // 11. Xeno: лёгкое «motion blur» через альфу спрайта при скорости
+    this.updateInsectSpeedBlur(speed);
+
     this.lastSpeed = speed;
+  }
+
+  /** У ворот своей половины резко повышаем frictionStatic — почти не сдвигается с места */
+  private updateAnchorGoalFriction(): void {
+    if (this.physicsModifier !== 'anchor_near_own_goal') return;
+    if (this.status === UnitStatus.STUNNED) return;
+
+    const h = FIELD.HEIGHT;
+    const margin = 110;
+    const nearOwn =
+      this.owner === 1 ? this.body.position.y > h - margin : this.body.position.y < margin;
+
+    this.scene.matter.body.set(this.body, {
+      frictionStatic: nearOwn ? 1 : 0.12,
+      friction: nearOwn ? 0.55 : this.stats.friction,
+    });
+  }
+
+  private updateInsectSpeedBlur(speed: number): void {
+    if (this.factionId !== 'insect' || !this.unitSprite) return;
+    const t = Phaser.Math.Clamp((speed - 14) / 22, 0, 1);
+    this.unitSprite.setAlpha(Phaser.Math.Linear(1, 0.82, t));
   }
 
   /**
@@ -1472,6 +1505,14 @@ export class Unit {
     }
 
     this.scene.matter.body.setInertia(this.body, Infinity);
+
+    // Магма: «тяжесть» — выше трение, как камень (глобально для фракции)
+    if (this.factionId === 'magma') {
+      this.scene.matter.body.set(this.body, {
+        frictionStatic: 1,
+        friction: 0.5,
+      });
+    }
   }
 
   private setupInteractivity(): void {
@@ -1622,6 +1663,7 @@ export class Unit {
   getCapClass(): CapClass { return this.capClass; }
   getFactionId(): FactionId { return this.factionId; }
   getUnitId(): string { return this.unitId; }
+  getPhysicsModifier(): string | undefined { return this.physicsModifier; }
   // ⚠️ REMOVED: getUpgrades() - прокачка убрана
   getStatus(): UnitStatus { return this.status; }
   getAbilityCooldown(): number { return this.abilityCooldown; }

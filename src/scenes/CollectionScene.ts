@@ -4,6 +4,7 @@
 import Phaser from 'phaser';
 import { FactionId, FACTIONS, FACTION_IDS, CapClass } from '../constants/gameConstants';
 import { UNITS_REPOSITORY, getUnitsByFaction as getRepositoryUnitsByFaction, UnitData as RepoUnitData, UnitRarity, getUnitById, getDisplayName } from '../data/UnitsRepository';
+import { mergeUnitDisplay } from '../data/unitDisplayOverrides';
 import { playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
 import { hapticImpact } from '../utils/Haptics';
@@ -1051,6 +1052,8 @@ export class CollectionScene extends Phaser.Scene {
       this.modalContainer.destroy();
     }
 
+    const u = mergeUnitDisplay(unit);
+
     const isOwned = playerData.ownsUnit(unit.id);
     const isPremium = unit.isPremium === true;
     const premiumPrice = unit.premiumPrice || 1000;
@@ -1068,7 +1071,7 @@ export class CollectionScene extends Phaser.Scene {
 
     // Модальное окно
     const modalWidth = Math.min(this.width - 32, 400);
-    const modalHeight = Math.min(this.height - 60, 680);
+    const modalHeight = Math.min(this.height - 60, 760);
     
     this.modalContainer = this.add.container(this.width / 2, this.height / 2);
     this.modalContainer.setDepth(1001);
@@ -1240,8 +1243,54 @@ export class CollectionScene extends Phaser.Scene {
 
     yOffset += 8;
 
-    // Способность (если есть)
-    if (unit.specialAbility) {
+    // Пассивная способность (читаемое описание эффекта)
+    if (u.passive?.description && u.passive.name) {
+      const sepPassive = this.add.graphics();
+      sepPassive.lineStyle(2, rarityColor.border, 0.3);
+      sepPassive.lineBetween(-modalWidth / 2 + 30, yOffset, modalWidth / 2 - 30, yOffset);
+      this.modalContainer.add(sepPassive);
+      yOffset += 14;
+
+      const passiveTitle = this.add.text(0, yOffset, `⚙ ${COLLECTION_RU.ui.passive}`, {
+        fontSize: '14px',
+        color: '#a78bfa',
+        fontStyle: 'bold',
+        fontFamily: getFonts().tech,
+        stroke: '#000000',
+        strokeThickness: 3,
+      }).setOrigin(0.5);
+      this.modalContainer.add(passiveTitle);
+      yOffset += 20;
+
+      const passiveName = this.add.text(0, yOffset, u.passive.name, {
+        fontSize: '13px',
+        color: '#fbbf24',
+        fontStyle: 'bold',
+        fontFamily: getFonts().tech,
+        stroke: '#000000',
+        strokeThickness: 2,
+        wordWrap: { width: modalWidth - 60 },
+        align: 'center',
+      }).setOrigin(0.5, 0);
+      this.modalContainer.add(passiveName);
+      yOffset += passiveName.height + 6;
+
+      const passiveDesc = this.add.text(0, yOffset, u.passive.description, {
+        fontSize: '11px',
+        color: '#d4d4d8',
+        wordWrap: { width: modalWidth - 56 },
+        align: 'center',
+        lineSpacing: 4,
+        stroke: '#000000',
+        strokeThickness: 2,
+        fontFamily: getFonts().tech,
+      }).setOrigin(0.5, 0);
+      this.modalContainer.add(passiveDesc);
+      yOffset += passiveDesc.height + 14;
+    }
+
+    // Фирменный приём (короткая подпись)
+    if (u.specialAbility) {
       const separator2 = this.add.graphics();
       separator2.lineStyle(2, rarityColor.border, 0.3);
       separator2.lineBetween(-modalWidth / 2 + 30, yOffset, modalWidth / 2 - 30, yOffset);
@@ -1249,7 +1298,7 @@ export class CollectionScene extends Phaser.Scene {
 
       yOffset += 15;
 
-      const abilityTitle = this.add.text(0, yOffset, `✨ ${COLLECTION_RU.ui.ability}`, {
+      const abilityTitle = this.add.text(0, yOffset, `✨ ${COLLECTION_RU.ui.signature}`, {
         fontSize: '14px',
         color: '#ffaa00',
         fontStyle: 'bold',
@@ -1261,7 +1310,7 @@ export class CollectionScene extends Phaser.Scene {
 
       yOffset += 22;
 
-      const abilityText = this.add.text(0, yOffset, unit.specialAbility, {
+      const abilityText = this.add.text(0, yOffset, u.specialAbility, {
         fontSize: '12px',
         color: '#cccccc',
         wordWrap: { width: modalWidth - 70 },
@@ -1295,7 +1344,7 @@ export class CollectionScene extends Phaser.Scene {
 
     yOffset += 20;
 
-    const descText = this.add.text(0, yOffset, unit.description, {
+    const descText = this.add.text(0, yOffset, u.description, {
       fontSize: '11px',
       color: '#aaaaaa',
       wordWrap: { width: modalWidth - 70 },
@@ -1481,7 +1530,7 @@ export class CollectionScene extends Phaser.Scene {
     }
 
     // Кнопка ЗАКРЫТЬ
-    const closeBtn = this.createModalCloseButton(() => {
+    const closeBtn = this.createModalCloseButton(modalHeight, () => {
       if (this.modalContainer) {
         this.modalContainer.destroy();
         this.modalContainer = undefined;
@@ -1625,8 +1674,7 @@ export class CollectionScene extends Phaser.Scene {
   /**
    * Создает кнопку ЗАКРЫТЬ (внизу модалки)
    */
-  private createModalCloseButton(callback: () => void): Phaser.GameObjects.Container {
-    const modalHeight = Math.min(this.height - 60, 680);
+  private createModalCloseButton(modalHeight: number, callback: () => void): Phaser.GameObjects.Container {
     const container = this.add.container(0, modalHeight / 2 - 25); // Внизу модалки
 
     const bg = this.add.graphics();

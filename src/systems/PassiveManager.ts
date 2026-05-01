@@ -4,7 +4,7 @@
 import Phaser from 'phaser';
 import { Unit } from '../entities/Unit';
 import { Ball } from '../entities/Ball';
-import { getUnitById, getUnitPassive } from '../data/UnitsRepository';
+import { getUnitById, getUnitPassive, getUnitPhysicsModifier } from '../data/UnitsRepository';
 import { FactionId } from '../constants/gameConstants';
 import { 
   PassiveType, 
@@ -22,12 +22,17 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private state: MatchPassiveState;
   private units: Map<string, Unit> = new Map();
   private ball: Ball | null = null;
-  private playerId: number;
+  /** Эффекты мяча от пассивок (slow_on_hit и т.д.) — раньше только слали событие без хранения */
+  private ballPassiveEffects = new Map<string, { value: number; sourceUnitId: string }>();
   
-  constructor(scene: Phaser.Scene, playerId: number) {
+  /** Стабильные ссылки для корректной отписки в destroy() */
+  private readonly boundOnGoalScored = this.onGoalScored.bind(this);
+  private readonly boundOnTurnStarted = this.onTurnStarted.bind(this);
+  private readonly boundOnTurnEnded = this.onTurnEnded.bind(this);
+  
+  constructor(scene: Phaser.Scene, _playerId?: number) {
     super();
     this.scene = scene;
-    this.playerId = playerId;
     this.state = this.createInitialState();
     this.setupEventListeners();
   }
@@ -64,9 +69,9 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   private setupEventListeners(): void {
-    eventBus.on(GameEvents.GOAL_SCORED, this.onGoalScored.bind(this));
-    eventBus.on(GameEvents.TURN_STARTED, this.onTurnStarted.bind(this));
-    eventBus.on(GameEvents.TURN_ENDED, this.onTurnEnded.bind(this));
+    eventBus.on(GameEvents.GOAL_SCORED, this.boundOnGoalScored);
+    eventBus.on(GameEvents.TURN_STARTED, this.boundOnTurnStarted);
+    eventBus.on(GameEvents.TURN_ENDED, this.boundOnTurnEnded);
   }
   
   // ========== СОБЫТИЯ МАТЧА ==========
@@ -125,8 +130,17 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     const unitId = unit.getUnitId();
     const passive = this.getUnitPassive(unitId);
     const unitState = this.state.units[unitId];
-    
-    if (!passive || !unitState) return force;
+
+    const tagBallPhysics = () => {
+      if (this.ball) {
+        this.ball.applyShotPhysicsModifier(getUnitPhysicsModifier(unitId));
+      }
+    };
+
+    if (!passive || !unitState) {
+      tagBallPhysics();
+      return force;
+    }
     
     // Увеличиваем счётчик ударов
     unitState.shotCount++;
@@ -161,6 +175,8 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     
     // Применяем бонусы от активных баффов
     modifiedForce = this.applyActiveBuffsToForce(unitId, modifiedForce);
+
+    tagBallPhysics();
     
     return modifiedForce;
   }
@@ -171,7 +187,9 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     
     // Rocket Gunner: отталкивает ближайшего врага
     if (passive.name === 'Реактивный залп') {
-      this.pushNearestEnemy(unit, params.radius || 60, params.value || 30);
+      if (this.pushNearestEnemy(unit, params.radius || 60, params.value || 30)) {
+        this.showPassiveActivation(unit, passive.name);
+      }
     }
     
     // Lava Sniper: мяч проходит сквозь первого врага
@@ -186,7 +204,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     
     // Venom: мяч замедляет первого врага
     if (passive.name === 'Коррозийный выстрел') {
-      this.setBallSlowOnHit(params.value || 0.10);
+      this.setBallSlowOnHit(unit, params.value || 0.10);
     }
     
     return modifiedForce;
@@ -312,12 +330,15 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   public onBallCollision(unit: Unit, ball: Ball): void {
-    // Check for ball slow effect
     const ballSlowEffect = this.getBallEffect('slow_on_hit');
-    if (ballSlowEffect && this.isEnemy(unit)) {
-      this.applyDebuff(unit, 'slow', ballSlowEffect.value, 1, ballSlowEffect.sourceUnitId);
-      this.clearBallEffect('slow_on_hit');
-    }
+    if (!ballSlowEffect) return;
+
+    const sourceUnit = this.units.get(ballSlowEffect.sourceUnitId);
+    if (!sourceUnit || unit.owner === sourceUnit.owner) return;
+
+    this.applyDebuff(unit, 'slow', ballSlowEffect.value, 1, ballSlowEffect.sourceUnitId);
+    this.showPassiveActivation(unit, 'Замедление!', 0x88ff66);
+    this.clearBallEffect('slow_on_hit');
   }
   
   // ========== АУРЫ ==========
@@ -417,8 +438,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       result.durationBonus = params.duration || 1;
     }
     
-    // Colossus (Cyborg): Barrier +30% length
-    if (passive.name === 'Титановый щит' && cardType === 'cyborg_barrier') {
+    if (passive.name === 'Титановый щит' && (cardType === 'cyborg_barrier' || cardType === 'cyborg_shield')) {
       result.radiusBonus = params.value || 0.30;
     }
     
@@ -590,10 +610,6 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     return unit.owner;
   }
   
-  private isEnemy(unit: Unit): boolean {
-    return unit.owner !== this.playerId;
-  }
-  
   private isAlly(unit1: Unit, unit2: Unit): boolean {
     return unit1.owner === unit2.owner;
   }
@@ -762,7 +778,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   
   // ========== СПЕЦИАЛЬНЫЕ ЭФФЕКТЫ ==========
   
-  private pushNearestEnemy(unit: Unit, radius: number, pushDistance: number): void {
+  private pushNearestEnemy(unit: Unit, radius: number, pushDistance: number): boolean {
     let nearestEnemy: Unit | null = null;
     let nearestDist = Infinity;
     
@@ -775,39 +791,40 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       }
     });
     
-    if (nearestEnemy) {
-      const angle = Phaser.Math.Angle.Between(unit.x, unit.y, nearestEnemy.x, nearestEnemy.y);
-      const pushX = Math.cos(angle) * pushDistance;
-      const pushY = Math.sin(angle) * pushDistance;
-      
-      // Apply push force
-      eventBus.dispatch(GameEvents.PASSIVE_PUSH, {
-        targetUnitId: nearestEnemy.getUnitId(),
-        pushX,
-        pushY,
-      });
-    }
+    if (!nearestEnemy) return false;
+
+    const angle = Phaser.Math.Angle.Between(unit.x, unit.y, nearestEnemy.x, nearestEnemy.y);
+    const pushX = Math.cos(angle) * pushDistance;
+    const pushY = Math.sin(angle) * pushDistance;
+
+    eventBus.dispatch(GameEvents.PASSIVE_PUSH, {
+      targetUnitId: nearestEnemy.getUnitId(),
+      pushX,
+      pushY,
+    });
+    this.showPassiveActivation(nearestEnemy, 'Толчок!', 0xff8844);
+    return true;
   }
   
   private setBallPassThrough(count: number): void {
     eventBus.dispatch(GameEvents.BALL_PASS_THROUGH, { count });
   }
   
-  private setBallSlowOnHit(value: number): void {
-    // Store effect to apply on next ball-enemy collision
-    this.setBallEffect('slow_on_hit', value, 'venom');
+  private setBallSlowOnHit(sourceUnit: Unit, value: number): void {
+    this.setBallEffect('slow_on_hit', value, sourceUnit.getUnitId());
   }
   
-  private setBallEffect(type: string, value: number, sourceId: string): void {
-    eventBus.dispatch(GameEvents.BALL_EFFECT_SET, { type, value, sourceUnitId: sourceId });
+  private setBallEffect(type: string, value: number, sourceUnitId: string): void {
+    this.ballPassiveEffects.set(type, { value, sourceUnitId });
+    eventBus.dispatch(GameEvents.BALL_EFFECT_SET, { type, value, sourceUnitId });
   }
   
-  private getBallEffect(type: string): ActivePassiveEffect | null {
-    // Get from ball state - implemented in Ball.ts
-    return null;
+  private getBallEffect(type: string): { value: number; sourceUnitId: string } | null {
+    return this.ballPassiveEffects.get(type) ?? null;
   }
   
   private clearBallEffect(type: string): void {
+    this.ballPassiveEffects.delete(type);
     eventBus.dispatch(GameEvents.BALL_EFFECT_CLEAR, { type });
   }
   
@@ -1040,9 +1057,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   // ========== ОЧИСТКА ==========
   
   public destroy(): void {
-    eventBus.off(GameEvents.GOAL_SCORED, this.onGoalScored.bind(this));
-    eventBus.off(GameEvents.TURN_STARTED, this.onTurnStarted.bind(this));
-    eventBus.off(GameEvents.TURN_ENDED, this.onTurnEnded.bind(this));
+    eventBus.off(GameEvents.GOAL_SCORED, this.boundOnGoalScored);
+    eventBus.off(GameEvents.TURN_STARTED, this.boundOnTurnStarted);
+    eventBus.off(GameEvents.TURN_ENDED, this.boundOnTurnEnded);
+    this.ballPassiveEffects.clear();
     this.units.clear();
     this.ball = null;
   }

@@ -14,6 +14,7 @@ import {
   getRarityName as getUnitRarityName,
 } from '../data/UnitsCatalog';
 import { getShopUnitsFromRepository, getPremiumUnits, UnitData as RepositoryUnitData, getDisplayName } from '../data/UnitsRepository'; // ✅ НОВОЕ: Магазинные юниты из репозитория
+import { mergeUnitDisplay } from '../data/unitDisplayOverrides';
 
 // ✅ Union type для работы с юнитами из обоих источников
 type AnyUnitData = CatalogUnitData | RepositoryUnitData;
@@ -618,7 +619,7 @@ export class ShopScene extends Phaser.Scene {
         const premiumPrice = unit.premiumPrice || 1000;
         const canAfford = playerData.get().crystals >= premiumPrice;
 
-        const cardH = unit.specialAbility ? 200 : 175;
+        const cardH = mergeUnitDisplay(unit).specialAbility ? 200 : 175;
         const container = this.createPremiumUnitCard(12, y, width - 24, cardH, unit, isUnitOwned, canBuy, canAfford, premiumPrice);
         this.contentContainer.add(container);
         this.cards.push({ container, y, height: cardH });
@@ -647,7 +648,7 @@ export class ShopScene extends Phaser.Scene {
         const isLocked = !isOwned; // Фракция не куплена
         const canBuy = isOwned && !isUnitOwned; // Фракция есть, юнит не куплен
 
-        const cardH = unit.specialAbility ? 200 : 175;
+        const cardH = mergeUnitDisplay(unit).specialAbility ? 200 : 175;
         const container = this.createUnitCard(12, y, width - 24, cardH, unit, isUnitOwned, canBuy, isLocked, faction);
         this.contentContainer.add(container);
         this.cards.push({ container, y, height: cardH });
@@ -693,6 +694,7 @@ export class ShopScene extends Phaser.Scene {
     const fonts = getFonts();
     const colors = getColors();
     const container = this.add.container(x, y);
+    const du = mergeUnitDisplay(unit);
 
     // Цвета для legendary редкости
     const rarityColor = 0xf59e0b; // Золотой
@@ -833,7 +835,7 @@ export class ShopScene extends Phaser.Scene {
     descBg.fillRoundedRect(tx - 3, descY, tw + 6, descH, 6);
     container.add(descBg);
     
-    let descText = unit.description || 'An exclusive premium unit with unique abilities.';
+    let descText = du.description || 'An exclusive premium unit with unique abilities.';
     if (descText.length > 80) descText = descText.substring(0, 77) + '...';
     
     container.add(this.add.text(tx, descY + 4, descText, {
@@ -880,7 +882,7 @@ export class ShopScene extends Phaser.Scene {
     });
 
     // ========== СПОСОБНОСТЬ ==========
-    if (unit.specialAbility) {
+    if (du.specialAbility) {
       const abilityY = 130;
       const abBg = this.add.graphics();
       abBg.fillStyle(rarityColor, 0.15);
@@ -889,7 +891,7 @@ export class ShopScene extends Phaser.Scene {
       abBg.strokeRoundedRect(tx - 3, abilityY, tw + 6, 22, 6);
       container.add(abBg);
       
-      container.add(this.add.text(tx + 2, abilityY + 11, `✦ ${unit.specialAbility}`, {
+      container.add(this.add.text(tx + 2, abilityY + 11, `✦ ${du.specialAbility}`, {
         fontSize: '9px',
         fontFamily: fonts.tech,
         color: '#fbbf24',
@@ -1078,6 +1080,9 @@ export class ShopScene extends Phaser.Scene {
     const colors = getColors();
     const container = this.add.container(x, y);
 
+    const displayUnit: AnyUnitData =
+      'fragmentsRequired' in unit ? mergeUnitDisplay(unit as RepositoryUnitData) : unit;
+
     const rarityColor = getUnitRarityColor(unit.rarity);
     // ✅ НОВОЕ: Юниты из Repository используют 'role' вместо 'capClass'
     const unitClass = 'capClass' in unit ? unit.capClass : ('role' in unit ? unit.role : 'balanced');
@@ -1185,7 +1190,7 @@ export class ShopScene extends Phaser.Scene {
     descBg.fillRoundedRect(tx - 3, descY, tw + 6, descH, 6);
     container.add(descBg);
 
-    let descText = unit.description;
+    let descText = displayUnit.description;
     if (descText.length > 80) descText = descText.substring(0, 77) + '...';
     container.add(this.add.text(tx, descY + 4, descText, {
       fontSize: '9px', color: '#cccccc', wordWrap: { width: tw }, lineSpacing: 1,
@@ -1213,7 +1218,7 @@ export class ShopScene extends Phaser.Scene {
       container.add(barFill);
     });
 
-    if (unit.specialAbility) {
+    if (displayUnit.specialAbility) {
       const abilityY = 130;
       const abBg = this.add.graphics();
       abBg.fillStyle(faction.color, 0.12);
@@ -1221,7 +1226,7 @@ export class ShopScene extends Phaser.Scene {
       abBg.lineStyle(1, faction.color, 0.25);
       abBg.strokeRoundedRect(tx - 3, abilityY, tw + 6, 22, 6);
       container.add(abBg);
-      container.add(this.add.text(tx + 2, abilityY + 11, `✦ ${unit.specialAbility}`, {
+      container.add(this.add.text(tx + 2, abilityY + 11, `✦ ${displayUnit.specialAbility}`, {
         fontSize: '9px', color: hexToString(faction.color), fontStyle: 'bold',
       }).setOrigin(0, 0.5));
     }

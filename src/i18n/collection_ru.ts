@@ -54,6 +54,8 @@ export const COLLECTION_RU = {
   // UI элементы
   ui: {
     ability: 'СПОСОБНОСТЬ',
+    passive: 'ПАССИВКА',
+    signature: 'ФИРМЕННЫЙ ПРИЁМ',
     description: 'ОПИСАНИЕ',
     fragments: 'ФРАГМЕНТЫ',
     craft: 'СОБРАТЬ',

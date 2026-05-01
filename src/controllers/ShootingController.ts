@@ -5,7 +5,7 @@ import { SHOOTING, CapClass, FACTIONS, FactionId, ABILITY_CONFIG, MAX_ACCURACY_S
 import { Cap } from '../entities/Cap';
 import { Unit } from '../entities/Unit';
 import { PlayerNumber } from '../types';
-import { getUnitById, getUnitAccuracy } from '../data/UnitsRepository';
+import { getUnitById, getUnitAccuracy, getUnitPhysicsModifier } from '../data/UnitsRepository';
 import { PassiveManager } from '../systems/PassiveManager';
 
 // === EXPORTED INTERFACES ===
@@ -442,14 +442,26 @@ export class ShootingController {
       const startY = cap.body.position.y;
       
       const aimLength = cap.getAimLineLength();
-      const dist = 300 + (force * 500 * aimLength);
+      let aimDistMult = 1;
+      let lineWidth = 4;
+      if (cap instanceof Unit) {
+        const mod = getUnitPhysicsModifier(cap.getUnitId());
+        if (mod === 'laser_aim_line') {
+          aimDistMult = 1.16;
+          lineWidth = 2;
+        } else if (mod === 'cosmos_long_range_aim') {
+          aimDistMult = 1.42;
+          lineWidth = 3;
+        }
+      }
+      const dist = (300 + (force * 500 * aimLength)) * aimDistMult;
 
       const hit = this.raycastWalls(startX, startY, dir.x, dir.y, dist);
       
       const endX = hit ? hit.x : startX + dir.x * dist;
       const endY = hit ? hit.y : startY + dir.y * dist;
 
-      this.trajectoryGraphics.lineStyle(4, color, 0.8);
+      this.trajectoryGraphics.lineStyle(lineWidth, color, 0.8);
       this.drawDashedLine(this.trajectoryGraphics, startX + dir.x * 30, startY + dir.y * 30, endX, endY, 15, 10);
 
       this.endMarker.setVisible(true);
@@ -999,6 +1011,14 @@ export class ShootingController {
     
     // Clamp accuracy
     accuracy = Phaser.Math.Clamp(accuracy, 0.5, 1.0);
+
+    const mod = getUnitPhysicsModifier(unit.getUnitId());
+    if (mod === 'stable_accuracy_097') {
+      accuracy = 0.97;
+    }
+    if (mod === 'perfect_accuracy_line') {
+      accuracy = 1.0;
+    }
     
     if (accuracy >= 1.0) return force;
     

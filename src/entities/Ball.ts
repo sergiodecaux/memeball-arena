@@ -68,6 +68,12 @@ export class Ball {
   private slowOnHitValue: number = 0;
   private slowOnHitSource: string = '';
 
+  /** Модификатор последнего удара по мячу (для коллизий) */
+  private shotPhysicsModifier: string | undefined;
+  private omegaPreserveWallSpeed = false;
+  private kineticImpactVsEnemyPending = false;
+  private ionStunOnNextEnemyHit = false;
+
   private static readonly PHYSICS = {
     RADIUS: 15,
     MASS: 1.2,
@@ -388,6 +394,7 @@ export class Ball {
     this.updateHitFlash();
 
     this.lastSpeed = speed;
+    this.clearShotPhysicsWhenNearlyStopped(speed);
   }
 
   /**
@@ -1211,6 +1218,10 @@ export class Ball {
     this.passThroughCount = 0;
     this.slowOnHitValue = 0;
     this.slowOnHitSource = '';
+    this.shotPhysicsModifier = undefined;
+    this.omegaPreserveWallSpeed = false;
+    this.kineticImpactVsEnemyPending = false;
+    this.ionStunOnNextEnemyHit = false;
   }
 
   getPosition(): { x: number; y: number } {
@@ -1256,6 +1267,39 @@ export class Ball {
       return result;
     }
     return null;
+  }
+
+  /** После удара фишки — маркеры для коллизий (Omega / Railgun / Ion) */
+  public applyShotPhysicsModifier(mod: string | undefined): void {
+    this.shotPhysicsModifier = mod;
+    this.omegaPreserveWallSpeed = mod === 'omega_no_bounce_decay';
+    this.kineticImpactVsEnemyPending = mod === 'kinetic_impact';
+    this.ionStunOnNextEnemyHit = mod === 'ion_stun_on_ball_hit_enemy';
+  }
+
+  public shouldPreserveOmegaWallSpeed(): boolean {
+    return this.omegaPreserveWallSpeed;
+  }
+
+  /** Одно касание врага после выстрела Railgun — усилить проход импульса */
+  public consumeKineticImpactEnemyHit(): boolean {
+    if (!this.kineticImpactVsEnemyPending) return false;
+    this.kineticImpactVsEnemyPending = false;
+    return true;
+  }
+
+  public shouldIonStunFromShot(): boolean {
+    return this.ionStunOnNextEnemyHit;
+  }
+
+  public clearIonStunShotFlag(): void {
+    this.ionStunOnNextEnemyHit = false;
+  }
+
+  private clearShotPhysicsWhenNearlyStopped(speed: number): void {
+    if (speed >= 2.8) return;
+    this.shotPhysicsModifier = undefined;
+    this.omegaPreserveWallSpeed = false;
   }
 
   destroy(): void {

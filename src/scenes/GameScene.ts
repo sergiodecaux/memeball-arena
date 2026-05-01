@@ -153,6 +153,10 @@ export class GameScene extends Phaser.Scene {
   // === Event Handlers ===
   private eventHandlers: Map<string, Function> = new Map();
 
+  /** Лента подсказок по пассивкам (экранные координаты) */
+  private passiveHudToast?: Phaser.GameObjects.Container;
+  private lastPassiveHudHapticAt = 0;
+
   // === Р РµР¶РёРј ===
   private isCampaignMode = false;
   private campaignLevelConfig?: LevelConfig;
@@ -887,9 +891,6 @@ export class GameScene extends Phaser.Scene {
     this.abilityManager.setPassiveManager(this.passiveManager);
     this.collisionHandler.setPassiveManager(this.passiveManager);
     
-    // Подписываемся на события пассивок
-    this.setupPassiveEventListeners();
-    
     // Initialize CampaignDialogueSystem for campaign mode
     if (this.isCampaignMode && this.campaignLevelConfig) {
       this.campaignDialogue = new CampaignDialogueSystem(this);
@@ -985,37 +986,6 @@ export class GameScene extends Phaser.Scene {
     this.scene.start('MainMenuScene', { fromTutorial: true, skipped: true });
   }
 
-  private setupPassiveEventListeners(): void {
-    eventBus.on(GameEvents.PASSIVE_ACTIVATED, (data: any) => {
-      this.showPassiveText(data.x, data.y, data.text, data.color);
-    });
-    
-    eventBus.on(GameEvents.UNIT_TELEPORT, (data: any) => {
-      const unit = this.getUnitById(data.unitId);
-      if (unit && unit instanceof Unit) {
-        unit.teleportTo?.(data.x, data.y);
-        this.vfxManager?.playTeleportEffect?.(data.x, data.y, 0x6366f1);
-      }
-    });
-    
-    eventBus.on(GameEvents.PASSIVE_PUSH, (data: any) => {
-      const unit = this.getUnitById(data.targetUnitId);
-      if (unit) {
-        unit.applyForce(data.pushX * 0.01, data.pushY * 0.01);
-      }
-    });
-    
-    eventBus.on(GameEvents.BALL_PASS_THROUGH, (data: any) => {
-      this.ball.setPassThroughCount(data.count);
-    });
-    
-    eventBus.on(GameEvents.CREATE_LAVA_POOL, (data: any) => {
-      if (this.abilityManager) {
-        this.abilityManager.createLavaPoolAt(data.x, data.y);
-      }
-    });
-  }
-  
   private getUnitById(unitId: string): GameUnit | undefined {
     return this.caps.find(cap => {
       if (cap instanceof Unit) {
@@ -1025,22 +995,83 @@ export class GameScene extends Phaser.Scene {
     });
   }
   
-  private showPassiveText(x: number, y: number, text: string, color: number): void {
-    const textObj = this.add.text(x, y, text, {
-      fontSize: '14px',
+  private passiveColorToCss(color: number): string {
+    const n = (color >>> 0) & 0xffffff;
+    return '#' + n.toString(16).padStart(6, '0');
+  }
+
+  private pulsePassiveFeedbackThrottled(): void {
+    const now = Date.now();
+    if (now - this.lastPassiveHudHapticAt < 260) return;
+    this.lastPassiveHudHapticAt = now;
+    HapticManager.trigger('light');
+  }
+
+  /** Всплывающая подпись у фишки на поле */
+  private showPassiveFloatingLabel(wx: number, wy: number, text: string, color: number): void {
+    const textObj = this.add.text(wx, wy, text, {
+      fontSize: '13px',
       fontStyle: 'bold',
-      color: '#' + color.toString(16).padStart(6, '0'),
+      color: this.passiveColorToCss(color),
       stroke: '#000000',
       strokeThickness: 3,
-    }).setOrigin(0.5);
-    
+    }).setOrigin(0.5).setDepth(920);
+
     this.tweens.add({
       targets: textObj,
-      y: y - 30,
+      y: wy - 36,
       alpha: 0,
-      duration: 1000,
+      duration: 1100,
       ease: 'Power2',
       onComplete: () => textObj.destroy(),
+    });
+  }
+
+  /** Компактная полоска у нижнего края (видна при любой камере) */
+  private showPassiveHudBanner(text: string, color: number): void {
+    const cam = this.cameras.main;
+    const yBase = cam.height - Math.min(130, Math.max(96, cam.height * 0.2));
+
+    if (this.passiveHudToast) {
+      this.passiveHudToast.destroy();
+      this.passiveHudToast = undefined;
+    }
+
+    const w = Math.min(cam.width * 0.88, 400);
+    const container = this.add.container(cam.centerX, yBase).setDepth(930).setScrollFactor(0);
+    const bg = this.add.rectangle(0, 0, w, 34, 0x0a0a12, 0.74).setStrokeStyle(2, (color >>> 0) & 0xffffff, 0.88);
+    const label = this.add.text(0, 0, text, {
+      fontSize: '13px',
+      fontFamily: 'Arial',
+      fontStyle: 'bold',
+      color: this.passiveColorToCss(color),
+    }).setOrigin(0.5);
+
+    container.add([bg, label]);
+    container.setAlpha(0);
+    this.passiveHudToast = container;
+
+    this.tweens.add({
+      targets: container,
+      alpha: 1,
+      duration: 100,
+      ease: 'Sine.out',
+      onComplete: () => {
+        this.time.delayedCall(760, () => {
+          if (!this.passiveHudToast || container !== this.passiveHudToast) return;
+          this.tweens.add({
+            targets: container,
+            alpha: 0,
+            y: yBase - 10,
+            duration: 220,
+            ease: 'Sine.in',
+            onComplete: () => {
+              container.destroy();
+              if (this.passiveHudToast === container) this.passiveHudToast = undefined;
+            },
+          });
+        });
+      },
     });
   }
 
@@ -1957,6 +1988,49 @@ export class GameScene extends Phaser.Scene {
     };
     this.eventHandlers.set(GameEvents.HAPTIC_FEEDBACK, onHapticFeedback);
     eventBus.subscribe(GameEvents.HAPTIC_FEEDBACK, onHapticFeedback, this);
+
+    // Пассивки: подписи на поле + компактная полоска + лёгкая вибрация (Telegram / Vibration API)
+    const onPassiveActivated = (data: { x: number; y: number; text: string; color: number }) => {
+      this.showPassiveFloatingLabel(data.x, data.y, data.text, data.color);
+      this.showPassiveHudBanner(data.text, data.color);
+      this.pulsePassiveFeedbackThrottled();
+    };
+    this.eventHandlers.set(GameEvents.PASSIVE_ACTIVATED, onPassiveActivated);
+    eventBus.subscribe(GameEvents.PASSIVE_ACTIVATED, onPassiveActivated, this);
+
+    const onUnitTeleportPassive = (data: { unitId: string; x: number; y: number }) => {
+      const unit = this.getUnitById(data.unitId);
+      if (unit && unit instanceof Unit) {
+        unit.teleportTo?.(data.x, data.y);
+        this.vfxManager?.playTeleportEffect?.(data.x, data.y, 0x6366f1);
+      }
+    };
+    this.eventHandlers.set(GameEvents.UNIT_TELEPORT, onUnitTeleportPassive);
+    eventBus.subscribe(GameEvents.UNIT_TELEPORT, onUnitTeleportPassive, this);
+
+    const onPassivePush = (data: { targetUnitId: string; pushX: number; pushY: number }) => {
+      const unit = this.getUnitById(data.targetUnitId);
+      if (unit) {
+        unit.applyForce(data.pushX * 0.01, data.pushY * 0.01);
+      }
+      HapticManager.trigger('medium');
+    };
+    this.eventHandlers.set(GameEvents.PASSIVE_PUSH, onPassivePush);
+    eventBus.subscribe(GameEvents.PASSIVE_PUSH, onPassivePush, this);
+
+    const onBallPassThrough = (data: { count: number }) => {
+      this.ball.setPassThroughCount(data.count);
+    };
+    this.eventHandlers.set(GameEvents.BALL_PASS_THROUGH, onBallPassThrough);
+    eventBus.subscribe(GameEvents.BALL_PASS_THROUGH, onBallPassThrough, this);
+
+    const onCreateLavaPoolPassive = (data: { x: number; y: number }) => {
+      if (this.abilityManager) {
+        this.abilityManager.createLavaPoolAt(data.x, data.y);
+      }
+    };
+    this.eventHandlers.set(GameEvents.CREATE_LAVA_POOL, onCreateLavaPoolPassive);
+    eventBus.subscribe(GameEvents.CREATE_LAVA_POOL, onCreateLavaPoolPassive, this);
 
     // OLD: Removed old PVP event sending (handled by pvpHelper/server now)
   }
@@ -3558,6 +3632,9 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.wasBackgrounded = false;
+    
+    this.passiveHudToast?.destroy();
+    this.passiveHudToast = undefined;
     
     // ✅ FIX: LeakGuard автоматически очистит все ресурсы
     // Нет необходимости вручную очищать таймеры и listeners

@@ -108,6 +108,8 @@ export class CollisionHandler {
         this.callbacks.setBallSpeedBeforeCollision(ball.getSpeed());
       }
 
+      this.applyPairPhysicsModifiers(pair);
+
       // === BALL vs UNIT ===
       if (this.isBallVsUnit(labelA, labelB)) {
         this.handleBallUnitCollision(bodyA, bodyB, labelA, labelB);
@@ -128,6 +130,28 @@ export class CollisionHandler {
       else if (this.isBallVsPost(labelA, labelB)) {
         this.handleBallPostCollision(bodyA, bodyB);
       }
+    }
+  }
+
+  /** Жёстко снижаем отскок мяча от обсидианового танка (до расчёта импульса). */
+  private applyPairPhysicsModifiers(pair: MatterJS.ICollisionPair): void {
+    const ball = this.callbacks.getBall();
+    if (!(ball instanceof Ball)) return;
+
+    const { bodyA, bodyB } = pair;
+    const ballBody = ball.body;
+    const unitBody = bodyA === ballBody ? bodyB : bodyB === ballBody ? bodyA : null;
+    if (!unitBody) return;
+
+    const caps = this.callbacks.getCaps();
+    const unit = caps.find(c => c.body === unitBody);
+    if (!unit || !(unit instanceof Unit)) return;
+
+    const mod = unit.getPhysicsModifier?.();
+    if (mod === 'obsidian_low_restitution') {
+      const p = pair as MatterJS.ICollisionPair & { restitution?: number };
+      const cur = typeof p.restitution === 'number' ? p.restitution : 0.88;
+      p.restitution = Math.min(cur, 0.09);
     }
   }
 
@@ -250,6 +274,21 @@ export class CollisionHandler {
     // Находим юнита
     const unit = caps.find(c => c.body === unitBody);
     if (!unit) return;
+
+    // Phase Shift: шанс «проскочить» без полноценного контакта
+    if (unit instanceof Unit && unit.getPhysicsModifier?.() === 'phase_dodge_ball_chance' && Math.random() < 0.2) {
+      const vx = ballBody.velocity.x;
+      const vy = ballBody.velocity.y;
+      const sp = Math.sqrt(vx * vx + vy * vy) || 1;
+      const nx = vx / sp;
+      const ny = vy / sp;
+      this.scene.matter.body.setPosition(ballBody, {
+        x: ballBody.position.x + nx * 12,
+        y: ballBody.position.y + ny * 12,
+      });
+      this.scene.matter.body.setVelocity(ballBody, { x: nx * sp * 1.03, y: ny * sp * 1.03 });
+      return;
+    }
     
     // ✅ ПАССИВКА: Проверяем pass-through
     if (ball && ball.consumePassThrough()) {
@@ -279,6 +318,29 @@ export class CollisionHandler {
     const relVelY = ballBody.velocity.y - unitBody.velocity.y;
     const impactSpeed = Math.sqrt(relVelX * relVelX + relVelY * relVelY);
     const impactForce = impactSpeed * (unit.body.mass || 1) * 0.5;
+
+    const shooter = this.callbacks.getLastShootingCap();
+
+    if (ball instanceof Ball && ball.shouldIonStunFromShot() && shooter && unit.owner !== shooter.owner && unit instanceof Unit) {
+      unit.applyStun(1);
+      ball.clearIonStunShotFlag();
+    }
+
+    if (ball instanceof Ball && shooter && unit.owner !== shooter.owner && ball.consumeKineticImpactEnemyHit()) {
+      const before = this.callbacks.getBallSpeedBeforeCollision();
+      const vx = ballBody.velocity.x;
+      const vy = ballBody.velocity.y;
+      const cur = Math.sqrt(vx * vx + vy * vy);
+      if (before > cur && before > 1.5) {
+        const scale = Math.min(before / Math.max(cur, 0.01), 2.2);
+        this.scene.matter.body.setVelocity(ballBody, { x: vx * scale, y: vy * scale });
+      }
+    }
+
+    if (unit instanceof Unit && unit.getPhysicsModifier?.() === 'dampen_receive_ball') {
+      const v = ballBody.velocity;
+      this.scene.matter.body.setVelocity(ballBody, { x: v.x * 0.9, y: v.y * 0.9 });
+    }
 
     if (import.meta.env.DEV) {
       console.log(`[Collision] ⚽ Ball hit by ${unit.factionId} unit, force: ${impactForce.toFixed(1)}`);
@@ -426,6 +488,42 @@ export class CollisionHandler {
     if (impactForce > 6) {
       this.screenShake(impactForce * 0.8);
     }
+
+    // 6. Магма: лёгкая тряска камеры при столкновении «камней»
+    if ((unitA.factionId === 'magma' || unitB.factionId === 'magma') && impactForce > 3) {
+      this.scene.cameras.main.shake(100, 0.005);
+    }
+
+    // 7. Steel Fist: доп. импульс врагу от своих ворот
+    const applyGoalwardPush = (src: Unit, victim: IGameUnit) => {
+      if (src.getPhysicsModifier?.() !== 'push_vector_goalward') return;
+      if (!(victim instanceof Unit)) return;
+      if (src.owner === victim.owner) return;
+      const outwardY = src.owner === 1 ? -1 : 1;
+      this.scene.matter.body.applyForce(victim.body, victim.body.position, {
+        x: 0,
+        y: outwardY * 0.00012 * impactForce,
+      });
+    };
+    if (unitA instanceof Unit && unitB instanceof Unit) {
+      applyGoalwardPush(unitA, unitB);
+      applyGoalwardPush(unitB, unitA);
+    }
+
+    // 8. Bug: кратковременный «глитч» спрайта врага
+    const glitchEnemy = (src: Unit, victim: IGameUnit) => {
+      if (src.getPhysicsModifier?.() !== 'glitch_sprite_flash_enemy') return;
+      if (!(victim instanceof Unit)) return;
+      if (src.owner === victim.owner) return;
+      victim.sprite.setAlpha(0.2);
+      this.scene.time.delayedCall(140, () => {
+        if (!victim.isDestroyed) victim.sprite.setAlpha(1);
+      });
+    };
+    if (unitA instanceof Unit && unitB instanceof Unit) {
+      glitchEnemy(unitA, unitB);
+      glitchEnemy(unitB, unitA);
+    }
   }
 
   // ============================================================
@@ -489,7 +587,10 @@ export class CollisionHandler {
     }
 
     // ✅ ДОБАВЛЕНО: Ограничитель скорости после отскока
-    this.limitBallSpeedAfterBounce(ball, false);
+    const juicyBall = ball as JuicyBall & Ball;
+    if (!(juicyBall instanceof Ball) || !juicyBall.shouldPreserveOmegaWallSpeed()) {
+      this.limitBallSpeedAfterBounce(ball, false);
+    }
 
     if (impactForce < 3) return; // Игнорируем слабые отскоки
 
@@ -586,7 +687,10 @@ export class CollisionHandler {
     }
 
     // ✅ ДОБАВЛЕНО: Ограничитель скорости после отскока от штанги (более жёсткий)
-    this.limitBallSpeedAfterBounce(ball, true);
+    const juicyBall = ball as JuicyBall & Ball;
+    if (!(juicyBall instanceof Ball) || !juicyBall.shouldPreserveOmegaWallSpeed()) {
+      this.limitBallSpeedAfterBounce(ball, true);
+    }
 
     // 🔥 ДРАМАТИЧЕСКИЕ ЭФФЕКТЫ
 

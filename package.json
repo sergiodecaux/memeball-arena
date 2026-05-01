@@ -15,6 +15,7 @@
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "codemod:leakguard": "npx jscodeshift -t scripts/codemods/leak-guardify.js --parser ts --extensions ts \"src/scenes/**/*.ts\"",
     "audit:leaks": "node scripts/audit-leaks.cjs",
+    "docs:units-balance": "node scripts/generate-units-balance-reference.mjs",
     "precommit": "npm run lint && npm run audit:leaks"
   },
   "dependencies": {

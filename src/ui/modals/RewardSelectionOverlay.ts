@@ -4,6 +4,7 @@
 
 import Phaser from 'phaser';
 import { UnitData, getUnitById } from '../../data/UnitsRepository';
+import { mergeUnitDisplay } from '../../data/unitDisplayOverrides';
 import { FACTIONS, FactionId } from '../../constants/gameConstants';
 import { eventBus, GameEvents } from '../../core/EventBus';
 import { AudioManager } from '../../managers/AudioManager';
@@ -160,6 +161,7 @@ export class RewardSelectionOverlay {
    * Создать одну карточку юнита
    */
   private createUnitCard(unitData: UnitData, x: number, y: number, width: number): UnitCardElements {
+    const displayUnit = mergeUnitDisplay(unitData);
     const container = this.scene.add.container(x, y);
     const factionColor = FACTION_COLORS[unitData.factionId];
     const height = 480;
@@ -204,7 +206,7 @@ export class RewardSelectionOverlay {
 
     // Описание
     const descY = statsY + 100;
-    const descText = this.scene.add.text(0, descY, unitData.description, {
+    const descText = this.scene.add.text(0, descY, displayUnit.description, {
       fontSize: '12px',
       fontFamily: 'Rajdhani, sans-serif',
       color: '#d1d5db',

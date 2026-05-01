@@ -2,6 +2,7 @@
 import { FactionId, FACTION_IDS, getFactionPrice } from '../constants/gameConstants';
 import { getUnitsByFaction, getStarterUnits, UnitData } from './UnitsCatalog';
 import { getStarterUnitsFromRepository, getPremiumUnits, getPremiumUnitById, UnitData as RepoUnitData, getDisplayName } from './UnitsRepository'; // ✅ НОВОЕ: Стартовые из репозитория
+import { mergeUnitDisplay } from './unitDisplayOverrides';
 import { playerData } from './PlayerData';
 
 export type OfferType = 
@@ -829,7 +830,7 @@ class OffersManagerClass {
       type: 'unit',
       title: '💎 PREMIUM UNIT',
       subtitle: getDisplayName(unit).toUpperCase(),
-      description: unit.description || `${unit.title} - Exclusive Legendary Unit`,
+      description: mergeUnitDisplay(unit).description || `${unit.title} - Exclusive Legendary Unit`,
       unitIds: [unit.id],
       originalPrice: price,
       discountedPrice: price, // Нет скидки для премиум юнитов

@@ -6,6 +6,8 @@
 
 import { FactionId, CapClass } from '../constants/gameConstants';
 import { PassiveAbility, PassiveType } from '../types/passives';
+import type { PhysicsModifierId } from '../types/units';
+import { UNIT_PHYSICS_MODIFIER_TABLE } from './unitPhysicsModifiers';
 import { getUnit } from './UnitsCatalog';
 
 // ==================== ВЕРСИЯ АССЕТОВ ====================
@@ -69,6 +71,8 @@ export interface UnitData {
   nameRu: string;              // Русское название
   accuracy: number;            // Точность 0.80-1.00
   passive: PassiveAbility;     // Пассивная способность
+  /** Перекрывает таблицу `unitPhysicsModifiers.ts`, если задано */
+  physicsModifier?: PhysicsModifierId;
 }
 
 // ==================== ЦВЕТА РЕДКОСТИ ====================
@@ -867,8 +871,8 @@ export const UNITS_REPOSITORY: UnitData[] = [
     passive: {
       type: 'card_enhance',
       name: 'Титановый щит',
-      description: 'Карта Barrier: +30% длина стены.',
-      params: { value: 0.30 }
+      description: 'Карта Energy Shield: +30% размер (грави-блок).',
+      params: { value: 0.30, cardType: 'energy_shield' }
     },
   },
   {
@@ -2790,4 +2794,10 @@ export function getDisplayName(unit: { name: string; nameRu?: string } | UnitDat
     return unit.nameRu;
   }
   return unit.name || 'Unknown';
+}
+
+/** Уникальная физика фишки для Matter.js / геймплея */
+export function getUnitPhysicsModifier(unitId: string): PhysicsModifierId | undefined {
+  const row = UNITS_REPOSITORY.find(u => u.id === unitId);
+  return row?.physicsModifier ?? UNIT_PHYSICS_MODIFIER_TABLE[unitId];
 }
