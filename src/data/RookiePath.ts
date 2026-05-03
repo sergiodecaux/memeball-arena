@@ -226,7 +226,6 @@ class RookiePathManager {
 
   /** Удаляет устаревшие id заданий и добавляет новые (после смены конфига). */
   private migrateTaskKeys(progress: RookiePathProgress): boolean {
-    if (progress.rewardClaimed) return false;
     const validIds = new Set(ROOKIE_TASKS_CONFIG.map((t) => t.id));
     let changed = false;
     for (const key of Object.keys(progress.tasks)) {
@@ -294,13 +293,12 @@ class RookiePathManager {
 
   updateAllProgress(): void {
     const progress = this.getProgress();
-    if (progress.rewardClaimed) return;
 
     let changed = false;
 
     ROOKIE_TASKS_CONFIG.forEach(config => {
       const taskProgress = progress.tasks[config.id];
-      if (taskProgress.claimed) return; // Уже забрано
+      if (!taskProgress || taskProgress.claimed) return;
 
       const newProgress = this.computeTaskProgress(config.id);
       
@@ -439,12 +437,17 @@ class RookiePathManager {
   }
 
   /**
-   * Проверяет, нужно ли показывать путь новичка
-   * Скрываем если путь завершен и награда получена
+   * Вкладка «ПУТЬ»: пока не забрана финальная фракция, или пока есть незакрытые задания
+   * (например новое задание после апдейта у тех, кто уже забрал финал).
    */
   shouldShowRookiePath(): boolean {
     const progress = this.getProgress();
-    return !progress.rewardClaimed;
+    if (!progress.rewardClaimed) return true;
+    return ROOKIE_TASKS_CONFIG.some((config) => {
+      const t = progress.tasks[config.id];
+      if (!t) return true;
+      return !t.completed || !t.claimed;
+    });
   }
 
   /**
