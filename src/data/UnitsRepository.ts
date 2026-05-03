@@ -14,7 +14,7 @@ import { getUnit } from './UnitsCatalog';
 // ==================== ВЕРСИЯ АССЕТОВ ====================
 // ⚠️ УВЕЛИЧИВАЙ ЭТО ЧИСЛО КАЖДЫЙ РАЗ КОГДА ОБНОВЛЯЕШЬ PNG ФИШЕК!
 // Это заставит Telegram перезагрузить изображения
-const ASSETS_VERSION = '5'; // Капитаны + PNG в assets/units/captains
+const ASSETS_VERSION = '6'; // Обновлённые PNG капитанов (captains/)
 
 // #region agent log
 try {
