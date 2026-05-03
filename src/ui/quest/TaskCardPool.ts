@@ -3,7 +3,7 @@
 
 import Phaser from 'phaser';
 import type { DailyTask, WeeklyTask } from '../../data/DailyTasks';
-import { getFonts } from '../../config/themes';
+import { getColors, getFonts } from '../../config/themes';
 
 export type QuestRow = DailyTask | WeeklyTask;
 
@@ -57,7 +57,7 @@ export class TaskCardPool {
       const titleText = this.scene.add.text(0, 0, '', {
         fontSize: `${15 * s}px`,
         fontFamily: fonts.tech,
-        color: '#fef9c3',
+        color: '#ffffff',
         fontStyle: 'bold',
         wordWrap: { width: this.cardWidth - 28 },
         maxLines: 2,
@@ -66,7 +66,7 @@ export class TaskCardPool {
       const descText = this.scene.add.text(0, 0, '', {
         fontSize: `${11 * s}px`,
         fontFamily: fonts.primary,
-        color: '#94a3b8',
+        color: '#9ca3af',
         wordWrap: { width: this.cardWidth - 28 },
         maxLines: 2,
       });
@@ -74,7 +74,7 @@ export class TaskCardPool {
       const progressText = this.scene.add.text(0, 0, '', {
         fontSize: `${12 * s}px`,
         fontFamily: fonts.primary,
-        color: '#e2e8f0',
+        color: '#d1d5db',
       });
 
       const progressBar = this.scene.add.graphics();
@@ -83,7 +83,7 @@ export class TaskCardPool {
       const rewardText = this.scene.add.text(0, 0, '', {
         fontSize: `${11 * s}px`,
         fontFamily: fonts.tech,
-        color: '#fde68a',
+        color: '#ffd700',
         wordWrap: { width: this.cardWidth - 28 },
       });
 
@@ -125,14 +125,15 @@ export class TaskCardPool {
   private buildClaimButton(): Phaser.GameObjects.Container {
     const btn = this.scene.add.container(0, 0);
     const fonts = getFonts();
+    const colors = getColors();
     const s = this.getScale();
     const bw = Math.round(118 * s);
     const bh = Math.round(34 * s);
 
     const bg = this.scene.add.graphics();
-    bg.fillGradientStyle(0xfff1b8, 0xffc24a, 0xf59e0b, 0xb45309, 1);
+    bg.fillGradientStyle(colors.uiAccent, colors.uiAccent, colors.uiSecondary, colors.uiSecondary, 1, 1, 1, 1);
     bg.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 999);
-    bg.lineStyle(2, 0xfffbeb, 0.95);
+    bg.lineStyle(2, 0xffffff, 0.75);
     bg.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 999);
     btn.add(bg);
 
@@ -141,7 +142,7 @@ export class TaskCardPool {
         .text(0, 0, 'ЗАБРАТЬ', {
           fontSize: `${13 * s}px`,
           fontFamily: fonts.tech,
-          color: '#1a0f08',
+          color: '#000000',
           fontStyle: 'bold',
         })
         .setOrigin(0.5)
@@ -215,6 +216,7 @@ export class TaskCardPool {
     onClaim: () => void
   ): void {
     const s = this.getScale();
+    const colors = getColors();
     const width = this.cardWidth;
     const height = Math.round(160 * s);
     const padding = Math.round(14 * s);
@@ -225,20 +227,20 @@ export class TaskCardPool {
 
     const titleX = -width / 2 + padding + iconCol;
 
-    // Фон и рамка
+    // Фон и рамка (как карточки в ShopScene)
     const bg = card.background;
     bg.clear();
     const isCompleted = task.completed;
     const isClaimed = task.claimed;
     const isClaimable = isCompleted && !isClaimed;
 
-    bg.fillGradientStyle(0x0f172a, 0x111827, 0x0b1220, 0x0b1220, 0.98, 0.98, 0.98, 0.98);
-    bg.fillRoundedRect(-width / 2, 0, width, height, 14);
+    bg.fillStyle(0x0a0a15, 0.98);
+    bg.fillRoundedRect(-width / 2, 0, width, height, 16);
 
-    const borderColor = isClaimable ? 0xfbbf24 : isClaimed ? 0x38bdf8 : 0x334155;
-    const borderAlpha = isClaimable ? 1 : isClaimed ? 0.55 : 0.5;
+    const borderColor = isClaimable ? colors.uiAccent : isClaimed ? 0x22c55e : 0x444455;
+    const borderAlpha = isClaimable ? 1 : isClaimed ? 0.65 : 0.55;
     bg.lineStyle(2, borderColor, borderAlpha);
-    bg.strokeRoundedRect(-width / 2, 0, width, height, 14);
+    bg.strokeRoundedRect(-width / 2, 0, width, height, 16);
 
     if (iconCol > 0 && 'icon' in task && task.icon) {
       card.iconText
@@ -276,7 +278,7 @@ export class TaskCardPool {
     const progress = Math.min(task.progress / task.maxProgress, 1);
     const fillWidth = barWidth * progress;
     if (fillWidth > 0) {
-      card.progressBarFill.fillStyle(isCompleted ? 0x34d399 : 0x22d3ee, 1);
+      card.progressBarFill.fillStyle(isCompleted ? colors.uiAccent : 0x475569, 1);
       card.progressBarFill.fillRoundedRect(-width / 2 + padding, barY, fillWidth, barHeight, 5);
     }
 

@@ -8,7 +8,8 @@ import { dailyTasksManager } from '../data/DailyTasks';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { battlePassManager } from '../managers/BattlePassManager';
 import { getCurrentSeason, BP_XP_REWARDS, getXPProgress } from '../data/BattlePassData';
-import { getFonts } from '../config/themes';
+import { getColors, getFonts, hexToString } from '../config/themes';
+import { hapticSelection } from '../utils/Haptics';
 import { rookiePathManager, ROOKIE_PATH_FINAL_REWARD } from '../data/RookiePath';
 import { FactionId } from '../constants/gameConstants';
 import { RookieFactionWheelOverlay } from '../ui/RookieFactionWheelOverlay';
@@ -40,6 +41,8 @@ export class QuestsScene extends Phaser.Scene {
   private activeTab: 'path' | 'daily' | 'weekly' | 'battlepass' = 'path';
   private tabContainer!: Phaser.GameObjects.Container;
   private s!: number;
+  /** Маска области скролла (как в ShopScene), не удалять при clearContentArea */
+  private contentScrollMask?: Phaser.GameObjects.Graphics;
   
   constructor() {
     super({ key: 'QuestsScene' });
@@ -75,6 +78,7 @@ export class QuestsScene extends Phaser.Scene {
     this.createHeader();
     this.createTabs();
     this.contentContainer = this.add.container(0, this.topOffset).setDepth(1);
+    this.ensureContentScrollMask();
     this.createContent();
     this.applyScrollPosition();
     this.setupScrolling();
@@ -160,85 +164,94 @@ export class QuestsScene extends Phaser.Scene {
   private createBackground(): void {
     const { width, height } = this.cameras.main;
 
-    const base = Math.max(width, height);
-    this.add.rectangle(width / 2, height / 2, width + 16, height + 16, 0x090f1f, 1);
+    const bg = this.add.graphics();
+    for (let y = 0; y < height; y++) {
+      const ratio = y / height;
+      const r = Math.floor(8 + ratio * 12);
+      const g = Math.floor(8 + ratio * 8);
+      const b = Math.floor(25 + ratio * 15);
+      bg.fillStyle((r << 16) | (g << 8) | b, 1);
+      bg.fillRect(0, y, width, 1);
+    }
 
-    const blobs = this.add.graphics();
-    blobs.fillStyle(0x8b5cf6, 0.11);
-    blobs.fillCircle(-base * 0.02, height * 0.12, base * 0.52);
-    blobs.fillStyle(0x06b6d4, 0.09);
-    blobs.fillCircle(width + base * 0.06, height * 0.36, base * 0.48);
-    blobs.fillStyle(0xfbbf24, 0.045);
-    blobs.fillCircle(width * 0.45, height * 0.92, base * 0.35);
-
-    this.add.rectangle(width / 2, height - 72, width, 160, 0x000000, 0.35);
+    for (let i = 0; i < 50; i++) {
+      const star = this.add.circle(
+        Phaser.Math.Between(0, width),
+        Phaser.Math.Between(0, height),
+        Phaser.Math.FloatBetween(0.5, 1.5),
+        0xffffff,
+        Phaser.Math.FloatBetween(0.2, 0.6)
+      );
+      this.tweens.add({
+        targets: star,
+        alpha: 0.1,
+        duration: Phaser.Math.Between(1500, 3000),
+        yoyo: true,
+        repeat: -1,
+      });
+    }
   }
   
   private createHeader(): void {
     const { width } = this.cameras.main;
     const data = playerData.get();
     const fonts = getFonts();
+    const colors = getColors();
     const s = this.s;
-    
+
     this.headerHeight = 95 + this.topInset;
-    // Обновляем topOffset для табов
-    this.topOffset = this.headerHeight + 50 * this.s;
-    
-    // Фон header
+    /** Как ShopScene.visibleAreaTop — контент ниже панели вкладок */
+    this.topOffset = 155 + this.topInset;
+
     const hdr = this.add.graphics().setDepth(100);
-    hdr.fillGradientStyle(0x0a0f22, 0x0f1628, 0x080c18, 0x080c18, 0.94, 0.94, 0.94, 0.94);
+    hdr.fillStyle(0x000000, 0.9);
     hdr.fillRect(0, 0, width, this.headerHeight);
-    hdr.fillStyle(0xfbbf24, 0.06);
-    hdr.fillRect(0, 0, width, Math.min(this.headerHeight, 72 + this.topInset));
-    hdr.lineStyle(3, 0xffc857, 0.45);
+    hdr.lineStyle(2, colors.uiAccent, 0.4);
     hdr.lineBetween(0, this.headerHeight, width, this.headerHeight);
-    hdr.lineStyle(1, 0x06b6d4, 0.25);
-    hdr.lineBetween(0, this.headerHeight - 2, width, this.headerHeight - 2);
-    
-    // Кнопка назад
+
     const backBtn = this.add.container(20, 28 + this.topInset).setDepth(101);
     const backCircle = this.add.graphics();
-    backCircle.fillStyle(0x1f2937, 0.9);
+    backCircle.fillStyle(0x050816, 0.95);
     backCircle.fillCircle(0, 0, 18);
-    backCircle.lineStyle(1, 0x38bdf8, 0.6);
+    backCircle.lineStyle(1, colors.uiAccent, 0.55);
     backCircle.strokeCircle(0, 0, 18);
     backBtn.add(backCircle);
-    
+
     const backText = this.add.text(0, 0, '←', {
-      fontSize: `${22 * s}px`,
-      fontFamily: fonts.primary,
-      color: '#fffbeb',
+      fontSize: `${20 * s}px`,
+      fontFamily: fonts.tech,
+      color: hexToString(colors.uiAccent),
       fontStyle: 'bold',
     }).setOrigin(0.5);
     backBtn.add(backText);
-    
+
     backBtn.setSize(36, 36);
     backBtn.setInteractive({ useHandCursor: true });
     backBtn.on('pointerdown', () => this.handleBack());
-    
-    // Заголовок
-    this.add.text(width / 2, 28 + this.topInset, 'ЗАДАНИЯ', {
-      fontSize: `${19 * s}px`,
-      fontFamily: fonts.tech,
-      color: '#fff6dc',
-      fontStyle: 'bold',
-      letterSpacing: 1,
-    }).setOrigin(0.5).setDepth(101);
-    
-    this.add.text(width / 2, 49 + this.topInset, 'Путь · Ежедневные · Недельный пропуск', {
-      fontSize: `${11 * s}px`,
-      fontFamily: fonts.primary,
-      color: '#bae6fd',
-    }).setOrigin(0.5).setDepth(101);
-    
-    // Валюта
+
+    this.add
+      .text(width / 2, 28 + this.topInset, '✦ ЗАДАНИЯ ✦', {
+        fontSize: `${16 * s}px`,
+        fontFamily: fonts.tech,
+        color: '#ffffff',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(101);
+
+    this.add
+      .text(width / 2, 48 + this.topInset, 'Путь · Ежедневные · Неделя · Battle Pass', {
+        fontSize: `${9 * s}px`,
+        fontFamily: fonts.tech,
+        color: hexToString(colors.uiAccent),
+      })
+      .setOrigin(0.5)
+      .setDepth(101);
+
     const currencyY = 72 + this.topInset;
     const currBg = this.add.graphics().setDepth(100);
     currBg.fillStyle(0x1a1a2e, 0.8);
-    currBg.fillStyle(0x1e293b, 0.85);
     currBg.fillRoundedRect(width / 2 - 100, currencyY - 12, 200, 24, 12);
-    currBg.lineStyle(1, 0xfbbf24, 0.35);
-    currBg.strokeRoundedRect(width / 2 - 100, currencyY - 12, 200, 24, 12);
     
     // Монеты
     const coinsIcon = this.add.image(width / 2 - 85, currencyY, 'ui_rewards_coins');
@@ -249,7 +262,7 @@ export class QuestsScene extends Phaser.Scene {
     this.headerCoinText = this.add.text(width / 2 - 25, currencyY, `${data.coins}`, {
       fontSize: `${13 * s}px`,
       fontFamily: fonts.tech,
-      color: '#fde68a',
+      color: '#ffd700',
       fontStyle: 'bold',
     }).setOrigin(1, 0.5).setDepth(101);
     
@@ -262,7 +275,7 @@ export class QuestsScene extends Phaser.Scene {
     this.headerCrystalText = this.add.text(width / 2 + 85, currencyY, `${data.crystals}`, {
       fontSize: `${13 * s}px`,
       fontFamily: fonts.tech,
-      color: '#e9d5ff',
+      color: '#ff00ff',
       fontStyle: 'bold',
     }).setOrigin(1, 0.5).setDepth(101);
   }
@@ -279,8 +292,27 @@ export class QuestsScene extends Phaser.Scene {
     this.scrollVelocity = 0;
     this.lastAppliedContentY = Number.NaN;
     if (this.contentContainer) {
-      this.contentContainer.removeAll(true);
+      const mask = this.contentScrollMask;
+      const kids = [...this.contentContainer.list];
+      for (const ch of kids) {
+        if (ch !== mask) ch.destroy(true);
+      }
     }
+  }
+
+  /** Область скролла как в ShopScene — контент не залезает под вкладки */
+  private ensureContentScrollMask(): void {
+    const { width, height } = this.cameras.main;
+    const viewH = Math.max(40, height - this.topOffset - this.bottomInset);
+    if (!this.contentScrollMask || !this.contentScrollMask.active) {
+      this.contentScrollMask = this.add.graphics({ x: 0, y: 0 });
+      this.contentContainer.addAt(this.contentScrollMask, 0);
+      this.contentScrollMask.setVisible(false);
+      this.contentContainer.setMask(this.contentScrollMask.createGeometryMask());
+    }
+    this.contentScrollMask.clear();
+    this.contentScrollMask.fillStyle(0xffffff, 1);
+    this.contentScrollMask.fillRect(0, 0, width + 8, viewH);
   }
 
   /** Перерисовка без полного scene.restart — дешевле для WebView */
@@ -289,6 +321,7 @@ export class QuestsScene extends Phaser.Scene {
     this.refreshHeaderCurrency();
     this.tabContainer?.destroy(true);
     this.clearContentArea();
+    this.ensureContentScrollMask();
     this.createTabs();
     this.createContent();
     this.applyScrollPosition();
@@ -299,6 +332,7 @@ export class QuestsScene extends Phaser.Scene {
     this.activeTab = tabId as QuestsScene['activeTab'];
     this.tabContainer.destroy(true);
     this.clearContentArea();
+    this.ensureContentScrollMask();
     this.createTabs();
     this.createContent();
     this.applyScrollPosition();
@@ -306,27 +340,16 @@ export class QuestsScene extends Phaser.Scene {
 
   private createTabs(): void {
     const { width } = this.scale;
-    const s = this.s;
+    const colors = getColors();
     const fonts = getFonts();
-    
-    const tabY = this.headerHeight + 5 * s;
-    this.tabContainer = this.add.container(0, tabY).setDepth(100);
 
-    const tabsBar = this.add.graphics();
-    tabsBar.fillGradientStyle(0x0f172a, 0x0b1220, 0x0b1220, 0x0f172a, 1, 1, 1, 1);
-    tabsBar.fillRect(0, -20 * s, width, 44 * s);
-    tabsBar.lineStyle(1, 0xfbbf24, 0.22);
-    tabsBar.strokeRoundedRect(10 * s, -18 * s, width - 20 * s, 40 * s, 10 * s);
-    this.tabContainer.addAt(tabsBar, 0);
-    
-    const tabs: { id: string; label: string; icon: string; badge?: number }[] = [
-      { id: 'path', label: 'ПУТЬ', icon: '🌟' },  // НОВАЯ ВКЛАДКА - ПЕРВАЯ!
-      { id: 'daily', label: 'ЕЖЕДНЕВНЫЕ', icon: '📋' },
-      { id: 'weekly', label: 'НЕДЕЛЬНЫЕ', icon: '📅' },
-      { id: 'battlepass', label: 'BATTLE PASS', icon: '🎫' },
+    const tabs: { id: string; label: string; badge?: number }[] = [
+      { id: 'path', label: '🌟 ПУТЬ' },
+      { id: 'daily', label: '📋 ДЕНЬ' },
+      { id: 'weekly', label: '📅 НЕДЕЛЯ' },
+      { id: 'battlepass', label: '🎫 PASS' },
     ];
 
-    // Добавляем бейдж для пути новичка если есть незабранные награды
     rookiePathManager.initialize();
     const rookieClaimable = rookiePathManager.getClaimableCount();
     const canClaimFinal = rookiePathManager.canClaimFinalReward();
@@ -334,81 +357,93 @@ export class QuestsScene extends Phaser.Scene {
       tabs[0].badge = rookieClaimable + (canClaimFinal ? 1 : 0);
     }
 
-    // Скрываем вкладку "ПУТЬ" если путь завершен и награда получена
     if (!rookiePathManager.shouldShowRookiePath()) {
-      tabs.shift(); // Удаляем первую вкладку
-      // Если активная вкладка была 'path', переключаемся на 'daily'
+      tabs.shift();
       if (this.activeTab === 'path') {
         this.activeTab = 'daily';
       }
     }
-    
-    const tabWidth = (width - 30 * s) / tabs.length;
-    
-    tabs.forEach((tab, index) => {
-      const tabX = 15 * s + index * tabWidth + tabWidth / 2;
+
+    const n = tabs.length;
+    const margin = 12;
+    const gap = 2;
+    const tabW = (width - margin * 2 - gap * (n - 1)) / n;
+    const tabH = 42;
+    const y = 105 + this.topInset;
+
+    this.tabContainer = this.add.container(0, 0).setDepth(89);
+
+    const tabsBg = this.add.graphics()
+      .fillStyle(0x000000, 0.5)
+      .fillRoundedRect(10, y - 3, width - 20, tabH + 6, 22);
+    this.tabContainer.add(tabsBg);
+
+    tabs.forEach((tab, i) => {
+      const x = margin + i * (tabW + gap);
       const isActive = this.activeTab === tab.id;
-      
-      const tabBtn = this.add.container(tabX, 0);
 
       const bg = this.add.graphics();
-      const tw = tabWidth - 6;
-      const th = 34 * s;
-      const bx = -tabWidth / 2 + 3;
-      const by = -17 * s;
-      bg.fillStyle(isActive ? 0x1a1528 : 0x0b1120, 1);
-      bg.fillRoundedRect(bx, by, tw, th, 10 * s);
       if (isActive) {
-        bg.lineStyle(2, 0xffc857, 0.95);
-        bg.strokeRoundedRect(bx, by, tw, th, 10 * s);
-        bg.lineStyle(1, 0x22d3ee, 0.5);
-        bg.strokeRoundedRect(bx + 2, by + 2, tw - 4, th - 4, 8 * s);
+        bg.fillStyle(colors.uiAccent, 1);
+        bg.fillRoundedRect(x, y, tabW, tabH, 20);
+        bg.lineStyle(2, 0xffffff, 0.6);
+        bg.strokeRoundedRect(x, y, tabW, tabH, 20);
       } else {
-        bg.lineStyle(1, 0x334155, 0.65);
-        bg.strokeRoundedRect(bx, by, tw, th, 10 * s);
+        bg.fillStyle(0x050816, 0.9);
+        bg.fillRoundedRect(x, y, tabW, tabH, 20);
+        bg.lineStyle(1, 0x1f2937, 0.8);
+        bg.strokeRoundedRect(x, y, tabW, tabH, 20);
       }
-      tabBtn.add(bg);
+      this.tabContainer.add(bg);
 
-      tabBtn.add(this.add.text(0, 0, `${tab.icon} ${tab.label}`, {
-        fontSize: `${9 * s}px`,
-        fontFamily: fonts.tech,
-        color: isActive ? '#fff1c2' : '#94a3b8',
-      }).setOrigin(0.5));
-      
-      // Бейдж для вкладок
-      if (tab.badge && tab.badge > 0) {
-        const badge = this.add.graphics();
-        badge.fillStyle(0xef4444, 1);
-        badge.fillCircle(tabWidth / 2 - 15 * s, -8 * s, 8 * s);
-        tabBtn.add(badge);
-        
-        tabBtn.add(this.add.text(tabWidth / 2 - 15 * s, -8 * s, `${tab.badge}`, {
-          fontSize: `${8 * s}px`, fontFamily: fonts.tech, color: '#ffffff',
-        }).setOrigin(0.5));
-      } else if (tab.id === 'battlepass') {
+      const tabText = this.add
+        .text(x + tabW / 2, y + tabH / 2, tab.label, {
+          fontSize: isActive ? '10px' : '9px',
+          fontFamily: fonts.tech,
+          color: isActive ? '#000000' : '#9ca3af',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5);
+      tabText.setResolution(2);
+      this.tabContainer.add(tabText);
+
+      let badgeCount = tab.badge ?? 0;
+      if (tab.id === 'battlepass' && badgeCount === 0) {
         const unclaimed = battlePassManager.getUnclaimedCount();
-        if (unclaimed > 0) {
-          const badge = this.add.graphics();
-          badge.fillStyle(0xef4444, 1);
-          badge.fillCircle(tabWidth / 2 - 15 * s, -8 * s, 8 * s);
-          tabBtn.add(badge);
-          
-          tabBtn.add(this.add.text(tabWidth / 2 - 15 * s, -8 * s, `${unclaimed}`, {
-            fontSize: `${8 * s}px`, fontFamily: fonts.tech, color: '#ffffff',
-          }).setOrigin(0.5));
-        }
+        if (unclaimed > 0) badgeCount = unclaimed;
       }
-      
-      tabBtn.setSize(tabWidth, 38 * s);
-      tabBtn.setInteractive({ useHandCursor: true });
-      tabBtn.on('pointerdown', () => {
+
+      if (badgeCount > 0) {
+        const bx = x + tabW - 6;
+        const by = y + 8;
+        const badgeG = this.add.graphics();
+        badgeG.fillStyle(0xef4444, 1);
+        badgeG.fillCircle(bx, by, 9);
+        this.tabContainer.add(badgeG);
+        this.tabContainer.add(
+          this.add
+            .text(bx, by, `${Math.min(badgeCount, 99)}`, {
+              fontSize: '10px',
+              fontFamily: fonts.tech,
+              color: '#ffffff',
+              fontStyle: 'bold',
+            })
+            .setOrigin(0.5)
+        );
+      }
+
+      const hit = this.add
+        .rectangle(x + tabW / 2, y + tabH / 2, tabW, tabH, 0, 0)
+        .setInteractive({ useHandCursor: true });
+      this.tabContainer.add(hit);
+
+      hit.on('pointerdown', () => {
         if (this.activeTab !== tab.id) {
           AudioManager.getInstance().playUIClick();
+          hapticSelection();
           this.switchTab(tab.id);
         }
       });
-      
-      this.tabContainer.add(tabBtn);
     });
   }
   
