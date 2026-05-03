@@ -505,34 +505,50 @@ export class Ball {
 
     const b = this.fieldBounds;
     const r = this.radius;
+    const pos = this.body.position;
+    const vel = this.body.velocity;
 
-    // Allowed region for BALL CENTER
     const minX = b.left + r;
     const maxX = b.right - r;
 
-    // Respect goal opening in Y (same approach as existing code)
     const goalHalfWidth = GOAL.WIDTH * (b.width / FIELD.WIDTH) / 2;
-    const isInGoalX = Math.abs(this.body.position.x - b.centerX) < goalHalfWidth;
+    const isInGoalX = Math.abs(pos.x - b.centerX) < goalHalfWidth;
 
     const minY = b.top + r;
     const maxY = b.bottom - r;
 
-    let x = this.body.position.x;
-    let y = this.body.position.y;
-
+    let x = pos.x;
+    let y = pos.y;
     let changed = false;
 
-    if (x < minX) { x = minX; changed = true; }
-    else if (x > maxX) { x = maxX; changed = true; }
+    if (x < minX) {
+      x = minX + 1;
+      changed = true;
+    } else if (x > maxX) {
+      x = maxX - 1;
+      changed = true;
+    }
 
     if (!isInGoalX) {
-      if (y < minY) { y = minY; changed = true; }
-      else if (y > maxY) { y = maxY; changed = true; }
+      const speedY = Math.abs(vel.y);
+      const movingToTopGoal = vel.y < -3 && pos.y < b.top + 50;
+      const movingToBottomGoal = vel.y > 3 && pos.y > b.bottom - 50;
+      const isCornerGoalShot =
+        (movingToTopGoal || movingToBottomGoal) && speedY > 5;
+
+      if (!isCornerGoalShot) {
+        if (y < minY) {
+          y = minY + 1;
+          changed = true;
+        } else if (y > maxY) {
+          y = maxY - 1;
+          changed = true;
+        }
+      }
     }
 
     if (changed) {
       this.scene.matter.body.setPosition(this.body, { x, y });
-      // IMPORTANT: do not damp velocity here
     }
   }
 

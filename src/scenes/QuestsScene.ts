@@ -15,15 +15,13 @@ import { FactionId } from '../constants/gameConstants';
 import { RookieFactionWheelOverlay } from '../ui/RookieFactionWheelOverlay';
 import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
 import { loadAudioMenu, loadAudioRewardClaim } from '../assets/loading/AudioLoader';
-import { TaskCardPool, QuestRow } from '../ui/quest/TaskCardPool';
-import { VirtualTaskScroll } from '../ui/quest/VirtualTaskScroll';
+import type { QuestRow } from '../ui/quest/TaskCardPool';
+import type { DailyTaskType } from '../data/DailyTasks';
 
 export class QuestsScene extends Phaser.Scene {
   private scrollY = 0;
   private maxScrollY = 0;
   private contentContainer!: Phaser.GameObjects.Container;
-  private taskCardPool?: TaskCardPool;
-  private virtualTaskScroll?: VirtualTaskScroll;
   private isDragging = false;
   private lastPointerY = 0;
   private scrollVelocity = 0;
@@ -94,10 +92,6 @@ export class QuestsScene extends Phaser.Scene {
   
   shutdown(): void {
     this.swipeManager?.destroy();
-    this.virtualTaskScroll?.destroy();
-    this.virtualTaskScroll = undefined;
-    this.taskCardPool?.destroy();
-    this.taskCardPool = undefined;
     this.contentScrollMask?.destroy();
     this.contentScrollMask = undefined;
   }
@@ -110,20 +104,6 @@ export class QuestsScene extends Phaser.Scene {
     }
   }
 
-  private destroyVirtualTaskList(): void {
-    this.virtualTaskScroll?.destroy();
-    this.virtualTaskScroll = undefined;
-  }
-
-  private ensureTaskCardPool(cardWidth: number): TaskCardPool {
-    if (!this.taskCardPool) {
-      this.taskCardPool = new TaskCardPool(this, cardWidth, () => this.s, 14);
-    } else {
-      this.taskCardPool.setCardWidth(cardWidth);
-    }
-    return this.taskCardPool;
-  }
-
   private sortQuestRows(tasks: QuestRow[]): QuestRow[] {
     return [...tasks].sort((a, b) => {
       const stateA = a.claimed ? 2 : a.completed ? 0 : 1;
@@ -132,31 +112,6 @@ export class QuestsScene extends Phaser.Scene {
     });
   }
 
-  /** Перезагрузка daily/weekly в виртуальный список без полного redrawQuestsUI */
-  private refreshVirtualDailyWeeklyAfterClaim(delayMs: number): void {
-    this.time.delayedCall(delayMs, () => {
-      if (!this.scene.isActive()) return;
-      this.refreshHeaderCurrency();
-      if (
-        (this.activeTab !== 'daily' && this.activeTab !== 'weekly') ||
-        !this.virtualTaskScroll ||
-        !this.taskCardPool
-      ) {
-        return;
-      }
-      const isWeekly = this.activeTab === 'weekly';
-      const raw = (isWeekly ? dailyTasksManager.getWeeklyData().tasks : dailyTasksManager.getDailyData().tasks) as QuestRow[];
-      const sorted = this.sortQuestRows(raw);
-      this.virtualTaskScroll.setTasks(sorted);
-      const { height } = this.cameras.main;
-      const viewportHeight = height - this.topOffset - this.bottomInset;
-      const bottom = this.virtualTaskScroll.getContentBottomY();
-      this.maxScrollY = Math.max(0, bottom + 16 - viewportHeight + 40);
-      this.scrollY = Phaser.Math.Clamp(this.scrollY, 0, this.maxScrollY);
-      this.virtualTaskScroll.updateScroll(this.scrollY);
-      this.applyScrollPosition();
-    });
-  }
   
   private handleBack(): void {
     AudioManager.getInstance().playUIClick();
@@ -289,7 +244,6 @@ export class QuestsScene extends Phaser.Scene {
   }
 
   private clearContentArea(): void {
-    this.destroyVirtualTaskList();
     this.scrollY = 0;
     this.scrollVelocity = 0;
     this.lastAppliedContentY = Number.NaN;
@@ -457,53 +411,168 @@ export class QuestsScene extends Phaser.Scene {
       this.renderBattlePassInfo();
     } else if (this.activeTab === 'weekly') {
       const weeklyData = dailyTasksManager.getWeeklyData();
-      this.renderTasksVirtual(weeklyData.tasks, true);
+      this.renderDailyWeeklyPathStyle(weeklyData.tasks, true);
     } else {
       const dailyData = dailyTasksManager.getDailyData();
-      this.renderTasksVirtual(dailyData.tasks, false);
+      this.renderDailyWeeklyPathStyle(dailyData.tasks, false);
     }
   }
 
-  private renderTasksVirtual(tasks: QuestRow[], isWeekly: boolean): void {
+  private dailyQuestIcon(type: DailyTaskType): string {
+    const m: Record<DailyTaskType, string> = {
+      play_matches: '⚽',
+      win_matches: '🏆',
+      score_goals: '⚽',
+      clean_sheets: '🛡️',
+      complete_campaign: '📜',
+      play_league: '🌟',
+      play_tournament: '🏆',
+      use_abilities: '✨',
+    };
+    return m[type] ?? '📋';
+  }
+
+  private dailyWeeklyQuestIcon(task: QuestRow, isWeekly: boolean): string {
+    if (isWeekly && 'icon' in task && task.icon) return task.icon;
+    if (!isWeekly && 'type' in task) return this.dailyQuestIcon(task.type as DailyTaskType);
+    return '📋';
+  }
+
+  private formatDailyWeeklyRewardCompact(reward: QuestRow['reward']): string {
+    const lines: string[] = [];
+    if (reward.coins && reward.coins > 0) lines.push(`💰 ${reward.coins}`);
+    if (reward.crystals && reward.crystals > 0) lines.push(`💎 ${reward.crystals}`);
+    if (reward.xp && reward.xp > 0) lines.push(`⭐ ${reward.xp}`);
+    if (reward.fragments && reward.fragments > 0) lines.push(`🧩 ${reward.fragments}`);
+    return lines.join('\n') || '—';
+  }
+
+  /** Ежедневные / недельные — те же карточки 80px и кнопка «ЗАБРАТЬ», что у Пути новичка */
+  private renderDailyWeeklyPathStyle(tasks: QuestRow[], isWeekly: boolean): void {
     const { width, height } = this.cameras.main;
 
     if (!tasks || tasks.length === 0) {
       console.warn(`[QuestsScene] No ${isWeekly ? 'weekly' : 'daily'} tasks found`);
-      this.destroyVirtualTaskList();
       this.createEmptyState();
       this.maxScrollY = 0;
       return;
     }
 
     const sortedTasks = this.sortQuestRows(tasks);
-    const cardWidth = Math.min(width - 32, 370);
-    const pool = this.ensureTaskCardPool(cardWidth);
-    const viewportHeight = height - this.topOffset - this.bottomInset;
+    const cardWidth = Math.min(width - 40, 380);
     const cardX = width / 2;
+    let y = 20;
 
-    if (!this.virtualTaskScroll) {
-      this.virtualTaskScroll = new VirtualTaskScroll(this, this.contentContainer, pool, {
-        viewportHeight,
-        contentStartY: 20,
-        cardCenterX: cardX,
-        isWeekly,
-        onClaim: (taskId) =>
-          isWeekly ? this.handleClaimWeeklyTask(taskId) : this.handleClaimTask(taskId),
-      });
-    } else {
-      this.virtualTaskScroll.applyConfigPatch({
-        viewportHeight,
-        cardCenterX: cardX,
-        isWeekly,
-        onClaim: (taskId) =>
-          isWeekly ? this.handleClaimWeeklyTask(taskId) : this.handleClaimTask(taskId),
-      });
+    sortedTasks.forEach((task) => {
+      const card = this.createDailyWeeklyTaskCard(cardX, y, cardWidth, task, isWeekly);
+      this.contentContainer.add(card);
+      y += 90;
+    });
+
+    const visibleHeight = height - this.topOffset - this.bottomInset;
+    this.maxScrollY = Math.max(0, y - visibleHeight + 40);
+  }
+
+  private createDailyWeeklyTaskCard(
+    x: number,
+    y: number,
+    width: number,
+    task: QuestRow,
+    isWeekly: boolean,
+  ): Phaser.GameObjects.Container {
+    const container = this.add.container(x, y);
+    const cardH = 80;
+
+    let bgColor = 0x1a1a2e;
+    let borderColor = 0x374151;
+    let opacity = 1;
+
+    if (task.claimed) {
+      borderColor = 0x38bdf8;
+      opacity = 0.6;
+    } else if (task.completed) {
+      borderColor = 0x22c55e;
     }
 
-    this.virtualTaskScroll.setTasks(sortedTasks);
-    const bottom = this.virtualTaskScroll.getContentBottomY();
-    this.maxScrollY = Math.max(0, bottom + 16 - viewportHeight + 40);
-    this.virtualTaskScroll.updateScroll(this.scrollY);
+    const bg = this.add.graphics();
+    bg.fillStyle(bgColor, 0.9);
+    bg.fillRoundedRect(-width / 2, 0, width, cardH, 10);
+    bg.lineStyle(2, borderColor, opacity);
+    bg.strokeRoundedRect(-width / 2, 0, width, cardH, 10);
+    container.add(bg);
+
+    const iconChar = this.dailyWeeklyQuestIcon(task, isWeekly);
+    container.add(
+      this.add
+        .text(-width / 2 + 25, cardH / 2, iconChar, {
+          fontSize: '24px',
+        })
+        .setOrigin(0.5),
+    );
+
+    container.add(
+      this.add.text(-width / 2 + 55, 15, task.title, {
+        fontSize: '14px',
+        fontFamily: 'Orbitron, Arial',
+        color: task.claimed ? '#888888' : '#ffffff',
+        fontStyle: 'bold',
+        wordWrap: { width: width - 170 },
+        maxLines: 2,
+      }).setOrigin(0, 0),
+    );
+
+    container.add(
+      this.add.text(-width / 2 + 55, 35, task.description, {
+        fontSize: '11px',
+        fontFamily: 'Rajdhani, Arial',
+        color: '#888888',
+        wordWrap: { width: width - 170 },
+        maxLines: 2,
+      }).setOrigin(0, 0),
+    );
+
+    const progressStr = `${task.progress}/${task.maxProgress}`;
+    const progressColor = task.completed ? '#22c55e' : '#a0a0a0';
+    container.add(
+      this.add.text(-width / 2 + 55, 55, progressStr, {
+        fontSize: '12px',
+        fontFamily: 'Rajdhani, Arial',
+        color: progressColor,
+        fontStyle: 'bold',
+      }).setOrigin(0, 0),
+    );
+
+    const rewardX = width / 2 - 80;
+    container.add(
+      this.add.text(rewardX, 20, this.formatDailyWeeklyRewardCompact(task.reward), {
+        fontSize: '11px',
+        fontFamily: 'Rajdhani, Arial',
+        color: '#ffd700',
+        align: 'right',
+      }).setOrigin(1, 0),
+    );
+
+    if (task.completed && !task.claimed) {
+      const btn = this.createRookieClaimButton(width / 2 - 50, cardH / 2, 70, 28, () => {
+        if (isWeekly) {
+          this.handleClaimWeeklyTask(task.id);
+        } else {
+          this.handleClaimTask(task.id);
+        }
+      });
+      container.add(btn);
+    } else if (task.claimed) {
+      container.add(
+        this.add
+          .text(width / 2 - 20, cardH / 2, '✓', {
+            fontSize: '20px',
+            color: '#38bdf8',
+          })
+          .setOrigin(0.5),
+      );
+    }
+
+    return container;
   }
   
   private createEmptyState(): void {
@@ -618,7 +687,7 @@ export class QuestsScene extends Phaser.Scene {
     AudioManager.getInstance().playSFX('sfx_card_pop', { volume: 0.45 });
     this.refreshHeaderCurrency();
     this.showClaimCelebration('Задание выполнено', detail);
-    this.refreshVirtualDailyWeeklyAfterClaim(1020);
+    this.scheduleQuestsRestart(1020);
   }
 
   private handleClaimWeeklyTask(taskId: string): void {
@@ -632,7 +701,7 @@ export class QuestsScene extends Phaser.Scene {
     AudioManager.getInstance().playSFX('sfx_card_pop', { volume: 0.45 });
     this.refreshHeaderCurrency();
     this.showClaimCelebration('Недельное задание', detail);
-    this.refreshVirtualDailyWeeklyAfterClaim(1020);
+    this.scheduleQuestsRestart(1020);
   }
   
   private renderBattlePassInfo(): void {
@@ -795,7 +864,6 @@ export class QuestsScene extends Phaser.Scene {
   
   private applyScrollPosition(): void {
     if (!this.contentContainer) return;
-    this.virtualTaskScroll?.updateScroll(this.scrollY);
     const y = this.topOffset - this.scrollY;
     if (this.lastAppliedContentY === y) return;
     this.lastAppliedContentY = y;

@@ -15,7 +15,7 @@ import { playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
 import { hapticImpact } from '../utils/Haptics';
 import { COLLECTION_RU } from '../i18n/collection_ru';
-import { getFonts } from '../config/themes';
+import { getFonts, getColors } from '../config/themes';
 import { getUIFactionByGameFaction } from '../constants/factionUiConfig';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { BattlePassUnitPreview } from '../ui/previews/BattlePassUnitPreview';
@@ -299,9 +299,34 @@ export class CollectionScene extends Phaser.Scene {
    * Создает базовый фон
    */
   private createBackground(): void {
-    const bg = this.add.rectangle(0, 0, this.width, this.height, 0x0a0a12, 1);
-    bg.setOrigin(0);
+    const bg = this.add.graphics();
+    for (let y = 0; y < this.height; y++) {
+      const ratio = y / this.height;
+      const r = Math.floor(8 + ratio * 12);
+      const g = Math.floor(8 + ratio * 8);
+      const b = Math.floor(25 + ratio * 15);
+      bg.fillStyle((r << 16) | (g << 8) | b, 1);
+      bg.fillRect(0, y, this.width, 1);
+    }
     bg.setDepth(0);
+
+    for (let i = 0; i < 36; i++) {
+      const star = this.add.circle(
+        Phaser.Math.Between(0, this.width),
+        Phaser.Math.Between(0, this.height),
+        Phaser.Math.FloatBetween(0.5, 1.4),
+        0xffffff,
+        Phaser.Math.FloatBetween(0.15, 0.45),
+      );
+      star.setDepth(0);
+      this.tweens.add({
+        targets: star,
+        alpha: 0.08,
+        duration: Phaser.Math.Between(1600, 3200),
+        yoyo: true,
+        repeat: -1,
+      });
+    }
   }
   
   /**
@@ -332,16 +357,12 @@ export class CollectionScene extends Phaser.Scene {
     this.headerContainer = this.add.container(0, 0);
     this.headerContainer.setDepth(100);
 
-    // Фон шапки
+    const colors = getColors();
     const headerBg = this.add.graphics();
-    const g = headerBg;
-    g.fillGradientStyle(0x0f172a, 0x0b1220, 0x0f172a, 0x0b1220, 1, 1, 1, 1);
-    g.fillRect(0, 0, this.width, this.headerHeight);
-    
-    // Нижняя линия-разделитель
-    headerBg.lineStyle(1, 0x2a2a3e, 0.5);
+    headerBg.fillStyle(0x000000, 0.9);
+    headerBg.fillRect(0, 0, this.width, this.headerHeight);
+    headerBg.lineStyle(2, colors.uiAccent, 0.35);
     headerBg.lineBetween(0, this.headerHeight, this.width, this.headerHeight);
-    
     this.headerContainer.add(headerBg);
 
     // ✅ ТОЛЬКО ЗАГОЛОВОК — как в магазине, без кнопок
@@ -371,12 +392,11 @@ export class CollectionScene extends Phaser.Scene {
 
     // Фон табов
     const tabsBg = this.add.graphics();
-    tabsBg.fillStyle(0x16161f, 0.98);
+    const colors = getColors();
+    tabsBg.fillStyle(0x000000, 0.88);
     tabsBg.fillRect(0, 0, this.width, this.tabsHeight);
-    
-    // Нижняя линия
-    tabsBg.lineStyle(1, 0x2a2a3e, 0.5);
-    tabsBg.lineBetween(0, this.tabsHeight, this.width, this.tabsHeight);
+    tabsBg.lineStyle(2, colors.uiAccent, 0.25);
+    tabsBg.lineBetween(0, this.tabsHeight - 1, this.width, this.tabsHeight - 1);
     
     this.tabsContainer.add(tabsBg);
 
@@ -1214,8 +1234,21 @@ export class CollectionScene extends Phaser.Scene {
 
     yOffset += 15;
 
+    const modalTop = -modalHeight / 2;
+    const footerReserve = 168;
+    const scrollRegionTop = yOffset;
+    const scrollRegionHeight = Math.max(
+      88,
+      modalHeight - (scrollRegionTop - modalTop) - footerReserve,
+    );
+
+    const scrollRoot = this.add.container(0, scrollRegionTop).setDepth(3);
+    this.modalContainer.add(scrollRoot);
+
+    let ly = 0;
+
     // Характеристики (компактно)
-    const statsTitle = this.add.text(0, yOffset, COLLECTION_RU.stats.title, {
+    const statsTitle = this.add.text(0, ly, COLLECTION_RU.stats.title, {
       fontSize: '15px',
       color: '#ffffff',
       fontStyle: 'bold',
@@ -1223,9 +1256,9 @@ export class CollectionScene extends Phaser.Scene {
       stroke: '#000000',
       strokeThickness: 3,
     }).setOrigin(0.5);
-    this.modalContainer.add(statsTitle);
+    scrollRoot.add(statsTitle);
 
-    yOffset += 23;
+    ly += 23;
 
     const stats = [
       { icon: '⚔️', name: COLLECTION_RU.stats.power, value: unit.stats.power },
@@ -1235,8 +1268,8 @@ export class CollectionScene extends Phaser.Scene {
     ];
 
     stats.forEach(stat => {
-      const statContainer = this.add.container(0, yOffset);
-      
+      const statContainer = this.add.container(0, ly);
+
       const label = this.add.text(-modalWidth / 2 + 35, 0, `${stat.icon} ${stat.name}`, {
         fontSize: '13px',
         color: '#dddddd',
@@ -1246,7 +1279,6 @@ export class CollectionScene extends Phaser.Scene {
       }).setOrigin(0, 0.5);
       statContainer.add(label);
 
-      // Прогресс-бар (более широкий)
       const barWidth = 110;
       const barBg = this.add.graphics();
       barBg.fillStyle(0x2a2a3e, 1);
@@ -1267,21 +1299,20 @@ export class CollectionScene extends Phaser.Scene {
       }).setOrigin(0.5);
       statContainer.add(value);
 
-      this.modalContainer!.add(statContainer);
-      yOffset += 22;
+      scrollRoot.add(statContainer);
+      ly += 22;
     });
 
-    yOffset += 8;
+    ly += 8;
 
-    // Пассивная способность (читаемое описание эффекта)
     if (u.passive?.description && u.passive.name) {
       const sepPassive = this.add.graphics();
       sepPassive.lineStyle(2, rarityColor.border, 0.3);
-      sepPassive.lineBetween(-modalWidth / 2 + 30, yOffset, modalWidth / 2 - 30, yOffset);
-      this.modalContainer.add(sepPassive);
-      yOffset += 14;
+      sepPassive.lineBetween(-modalWidth / 2 + 30, ly, modalWidth / 2 - 30, ly);
+      scrollRoot.add(sepPassive);
+      ly += 14;
 
-      const passiveTitle = this.add.text(0, yOffset, `⚙ ${COLLECTION_RU.ui.passive}`, {
+      const passiveTitle = this.add.text(0, ly, `⚙ ${COLLECTION_RU.ui.passive}`, {
         fontSize: '14px',
         color: '#a78bfa',
         fontStyle: 'bold',
@@ -1289,10 +1320,10 @@ export class CollectionScene extends Phaser.Scene {
         stroke: '#000000',
         strokeThickness: 3,
       }).setOrigin(0.5);
-      this.modalContainer.add(passiveTitle);
-      yOffset += 20;
+      scrollRoot.add(passiveTitle);
+      ly += 20;
 
-      const passiveName = this.add.text(0, yOffset, u.passive.name, {
+      const passiveName = this.add.text(0, ly, u.passive.name, {
         fontSize: '13px',
         color: '#fbbf24',
         fontStyle: 'bold',
@@ -1302,10 +1333,10 @@ export class CollectionScene extends Phaser.Scene {
         wordWrap: { width: modalWidth - 60 },
         align: 'center',
       }).setOrigin(0.5, 0);
-      this.modalContainer.add(passiveName);
-      yOffset += passiveName.height + 6;
+      scrollRoot.add(passiveName);
+      ly += passiveName.height + 6;
 
-      const passiveDesc = this.add.text(0, yOffset, u.passive.description, {
+      const passiveDesc = this.add.text(0, ly, u.passive.description, {
         fontSize: '11px',
         color: '#d4d4d8',
         wordWrap: { width: modalWidth - 56 },
@@ -1315,20 +1346,19 @@ export class CollectionScene extends Phaser.Scene {
         strokeThickness: 2,
         fontFamily: getFonts().tech,
       }).setOrigin(0.5, 0);
-      this.modalContainer.add(passiveDesc);
-      yOffset += passiveDesc.height + 14;
+      scrollRoot.add(passiveDesc);
+      ly += passiveDesc.height + 14;
     }
 
-    // Фирменный приём (короткая подпись)
     if (u.specialAbility) {
       const separator2 = this.add.graphics();
       separator2.lineStyle(2, rarityColor.border, 0.3);
-      separator2.lineBetween(-modalWidth / 2 + 30, yOffset, modalWidth / 2 - 30, yOffset);
-      this.modalContainer.add(separator2);
+      separator2.lineBetween(-modalWidth / 2 + 30, ly, modalWidth / 2 - 30, ly);
+      scrollRoot.add(separator2);
 
-      yOffset += 15;
+      ly += 15;
 
-      const abilityTitle = this.add.text(0, yOffset, `✨ ${COLLECTION_RU.ui.signature}`, {
+      const abilityTitle = this.add.text(0, ly, `✨ ${COLLECTION_RU.ui.signature}`, {
         fontSize: '14px',
         color: '#ffaa00',
         fontStyle: 'bold',
@@ -1336,11 +1366,11 @@ export class CollectionScene extends Phaser.Scene {
         stroke: '#000000',
         strokeThickness: 3,
       }).setOrigin(0.5);
-      this.modalContainer.add(abilityTitle);
+      scrollRoot.add(abilityTitle);
 
-      yOffset += 22;
+      ly += 22;
 
-      const abilityText = this.add.text(0, yOffset, u.specialAbility, {
+      const abilityText = this.add.text(0, ly, u.specialAbility, {
         fontSize: '12px',
         color: '#cccccc',
         wordWrap: { width: modalWidth - 70 },
@@ -1349,20 +1379,19 @@ export class CollectionScene extends Phaser.Scene {
         stroke: '#000000',
         strokeThickness: 2,
       }).setOrigin(0.5, 0);
-      this.modalContainer.add(abilityText);
+      scrollRoot.add(abilityText);
 
-      yOffset += abilityText.height + 15;
+      ly += abilityText.height + 15;
     }
 
-    // Описание
     const separator3 = this.add.graphics();
     separator3.lineStyle(2, rarityColor.border, 0.3);
-    separator3.lineBetween(-modalWidth / 2 + 30, yOffset, modalWidth / 2 - 30, yOffset);
-    this.modalContainer.add(separator3);
+    separator3.lineBetween(-modalWidth / 2 + 30, ly, modalWidth / 2 - 30, ly);
+    scrollRoot.add(separator3);
 
-    yOffset += 15;
+    ly += 15;
 
-    const descTitle = this.add.text(0, yOffset, `📖 ${COLLECTION_RU.ui.description}`, {
+    const descTitle = this.add.text(0, ly, `📖 ${COLLECTION_RU.ui.description}`, {
       fontSize: '14px',
       color: '#ffffff',
       fontStyle: 'bold',
@@ -1370,11 +1399,11 @@ export class CollectionScene extends Phaser.Scene {
       stroke: '#000000',
       strokeThickness: 3,
     }).setOrigin(0.5);
-    this.modalContainer.add(descTitle);
+    scrollRoot.add(descTitle);
 
-    yOffset += 20;
+    ly += 20;
 
-    const descText = this.add.text(0, yOffset, u.description, {
+    const descText = this.add.text(0, ly, u.description, {
       fontSize: '11px',
       color: '#aaaaaa',
       wordWrap: { width: modalWidth - 70 },
@@ -1383,11 +1412,10 @@ export class CollectionScene extends Phaser.Scene {
       stroke: '#000000',
       strokeThickness: 2,
     }).setOrigin(0.5, 0);
-    this.modalContainer.add(descText);
+    scrollRoot.add(descText);
 
-    yOffset += descText.height + 18;
+    ly += descText.height + 18;
 
-    // Прогресс фрагментов (если не открыт) - вычисляем для обычных юнитов
     let progress = 0;
     if (!isOwned && !isPremium) {
       const currentFragments = playerData.getUnitFragments(unit.id);
@@ -1395,19 +1423,18 @@ export class CollectionScene extends Phaser.Scene {
       progress = currentFragments / requiredFragments;
     }
 
-    // Прогресс фрагментов (если не открыт)
     if (!isOwned && !isPremium) {
       const separator4 = this.add.graphics();
       separator4.lineStyle(2, rarityColor.border, 0.3);
-      separator4.lineBetween(-modalWidth / 2 + 30, yOffset, modalWidth / 2 - 30, yOffset);
-      this.modalContainer.add(separator4);
+      separator4.lineBetween(-modalWidth / 2 + 30, ly, modalWidth / 2 - 30, ly);
+      scrollRoot.add(separator4);
 
-      yOffset += 15;
+      ly += 15;
 
       const currentFragments = playerData.getUnitFragments(unit.id);
       const requiredFragments = unit.fragmentsRequired;
 
-      const fragTitle = this.add.text(0, yOffset, `🧩 ${COLLECTION_RU.ui.fragments}`, {
+      const fragTitle = this.add.text(0, ly, `🧩 ${COLLECTION_RU.ui.fragments}`, {
         fontSize: '14px',
         color: '#ffffff',
         fontStyle: 'bold',
@@ -1415,152 +1442,229 @@ export class CollectionScene extends Phaser.Scene {
         stroke: '#000000',
         strokeThickness: 3,
       }).setOrigin(0.5);
-      this.modalContainer.add(fragTitle);
+      scrollRoot.add(fragTitle);
 
-      yOffset += 25;
+      ly += 25;
 
-      const fragText = this.add.text(0, yOffset, `${currentFragments} / ${requiredFragments}`, {
+      const fragText = this.add.text(0, ly, `${currentFragments} / ${requiredFragments}`, {
         fontSize: '20px',
         color: progress >= 1 ? '#00ff00' : '#ffaa00',
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 4,
       }).setOrigin(0.5);
-      this.modalContainer.add(fragText);
+      scrollRoot.add(fragText);
 
-      yOffset += 28;
+      ly += 28;
 
-      // Прогресс-бар фрагментов
       const progBarWidth = modalWidth - 80;
       const progBarBg = this.add.graphics();
       progBarBg.fillStyle(0x2a2a3e, 1);
-      progBarBg.fillRoundedRect(-progBarWidth / 2, yOffset - 10, progBarWidth, 20, 10);
+      progBarBg.fillRoundedRect(-progBarWidth / 2, ly - 10, progBarWidth, 20, 10);
       progBarBg.lineStyle(2, 0x444444);
-      progBarBg.strokeRoundedRect(-progBarWidth / 2, yOffset - 10, progBarWidth, 20, 10);
-      this.modalContainer.add(progBarBg);
+      progBarBg.strokeRoundedRect(-progBarWidth / 2, ly - 10, progBarWidth, 20, 10);
+      scrollRoot.add(progBarBg);
 
       const progBarFill = this.add.graphics();
       const fillColor = progress >= 1 ? 0x00ff00 : 0xffaa00;
       progBarFill.fillStyle(fillColor, 1);
       progBarFill.fillRoundedRect(
         -progBarWidth / 2 + 2,
-        yOffset - 8,
+        ly - 8,
         (progBarWidth - 4) * Math.min(progress, 1),
         16,
         8
       );
-      this.modalContainer.add(progBarFill);
+      scrollRoot.add(progBarFill);
 
-      yOffset += 18;
+      ly += 18;
     }
 
-    // ========== КНОПКА ДЕЙСТВИЯ ==========
-    const btnY = modalHeight / 2 - 50;
-    const btnW = modalWidth - 60;
-    const btnH = 50;
-
-    if (isOwned) {
-      // ✅ OWNED - уже есть в коллекции
-      const ownedBg = this.add.graphics();
-      ownedBg.fillStyle(0x10b981, 0.2);
-      ownedBg.fillRoundedRect(-btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-      ownedBg.lineStyle(2, 0x10b981, 0.6);
-      ownedBg.strokeRoundedRect(-btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-      this.modalContainer.add(ownedBg);
-      
-      this.modalContainer.add(this.add.text(0, btnY, '✓ IN COLLECTION', {
-        fontSize: '16px',
-        fontFamily: getFonts().tech,
-        color: '#10b981',
-        fontStyle: 'bold',
-      }).setOrigin(0.5));
-      
-    } else if (isPremium) {
-      // 💎 PREMIUM - покупка за кристаллы
-      const btnColor = canAffordPremium ? 0xf59e0b : 0x444444;
-      
-      const buyBtnBg = this.add.graphics();
-      buyBtnBg.fillStyle(btnColor, canAffordPremium ? 0.9 : 0.5);
-      buyBtnBg.fillRoundedRect(-btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-      if (canAffordPremium) {
-        buyBtnBg.lineStyle(2, 0xfbbf24, 0.6);
-        buyBtnBg.strokeRoundedRect(-btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-      }
-      this.modalContainer.add(buyBtnBg);
-      
-      this.modalContainer.add(this.add.text(0, btnY, `🔓 UNLOCK  💎 ${premiumPrice.toLocaleString()}`, {
-        fontSize: '15px',
-        fontFamily: getFonts().tech,
-        color: canAffordPremium ? '#000000' : '#888888',
-        fontStyle: 'bold',
-      }).setOrigin(0.5));
-      
-      if (canAffordPremium) {
-        const hitArea = this.add.rectangle(0, btnY, btnW, btnH, 0x000000, 0)
-          .setInteractive({ useHandCursor: true });
-        this.modalContainer.add(hitArea);
-        
-        hitArea.on('pointerdown', () => {
-          this.purchasePremiumUnit(unit, premiumPrice, this.modalContainer!, overlay);
-        });
-        
-        hitArea.on('pointerover', () => {
-          buyBtnBg.clear();
-          buyBtnBg.fillStyle(0xfbbf24, 1);
-          buyBtnBg.fillRoundedRect(-btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-        });
-        
-        hitArea.on('pointerout', () => {
-          buyBtnBg.clear();
-          buyBtnBg.fillStyle(btnColor, 0.9);
-          buyBtnBg.fillRoundedRect(-btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-          buyBtnBg.lineStyle(2, 0xfbbf24, 0.6);
-          buyBtnBg.strokeRoundedRect(-btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-        });
-      } else {
-        // Показываем сколько не хватает
-        const crystals = playerData.get().crystals;
-        const needed = premiumPrice - crystals;
-        this.modalContainer.add(this.add.text(0, btnY + btnH / 2 + 15, `Need ${needed.toLocaleString()} more crystals`, {
-          fontSize: '11px',
-          color: '#ff6b6b',
-        }).setOrigin(0.5));
-      }
-      
-    } else if (!isOwned) {
-      // Обычный юнит - показываем прогресс фрагментов и кнопку крафта
-      // Статус и кнопка крафта
-      if (progress >= 1) {
-        // Кнопка СОБРАТЬ
-        const craftButton = this.createButton(0, yOffset + 25, COLLECTION_RU.ui.craft, () => {
-          if (playerData.craftUnit(unit.id, unit.fragmentsRequired)) {
-            AudioManager.getInstance().playSFX('sfx_pack_open');
-            hapticImpact('medium');
-            this.showToast(COLLECTION_RU.ui.crafted || 'Собрано!');
-            this.playCraftEffect();
-            this.closeModal(overlay);
-            this.renderUnitsGrid(); // Обновить сетку после крафта
-            this.createFactionTabs(); // Обновить табы для прогресса
-          } else {
-            AudioManager.getInstance().playUIClick();
-            hapticImpact('light');
-          }
-        }, '#22c55e');
-        this.modalContainer.add(craftButton);
-      } else {
-        const needMoreText = this.add.text(0, yOffset, COLLECTION_RU.ui.needFragments, {
+    if (!isOwned && !isPremium && progress < 1) {
+      scrollRoot.add(
+        this.add.text(0, ly, COLLECTION_RU.ui.needFragments, {
           fontSize: '13px',
           color: '#ffaa00',
           fontStyle: 'bold',
           stroke: '#000000',
           strokeThickness: 2,
-        }).setOrigin(0.5);
-        this.modalContainer.add(needMoreText);
-      }
+        }).setOrigin(0.5),
+      );
+      ly += 28;
     }
 
-    // Кнопка ЗАКРЫТЬ
-    const closeBtn = this.createModalCloseButton(modalHeight, () => {
+    const scrollContentHeight = ly;
+
+    const scrollMaskG = this.add.graphics().setDepth(2);
+    scrollMaskG.fillStyle(0xffffff, 1);
+    scrollMaskG.fillRect(-modalWidth / 2 + 10, scrollRegionTop, modalWidth - 20, scrollRegionHeight);
+    this.modalContainer.add(scrollMaskG);
+    scrollMaskG.setVisible(false);
+    scrollRoot.setMask(scrollMaskG.createGeometryMask());
+
+    let scrollOff = 0;
+    const maxScroll = Math.max(0, scrollContentHeight - scrollRegionHeight);
+    const syncScroll = () => {
+      scrollOff = Phaser.Math.Clamp(scrollOff, 0, maxScroll);
+      scrollRoot.setY(scrollRegionTop - scrollOff);
+    };
+    syncScroll();
+
+    const scrollHit = this.add
+      .rectangle(0, scrollRegionTop + scrollRegionHeight / 2, modalWidth - 28, scrollRegionHeight, 0x000000, 0)
+      .setDepth(4)
+      .setInteractive({ useHandCursor: maxScroll > 0 });
+    this.modalContainer.add(scrollHit);
+
+    let dragPrevY = 0;
+    let draggingScroll = false;
+    scrollHit.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      draggingScroll = maxScroll > 0;
+      dragPrevY = p.y;
+    });
+    scrollHit.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!draggingScroll || !p.leftButtonDown()) return;
+      const dy = p.y - dragPrevY;
+      dragPrevY = p.y;
+      scrollOff -= dy;
+      syncScroll();
+    });
+    scrollHit.on('pointerup', () => {
+      draggingScroll = false;
+    });
+
+    const onWheel = (
+      pointer: Phaser.Input.Pointer,
+      _go: Phaser.GameObjects.GameObject[],
+      _dx: number,
+      dy: number,
+    ) => {
+      if (!this.modalContainer?.active || maxScroll <= 0) return;
+      const cx = this.width / 2;
+      const cy = this.height / 2;
+      const left = cx - modalWidth / 2;
+      const right = cx + modalWidth / 2;
+      const top = cy + scrollRegionTop;
+      const bottom = top + scrollRegionHeight;
+      if (pointer.x < left || pointer.x > right || pointer.y < top || pointer.y > bottom) return;
+      scrollOff += dy * 0.45;
+      syncScroll();
+    };
+    this.input.on('wheel', onWheel);
+    this.modalContainer.once('destroy', () => {
+      this.input.off('wheel', onWheel);
+    });
+
+    const footerTop = modalTop + modalHeight - footerReserve;
+    const footerBtnCenterY = footerTop + 38;
+    const btnW = modalWidth - 60;
+    const btnH = 50;
+
+    if (isOwned) {
+      const ownedBg = this.add.graphics().setDepth(5);
+      ownedBg.fillStyle(0x10b981, 0.2);
+      ownedBg.fillRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
+      ownedBg.lineStyle(2, 0x10b981, 0.6);
+      ownedBg.strokeRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
+      this.modalContainer.add(ownedBg);
+
+      this.modalContainer.add(
+        this.add
+          .text(0, footerBtnCenterY, '✓ IN COLLECTION', {
+            fontSize: '16px',
+            fontFamily: getFonts().tech,
+            color: '#10b981',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5)
+          .setDepth(6),
+      );
+    } else if (isPremium) {
+      const btnColor = canAffordPremium ? 0xf59e0b : 0x444444;
+
+      const buyBtnBg = this.add.graphics().setDepth(5);
+      buyBtnBg.fillStyle(btnColor, canAffordPremium ? 0.9 : 0.5);
+      buyBtnBg.fillRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
+      if (canAffordPremium) {
+        buyBtnBg.lineStyle(2, 0xfbbf24, 0.6);
+        buyBtnBg.strokeRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
+      }
+      this.modalContainer.add(buyBtnBg);
+
+      this.modalContainer.add(
+        this.add
+          .text(0, footerBtnCenterY, `🔓 UNLOCK  💎 ${premiumPrice.toLocaleString()}`, {
+            fontSize: '15px',
+            fontFamily: getFonts().tech,
+            color: canAffordPremium ? '#000000' : '#888888',
+            fontStyle: 'bold',
+          })
+          .setOrigin(0.5)
+          .setDepth(6),
+      );
+
+      if (canAffordPremium) {
+        const hitArea = this.add
+          .rectangle(0, footerBtnCenterY, btnW, btnH, 0x000000, 0)
+          .setInteractive({ useHandCursor: true })
+          .setDepth(7);
+        this.modalContainer.add(hitArea);
+
+        hitArea.on('pointerdown', () => {
+          this.purchasePremiumUnit(unit, premiumPrice, this.modalContainer!, overlay);
+        });
+
+        hitArea.on('pointerover', () => {
+          buyBtnBg.clear();
+          buyBtnBg.fillStyle(0xfbbf24, 1);
+          buyBtnBg.fillRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
+        });
+
+        hitArea.on('pointerout', () => {
+          buyBtnBg.clear();
+          buyBtnBg.fillStyle(btnColor, 0.9);
+          buyBtnBg.fillRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
+          buyBtnBg.lineStyle(2, 0xfbbf24, 0.6);
+          buyBtnBg.strokeRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
+        });
+      } else {
+        const crystals = playerData.get().crystals;
+        const needed = premiumPrice - crystals;
+        this.modalContainer.add(
+          this.add
+            .text(0, footerBtnCenterY + btnH / 2 + 15, `Need ${needed.toLocaleString()} more crystals`, {
+              fontSize: '11px',
+              color: '#ff6b6b',
+            })
+            .setOrigin(0.5)
+            .setDepth(6),
+        );
+      }
+    } else if (!isOwned && !isPremium && progress >= 1) {
+      const craftButton = this.createButton(0, footerBtnCenterY, COLLECTION_RU.ui.craft, () => {
+        if (playerData.craftUnit(unit.id, unit.fragmentsRequired)) {
+          AudioManager.getInstance().playSFX('sfx_pack_open');
+          hapticImpact('medium');
+          this.showToast(COLLECTION_RU.ui.crafted || 'Собрано!');
+          this.playCraftEffect();
+          this.closeModal(overlay);
+          this.renderUnitsGrid();
+          this.createFactionTabs();
+        } else {
+          AudioManager.getInstance().playUIClick();
+          hapticImpact('light');
+        }
+      }, '#22c55e');
+      craftButton.setDepth(6);
+      this.modalContainer.add(craftButton);
+    }
+
+    let closeCenterY = footerBtnCenterY + btnH / 2 + 44;
+    if (isPremium && !canAffordPremium) {
+      closeCenterY += 22;
+    }
+
+    const closeBtn = this.createModalCloseButtonAt(closeCenterY, () => {
       if (this.modalContainer) {
         this.modalContainer.destroy();
         this.modalContainer = undefined;
@@ -1702,10 +1806,10 @@ export class CollectionScene extends Phaser.Scene {
   }
 
   /**
-   * Создает кнопку ЗАКРЫТЬ (внизу модалки)
+   * Кнопка ЗАКРЫТЬ — центр кнопки по Y в координатах модалки (относительно центра экрана)
    */
-  private createModalCloseButton(modalHeight: number, callback: () => void): Phaser.GameObjects.Container {
-    const container = this.add.container(0, modalHeight / 2 - 25); // Внизу модалки
+  private createModalCloseButtonAt(centerY: number, callback: () => void): Phaser.GameObjects.Container {
+    const container = this.add.container(0, centerY).setDepth(8);
 
     const bg = this.add.graphics();
     bg.fillStyle(0x4a9eff, 1);

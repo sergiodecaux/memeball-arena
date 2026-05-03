@@ -4,7 +4,7 @@
 
 import Phaser from 'phaser';
 import { FieldBounds } from '../../types';
-import { FACTIONS, FactionId, BALL, BALL_SPIN, WALL_PHYSICS } from '../../constants/gameConstants';
+import { FACTIONS, FactionId, BALL, BALL_SPIN, FIELD, GOAL } from '../../constants/gameConstants';
 import { Ball } from '../../entities/Ball';
 import { AudioManager } from '../../managers/AudioManager';
 import { FieldRenderer } from '../../renderers/FieldRenderer';
@@ -68,8 +68,7 @@ export class CollisionHandler {
   // ✅ НОВОЕ: Счётчик быстрых последовательных отскоков (признак "застревания в углу")
   private rapidBounceCount: number = 0;
   private lastBounceTime: number = 0;
-  private readonly RAPID_BOUNCE_WINDOW = 150; // ms — если отскоки чаще, это "застревание"
-  private readonly RAPID_BOUNCE_THRESHOLD = 3; // После N быстрых отскоков — экстренный damping
+  private readonly RAPID_BOUNCE_WINDOW = 150;
 
   constructor(config: CollisionHandlerConfig, callbacks: CollisionHandlerCallbacks) {
     this.scene = config.scene;
@@ -178,78 +177,61 @@ export class CollisionHandler {
    */
   private limitBallSpeedAfterBounce(ball: JuicyBall, isPostHit: boolean = false): void {
     const now = this.scene.time.now;
-    
-    // ✅ 3.A: Low-speed gate - prevent emergency damping at low speeds
+
     const vx0 = ball.body.velocity.x;
     const vy0 = ball.body.velocity.y;
     const s0 = Math.sqrt(vx0 * vx0 + vy0 * vy0);
 
-    if (s0 < 3) {
-      // Ball is just resting/rolling near wall - ignore rapid bounce detection
+    if (s0 < 4) {
       this.rapidBounceCount = 0;
       this.lastBounceTime = now;
       return;
     }
 
     const timeSinceLastBounce = now - this.lastBounceTime;
-
-    // Детекция быстрых последовательных отскоков (застревание в углу)
     if (timeSinceLastBounce < this.RAPID_BOUNCE_WINDOW) {
       this.rapidBounceCount++;
-      
-      // ✅ 3.B: Disable emergency damping by raising threshold (keep logic but prevent triggering)
-      if (this.rapidBounceCount >= this.RAPID_BOUNCE_THRESHOLD * 10) {
-        // Only trigger at extreme corner trap (10x threshold) - effectively disabled for normal cases
-          if (import.meta.env.DEV) {
-            console.warn(`[CollisionHandler] ⚠️ Extreme rapid bounce detected (${this.rapidBounceCount}x), applying emergency damping`);
-          }
-        
-        const vx = ball.body.velocity.x;
-        const vy = ball.body.velocity.y;
-        
-        // Reduced emergency damping - only for extreme cases
-        const emergencyDamping = 0.7;
+
+      if (this.rapidBounceCount >= 15) {
+        if (import.meta.env.DEV) {
+          console.warn(`[CollisionHandler] ⚠️ Ball truly stuck (${this.rapidBounceCount}x), applying escape`);
+        }
+
+        const bounds = this.config.fieldBounds;
+        const bPos = ball.body.position;
+        const toCX = bounds.centerX - bPos.x;
+        const toCY = bounds.centerY - bPos.y;
+        const toCD = Math.sqrt(toCX * toCX + toCY * toCY) || 1;
+        const escapeV = Math.max(s0 * 0.6, 8);
+
         this.scene.matter.body.setVelocity(ball.body, {
-          x: vx * emergencyDamping,
-          y: vy * emergencyDamping,
+          x: (toCX / toCD) * escapeV,
+          y: (toCY / toCD) * escapeV,
         });
-        
-        // Do not zero angular velocity unless absolutely necessary
-        // this.scene.matter.body.setAngularVelocity(ball.body, 0);
-        
-        // Сбрасываем счётчик
+
         this.rapidBounceCount = 0;
         this.lastBounceTime = now;
-        
         return;
       }
     } else {
-      // Отскоки не частые — сбрасываем счётчик
       this.rapidBounceCount = 0;
     }
 
     this.lastBounceTime = now;
 
-    // ✅ 3.C: Immediate clamp with hysteresis (remove delayedCall)
-    const vx = ball.body.velocity.x;
-    const vy = ball.body.velocity.y;
-    const speed = Math.sqrt(vx * vx + vy * vy);
-
-    // Для штанги используем более жёсткий лимит
     const maxSpeed = isPostHit
-      ? BALL.MAX_SPEED_AFTER_BOUNCE * 0.85
+      ? BALL.MAX_SPEED_AFTER_BOUNCE * 0.9
       : BALL.MAX_SPEED_AFTER_BOUNCE;
 
-    // ✅ 3.C: Hysteresis - only clamp if significantly over limit (5% margin)
-    if (speed > maxSpeed * 1.05) {
-      const scale = maxSpeed / speed;
+    if (s0 > maxSpeed * 1.1) {
+      const scale = maxSpeed / s0;
       this.scene.matter.body.setVelocity(ball.body, {
-        x: vx * scale,
-        y: vy * scale,
+        x: vx0 * scale,
+        y: vy0 * scale,
       });
-      
+
       if (import.meta.env.DEV) {
-        console.log(`[CollisionHandler] 🛑 Ball speed clamped after bounce: ${speed.toFixed(1)} → ${maxSpeed.toFixed(1)}`);
+        console.log(`[CollisionHandler] Speed clamped: ${s0.toFixed(1)} → ${maxSpeed.toFixed(1)}`);
       }
     }
   }
@@ -584,12 +566,25 @@ export class CollisionHandler {
     const isCornerHit = this.isCornerZone(ball.body.position);
     if (isCornerHit) {
       this.handleCornerBounce(ball, wallNormal, impactForce, controlBonus);
-    }
 
-    // ✅ ДОБАВЛЕНО: Ограничитель скорости после отскока
-    const juicyBall = ball as JuicyBall & Ball;
-    if (!(juicyBall instanceof Ball) || !juicyBall.shouldPreserveOmegaWallSpeed()) {
-      this.limitBallSpeedAfterBounce(ball, false);
+      const juicyBall2 = ball as JuicyBall & Ball;
+      const vel2 = ball.body.velocity;
+      const spd2 = Math.sqrt(vel2.x * vel2.x + vel2.y * vel2.y);
+      if (
+        spd2 > BALL.CRITICAL_SPEED &&
+        !(juicyBall2 instanceof Ball && juicyBall2.shouldPreserveOmegaWallSpeed())
+      ) {
+        const scale = BALL.CRITICAL_SPEED / spd2;
+        this.scene.matter.body.setVelocity(ball.body, {
+          x: vel2.x * scale,
+          y: vel2.y * scale,
+        });
+      }
+    } else {
+      const juicyBall = ball as JuicyBall & Ball;
+      if (!(juicyBall instanceof Ball) || !juicyBall.shouldPreserveOmegaWallSpeed()) {
+        this.limitBallSpeedAfterBounce(ball, false);
+      }
     }
 
     if (impactForce < 3) return; // Игнорируем слабые отскоки
@@ -680,39 +675,86 @@ export class CollisionHandler {
   private handleBallPostCollision(bodyA: MatterJS.BodyType, bodyB: MatterJS.BodyType): void {
     const ball = this.callbacks.getBall() as JuicyBall;
     const speedBefore = this.callbacks.getBallSpeedBeforeCollision();
-    const impactForce = speedBefore * 1.2; // Штанга = больше эффекта
+    const impactForce = speedBefore * 1.2;
 
     if (import.meta.env.DEV) {
       console.log(`[Collision] 🥅 BALL HIT POST! force: ${impactForce.toFixed(1)}`);
     }
 
-    // ✅ ДОБАВЛЕНО: Ограничитель скорости после отскока от штанги (более жёсткий)
-    const juicyBall = ball as JuicyBall & Ball;
-    if (!(juicyBall instanceof Ball) || !juicyBall.shouldPreserveOmegaWallSpeed()) {
-      this.limitBallSpeedAfterBounce(ball, true);
+    const bounds = this.config.fieldBounds;
+    const ballPos = ball.body.position;
+    const vel = ball.body.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    const scaleGw = bounds.width / FIELD.WIDTH;
+    const goalHalfW = (GOAL.WIDTH * scaleGw) / 2;
+    const goalCenterX = bounds.centerX;
+
+    const nearTopGoal = ballPos.y < bounds.centerY;
+    const goalLineY = nearTopGoal ? bounds.top : bounds.bottom;
+    const distToGoalLine = Math.abs(ballPos.y - goalLineY);
+
+    const inGoalXZone = Math.abs(ballPos.x - goalCenterX) < goalHalfW + 30;
+
+    if (inGoalXZone && distToGoalLine < 80 && speed > 3) {
+      const toGoalCenterX = goalCenterX - ballPos.x;
+      const toGoalLineY = goalLineY - ballPos.y;
+      const dist = Math.sqrt(toGoalCenterX * toGoalCenterX + toGoalLineY * toGoalLineY);
+
+      if (dist > 1) {
+        const nx = toGoalCenterX / dist;
+        const ny = toGoalLineY / dist;
+
+        const postForce = BALL.POST_REDIRECT_FORCE * speed;
+
+        this.scene.matter.body.applyForce(ball.body, ball.body.position, {
+          x: nx * postForce,
+          y: ny * postForce,
+        });
+
+        this.scene.time.delayedCall(16, () => {
+          if (!ball.body) return;
+          const v = ball.body.velocity;
+          const s = Math.sqrt(v.x * v.x + v.y * v.y);
+          const target = speed * 0.82;
+          if (s < target * 0.7 && s > 0.1) {
+            const sc = (target * 0.7) / s;
+            this.scene.matter.body.setVelocity(ball.body, {
+              x: v.x * sc,
+              y: v.y * sc,
+            });
+          }
+        });
+
+        if (import.meta.env.DEV) {
+          console.log(
+            `[Post] 🥅→⚽ Ball redirected into ${nearTopGoal ? 'TOP' : 'BOTTOM'} goal`,
+            `force: ${postForce.toFixed(4)}`,
+          );
+        }
+      }
+
+      this.playCornerGoalSequence();
+    } else {
+      const juicyBall = ball as JuicyBall & Ball;
+      if (!(juicyBall instanceof Ball) || !juicyBall.shouldPreserveOmegaWallSpeed()) {
+        this.limitBallSpeedAfterBounce(ball, true);
+      }
     }
 
-    // 🔥 ДРАМАТИЧЕСКИЕ ЭФФЕКТЫ
+    if (!(inGoalXZone && distToGoalLine < 80 && speed > 3)) {
+      this.playPostSound(impactForce);
+    }
 
-    // 1. Squash
     if (ball.playSquashEffect) {
       ball.playSquashEffect(Math.min(impactForce / 10, 1.2));
     }
 
-    // 2. Большая вспышка
-    const pos = ball.body.position;
-    this.createPostHitEffect(pos.x, pos.y, impactForce);
+    this.createPostHitEffect(ballPos.x, ballPos.y, impactForce);
 
-    // 3. 🔥 AUDIO — громкий звук штанги
-    this.playPostSound(impactForce);
-
-    // 4. 🔥 SCREEN SHAKE — обязательно
     this.screenShake(impactForce * 1.5);
 
-    // 5. 🔥 HIT STOP — драматическая пауза
-    this.hitStop(40);
+    this.hitStop(35);
 
-    // 6. 🔥 HAPTIC
     this.callbacks.triggerHaptic('heavy');
   }
 
@@ -1058,30 +1100,83 @@ export class CollisionHandler {
     ball: JuicyBall,
     wallNormal: { x: number; y: number },
     impactForce: number,
-    controlBonus: number
+    controlBonus: number,
   ): void {
-    // Additional spin in corners
     if (ball.applyWallSpin) {
-      ball.applyWallSpin(wallNormal, impactForce * BALL_SPIN.CORNER_SPIN_MULTIPLIER, controlBonus * 1.2);
+      ball.applyWallSpin(
+        wallNormal,
+        impactForce * BALL_SPIN.CORNER_SPIN_MULTIPLIER,
+        controlBonus * 1.2,
+      );
     }
-    
-    // Apply slight "guiding" force toward center of field
+
     const bounds = this.config.fieldBounds;
     const ballPos = ball.body.position;
-    
-    const toCenterX = bounds.centerX - ballPos.x;
-    const toCenterY = bounds.centerY - ballPos.y;
-    const toCenterDist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY);
-    
-    if (toCenterDist > 0) {
-      const guideForce = 0.0005 * impactForce;
+    const vel = ball.body.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+
+    if (speed < 4) return;
+
+    const fz = BALL_SPIN.CORNER_ZONE_SIZE * this.config.fieldScale;
+    const nearLeft = ballPos.x < bounds.left + fz;
+    const nearRight = ballPos.x > bounds.right - fz;
+    const nearTop = ballPos.y < bounds.top + fz;
+    const nearBottom = ballPos.y > bounds.bottom - fz;
+
+    const goalY = nearTop ? bounds.top : bounds.bottom;
+    const goalCenterX = bounds.centerX;
+
+    const toGoalX = goalCenterX - ballPos.x;
+    const toGoalY = goalY - ballPos.y;
+    const toGoalDist = Math.sqrt(toGoalX * toGoalX + toGoalY * toGoalY);
+
+    if (toGoalDist < 10) return;
+
+    const toGoalNX = toGoalX / toGoalDist;
+    const toGoalNY = toGoalY / toGoalDist;
+
+    const dotToGoal = vel.x * toGoalNX + vel.y * toGoalNY;
+
+    if (dotToGoal > 0.1) {
+      let redirectX = 0;
+      let redirectY = 0;
+
+      if (nearLeft || nearRight) {
+        redirectY = nearTop ? -1 : 1;
+        redirectX = nearLeft ? 0.15 : -0.15;
+      } else {
+        redirectX = goalCenterX > ballPos.x ? 1 : -1;
+        redirectY = nearTop ? -0.2 : 0.2;
+      }
+
+      const redirectForce = BALL.CORNER_REDIRECT_FORCE * speed;
+
       this.scene.matter.body.applyForce(ball.body, ball.body.position, {
-        x: (toCenterX / toCenterDist) * guideForce,
-        y: (toCenterY / toCenterDist) * guideForce,
+        x: redirectX * redirectForce,
+        y: redirectY * redirectForce,
       });
+
+      const newVel = ball.body.velocity;
+      const newSpeed = Math.sqrt(newVel.x * newVel.x + newVel.y * newVel.y);
+      const targetSpeed = speed * BALL.CORNER_PRESERVE_SPEED;
+
+      if (newSpeed < targetSpeed && newSpeed > 0.1) {
+        const scale = targetSpeed / newSpeed;
+        this.scene.matter.body.setVelocity(ball.body, {
+          x: newVel.x * scale,
+          y: newVel.y * scale,
+        });
+      }
+
+      if (import.meta.env.DEV) {
+        console.log(
+          `[Corner] ⚽ Redirecting to ${nearTop ? 'TOP' : 'BOTTOM'} goal,`,
+          `dotToGoal: ${dotToGoal.toFixed(2)},`,
+          `speed: ${speed.toFixed(1)}`,
+        );
+      }
     }
-    
-    // VFX for corner bounce
+
     this.createCornerSparks(ballPos.x, ballPos.y, impactForce);
   }
 

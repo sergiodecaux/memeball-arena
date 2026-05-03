@@ -44,28 +44,17 @@ export const BALL = {
   FRICTION: 0.005,
   FRICTION_AIR: 0.005,
   LABEL: 'ball',
-  
-  // ========== БЕЗОПАСНОСТЬ: ограничители скорости и позиции ==========
-  // Максимальная скорость мяча (px за шаг симуляции)
-  // Предотвращает "взрывные" отскоки из углов
-  MAX_SPEED: 38,
-  
-  // Мягкий лимит после столкновения со стенами/штангами
-  MAX_SPEED_AFTER_BOUNCE: 32,
-  
-  // Максимальная угловая скорость (rad/step)
+
+  MAX_SPEED: 42,
+  MAX_SPEED_AFTER_BOUNCE: 38,
   MAX_ANGULAR_VELOCITY: 0.35,
-  
-  // Запас за пределами FieldBounds, где ещё можно вернуть мяч (px)
-  // Если мяч вылетел дальше - принудительный reset в центр
   OUT_OF_BOUNDS_MARGIN: 80,
-  
-  // Критический порог скорости для экстренного торможения
-  // Если скорость превышает это значение - мгновенный clamp + damping
-  CRITICAL_SPEED: 50,
-  
-  // Коэффициент damping при критической скорости
-  CRITICAL_SPEED_DAMPING: 0.7,
+  CRITICAL_SPEED: 55,
+  CRITICAL_SPEED_DAMPING: 0.75,
+
+  CORNER_REDIRECT_FORCE: 0.0018,
+  CORNER_PRESERVE_SPEED: 0.88,
+  POST_REDIRECT_FORCE: 0.0022,
 } as const;
 
 export type CapClass = 'balanced' | 'tank' | 'sniper' | 'trickster';
@@ -589,28 +578,21 @@ export const ABILITY_CARD_PRICES: Record<FactionId, { coins: number; crystals: n
 // ========== SPIN & CURVE SYSTEM ==========
 
 export const BALL_SPIN = {
-  // Spin application
-  BASE_SPIN_MULTIPLIER: 0.015,      // How much speed converts to spin
-  MAX_SPIN_VELOCITY: 0.15,           // Maximum spin (rad/frame)
-  SPIN_DECAY: 0.96,                  // Decay per frame (4% loss)
-  SPIN_TO_CURVE_RATIO: 0.0008,       // How spin affects trajectory
-  
-  // Skill modifiers
-  TRICKSTER_BONUS: 0.3,              // +30% spin for Trickster class
-  CONTROL_STAT_WEIGHT: 0.2,           // How much faction control stat matters
-  TECHNIQUE_UPGRADE_WEIGHT: 0.05,     // +5% per technique level
-  
-  // Probability
-  BASE_SPIN_CHANCE: 0.3,              // 30% base chance for spin to "catch"
-  CONTROL_CHANCE_BONUS: 0.5,          // Up to +50% from control (max 80%)
-  
-  // Corner goal
-  CORNER_ZONE_SIZE: 60,               // px (scaled)
-  CORNER_SPIN_MULTIPLIER: 1.3,        // Extra spin in corners
-  WALL_HUG_DISTANCE: 45,              // How close to wall for "hugging"
-  
-  // Optimal angle for spin (in dot product terms)
-  // 0.5 = 60° angle, best for spin
+  BASE_SPIN_MULTIPLIER: 0.015,
+  MAX_SPIN_VELOCITY: 0.15,
+  SPIN_DECAY: 0.96,
+  SPIN_TO_CURVE_RATIO: 0.0008,
+
+  TRICKSTER_BONUS: 0.3,
+  CONTROL_STAT_WEIGHT: 0.2,
+  TECHNIQUE_UPGRADE_WEIGHT: 0.05,
+
+  BASE_SPIN_CHANCE: 0.3,
+  CONTROL_CHANCE_BONUS: 0.5,
+
+  CORNER_ZONE_SIZE: 90,
+  CORNER_SPIN_MULTIPLIER: 1.5,
+  WALL_HUG_DISTANCE: 45,
   OPTIMAL_IMPACT_ANGLE: 0.5,
 } as const;
 

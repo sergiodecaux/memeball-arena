@@ -357,8 +357,7 @@ export function loadImagesRepository(scene: Phaser.Scene): void {
   loadFactionBackgrounds(scene);
   loadFactionTokens(scene);
   loadRewardIcons(scene);
-  // Все PNG юнитов из репозитория (включая капитанов), чтобы карточки не зависели только от ленивой догрузки
-  loadCapCollectionAssets(scene);
+  // Юниты подгружаются лениво в CollectionScene (AssetPackManager / loadVisibleUnitPngs), без массового preload — быстрее вход в репозиторий.
 }
 
 /**

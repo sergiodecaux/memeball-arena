@@ -770,10 +770,13 @@ export class GameSceneSetup {
 
     const postOpts: Phaser.Types.Physics.Matter.MatterBodyConfig = {
       isStatic: true,
-      restitution: WALL_PHYSICS.POST_RESTITUTION,
-      friction: WALL_PHYSICS.POST_FRICTION,
+      restitution: 0.95,
+      friction: 0.01,
       label: 'post',
-      collisionFilter: { category: COLLISION_CATEGORIES.WALL },
+      collisionFilter: {
+        category: COLLISION_CATEGORIES.WALL,
+        mask: COLLISION_CATEGORIES.BALL | COLLISION_CATEGORIES.CAP,
+      },
     };
 
     // Боковые стены (side walls)
@@ -799,81 +802,11 @@ export class GameSceneSetup {
     this.createCornerChamfers(fieldBounds, scale);
   }
 
-  /**
-   * ✅ NEW: Create chamfered corner colliders to prevent ball from getting stuck
-   * Creates triangular colliders at each corner to guide ball smoothly
-   */
   private createCornerChamfers(fieldBounds: FieldBounds, scale: number): void {
-    const { left, right, top, bottom } = fieldBounds;
-    const chamferSize = WALL_PHYSICS.CORNER_CHAMFER_SIZE * scale;
-
-    const cornerOpts: Phaser.Types.Physics.Matter.MatterBodyConfig = {
-      isStatic: true,
-      restitution: WALL_PHYSICS.CORNER_RESTITUTION,
-      friction: WALL_PHYSICS.CORNER_FRICTION,
-      collisionFilter: { category: COLLISION_CATEGORIES.CORNER },
-    };
-
-    // Top-Left corner
-    const topLeftChamfer = this.scene.matter.add.fromVertices(
-      left + chamferSize / 2,
-      top + chamferSize / 2,
-      [
-        { x: 0, y: 0 },
-        { x: chamferSize, y: 0 },
-        { x: 0, y: chamferSize }
-      ],
-      {
-        ...cornerOpts,
-        label: 'corner_tl',
-      }
+    void fieldBounds;
+    void scale;
+    console.log(
+      '[GameSceneSetup] Corner chamfers disabled — using soft corner redirect instead',
     );
-
-    // Top-Right corner
-    const topRightChamfer = this.scene.matter.add.fromVertices(
-      right - chamferSize / 2,
-      top + chamferSize / 2,
-      [
-        { x: 0, y: 0 },
-        { x: -chamferSize, y: 0 },
-        { x: 0, y: chamferSize }
-      ],
-      {
-        ...cornerOpts,
-        label: 'corner_tr',
-      }
-    );
-
-    // Bottom-Left corner
-    const bottomLeftChamfer = this.scene.matter.add.fromVertices(
-      left + chamferSize / 2,
-      bottom - chamferSize / 2,
-      [
-        { x: 0, y: 0 },
-        { x: chamferSize, y: 0 },
-        { x: 0, y: -chamferSize }
-      ],
-      {
-        ...cornerOpts,
-        label: 'corner_bl',
-      }
-    );
-
-    // Bottom-Right corner
-    const bottomRightChamfer = this.scene.matter.add.fromVertices(
-      right - chamferSize / 2,
-      bottom - chamferSize / 2,
-      [
-        { x: 0, y: 0 },
-        { x: -chamferSize, y: 0 },
-        { x: 0, y: -chamferSize }
-      ],
-      {
-        ...cornerOpts,
-        label: 'corner_br',
-      }
-    );
-
-    console.log('[GameSceneSetup] ✅ Created 4 chamfered corner colliders');
   }
 }

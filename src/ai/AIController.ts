@@ -3,10 +3,9 @@
 import Phaser from 'phaser';
 import { Ball } from '../entities/Ball';
 import { AIDifficulty, PlayerNumber, normalizeGameAIDifficulty, AIDifficultyInput } from '../types';
-import { FIELD, GOAL, CapClass, FactionId, CAP_CLASSES } from '../constants/gameConstants';
+import { FIELD, GOAL, FactionId } from '../constants/gameConstants';
 import {
   AIMatchContext,
-  getContextAggressionBias,
   getContextDifficultyModifier,
   getContextReactionModifier,
 } from './MatchContext';
@@ -65,6 +64,9 @@ interface AIUnitWithStats extends AIUnit {
     curveStrength?: number;
   };
 }
+
+const DEFAULT_FORCE_MULTIPLIER = 0.0045;
+const DEFAULT_MAX_FORCE = 0.08;
 
 // === НАСТРОЙКИ ===
 
@@ -442,7 +444,6 @@ export class AIController {
 
   private updateAggression(): void {
     const diff = this.state.aiScore - this.state.playerScore;
-    const aggrBias = getContextAggressionBias(this.aiMatchContext);
 
     let baseAggr: number;
     if (diff >= 2) {
@@ -450,19 +451,15 @@ export class AIController {
     } else if (diff === 1) {
       baseAggr = 0.48;
     } else if (diff === 0) {
-      baseAggr = 0.58 + aggrBias;
+      baseAggr = 0.60;
     } else if (diff === -1) {
-      baseAggr = 0.74 + aggrBias;
+      baseAggr = 0.75;
     } else {
-      baseAggr = 0.92 + aggrBias;
+      baseAggr = 0.90;
     }
 
     if (this.state.consecutiveGoalsAgainst >= 2) {
-      baseAggr = Math.max(0.18, baseAggr - 0.22);
-    }
-
-    if (this.aiMatchContext.mode === 'tournament' && this.aiMatchContext.tournamentRound === '2') {
-      baseAggr = Math.min(0.95, baseAggr + 0.12);
+      baseAggr = Math.max(0.20, baseAggr - 0.20);
     }
 
     this.state.aggression = Phaser.Math.Clamp(baseAggr, 0.15, 0.97);
@@ -765,24 +762,21 @@ export class AIController {
     const uPos = unit.body.position;
     const bPos = this.ball.body.position;
 
+    // AI (player 2) атакует НИЖНИЕ ворота (fieldBounds.bottom)
     const goalCenter = {
       x: this.fieldBounds.centerX,
       y: this.fieldBounds.bottom,
     };
 
-    const unitBehindBall = uPos.y > bPos.y + 30;
-    if (unitBehindBall) return null;
-
     const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
 
     const maxHitDist: Record<string, number> = {
-      sniper: 320,
-      balanced: 260,
-      trickster: 240,
-      tank: 200,
+      sniper: 380,
+      balanced: 320,
+      trickster: 300,
+      tank: 250,
     };
-    const capClass = unit.getCapClass();
-    if (distToBall > (maxHitDist[capClass] ?? 260)) return null;
+    if (distToBall > (maxHitDist[unit.getCapClass()] ?? 320)) return null;
 
     const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y);
     const toGoal = new Phaser.Math.Vector2(goalCenter.x - bPos.x, goalCenter.y - bPos.y);
@@ -790,7 +784,7 @@ export class AIController {
     const angle = Math.abs(Phaser.Math.RadToDeg(toBall.angle() - toGoal.angle()));
     const normAngle = Math.abs(((angle + 180) % 360) - 180);
 
-    if (normAngle > 75) return null;
+    if (normAngle > 100) return null;
 
     const power = this.calculatePower(unit, distToBall);
     const dir = toBall.normalize();
@@ -798,21 +792,25 @@ export class AIController {
 
     let score = 45;
     score += Math.max(0, 35 - distToBall / 8);
-    score += (75 - normAngle) / 2.5;
-
-    const ballBetween = bPos.y > uPos.y && bPos.y < goalCenter.y;
-    if (ballBetween) score += 20;
+    score += (100 - normAngle) / 3;
 
     const goalBlocked = this.playerUnits.some((p) => {
       const pPos = p.body.position;
-      return Math.abs(pPos.x - goalCenter.x) < 60 && Math.abs(pPos.y - goalCenter.y) < 80;
+      return Math.abs(pPos.x - goalCenter.x) < 70 && Math.abs(pPos.y - goalCenter.y) < 90;
     });
-    if (!goalBlocked) score += 15;
+    if (!goalBlocked) score += 18;
 
     const unitClass = unit.getCapClass();
     if (unitClass === 'sniper' && distToBall > 130) score += 22;
-    if (unitClass === 'tank' && distToBall > 180) score -= 18;
-    if (unitClass === 'trickster' && distToBall > 90 && distToBall < 200 && normAngle < 40) score += 12;
+    if (unitClass === 'tank' && distToBall > 180) score -= 15;
+    if (
+      unitClass === 'trickster' &&
+      distToBall > 90 &&
+      distToBall < 200 &&
+      normAngle < 45
+    ) {
+      score += 12;
+    }
 
     score *= 0.45 + this.state.aggression * 0.55;
     score *= 1 + this.profileNoise.aggressionOffset * 0.25;
@@ -835,68 +833,61 @@ export class AIController {
     const bPos = this.ball.body.position;
     const bVel = this.ball.body.velocity ?? { x: 0, y: 0 };
 
-    const ourGoal = { x: this.fieldBounds.centerX, y: this.fieldBounds.top };
+    // AI защищает ВЕРХНИЕ ворота (fieldBounds.top)
+    const ourGoal = {
+      x: this.fieldBounds.centerX,
+      y: this.fieldBounds.top,
+    };
     const ballToGoal = Phaser.Math.Distance.Between(bPos.x, bPos.y, ourGoal.x, ourGoal.y);
 
     const ballMovingToOurGoal = bVel.y < -1.5;
     const ballSpeed = Math.sqrt(bVel.x ** 2 + bVel.y ** 2);
-    const dynamicZone = this.settings.defenseZone + (ballMovingToOurGoal ? ballSpeed * 25 : 0);
+    const dynamicZone =
+      this.settings.defenseZone + (ballMovingToOurGoal ? ballSpeed * 20 : 0);
 
     if (ballToGoal > dynamicZone) return null;
 
     const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
 
-    const predictionTicks = 12;
-    const predictedBallX = bPos.x + bVel.x * predictionTicks;
-    const predictedBallY = bPos.y + bVel.y * predictionTicks;
+    const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
 
-    const aimTarget =
-      ballSpeed > 2 ? { x: predictedBallX, y: predictedBallY } : { x: bPos.x, y: bPos.y };
-
-    const toTarget = new Phaser.Math.Vector2(
-      aimTarget.x - uPos.x,
-      aimTarget.y - uPos.y,
+    const sideDir = bPos.x < this.fieldBounds.centerX ? -0.3 : 0.3;
+    const clearDir = new Phaser.Math.Vector2(
+      toBall.x * 0.65 + sideDir * 0.35,
+      toBall.y * 0.65 + 0.35,
     ).normalize();
 
-    const clearanceDir = new Phaser.Math.Vector2(
-      bPos.x < this.fieldBounds.centerX ? -1 : 1,
-      0.3,
-    ).normalize();
+    const power = this.calculatePower(unit, distToBall) * 1.3;
+    const force = this.applyError(clearDir, power, unit);
 
-    const finalDir = new Phaser.Math.Vector2(
-      toTarget.x * 0.7 + clearanceDir.x * 0.3,
-      toTarget.y * 0.7 + clearanceDir.y * 0.3,
-    ).normalize();
-
-    const power = this.calculatePower(unit, distToBall) * 1.35;
-    const force = this.applyError(finalDir, power, unit);
-
-    let score = 38;
-    score += (dynamicZone - ballToGoal) / 4.5;
-    if (ballMovingToOurGoal) score += ballSpeed * 4;
-    score -= distToBall / 18;
+    let score = 40;
+    score += (dynamicZone - ballToGoal) / 4;
+    if (ballMovingToOurGoal) score += ballSpeed * 5;
+    score -= distToBall / 15;
 
     const unitClass = unit.getCapClass();
-    if (unitClass === 'tank') score += 28;
+    if (unitClass === 'tank') score += 30;
     if (unitClass === 'sniper') score -= 8;
 
-    if (ballToGoal < 100) {
-      score += 45;
-      if (unitClass === 'tank') score += 35;
+    if (ballToGoal < 120) {
+      score += 50;
+      if (unitClass === 'tank') score += 30;
     }
 
     if (this.state.consecutiveGoalsAgainst >= 2) score *= 1.4;
-    if (this.state.aiScore < this.state.playerScore) score *= 1.25;
+    if (this.state.aiScore < this.state.playerScore) score *= 1.2;
 
-    if (this.bossId === 'boss_unit734' || this.bossId === 'boss_oracle') score *= 1.3;
+    if (this.bossId === 'boss_unit734' || this.bossId === 'boss_oracle') {
+      score *= 1.3;
+    }
 
     return {
       unit,
-      target: aimTarget,
+      target: bPos,
       score,
       type: 'defend',
       force,
-      description: `Defense by ${unit.getCapClass()} (ballSpeed:${ballSpeed.toFixed(1)})`,
+      description: `Defense by ${unitClass} ballSpeed:${ballSpeed.toFixed(1)}`,
     };
   }
 
@@ -1003,28 +994,24 @@ export class AIController {
   private evaluatePressure(unit: AIUnit): ShotCandidate | null {
     const uPos = unit.body.position;
     const bPos = this.ball.body.position;
-    
     const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
-    
-    if (distToBall > 250) return null;
-    
+
+    if (distToBall > 90) return null;
+
     const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
+
     const power = this.calculatePower(unit, distToBall) * 0.5;
     const force = this.applyError(toBall, power, unit);
-    
-    let score = 20 + Math.max(0, 20 - distToBall / 10);
-    
-    if (unit.getCapClass() === 'trickster') {
-      score += 10;
-    }
-    
+
+    const score = 6 + Math.max(0, 10 - distToBall / 5);
+
     return {
       unit,
       target: bPos,
-      score: score * this.state.aggression,
+      score,
       type: 'pressure',
       force,
-      description: `Pressure by ${unit.getCapClass()}`,
+      description: `Micro-press by ${unit.getCapClass()} dist:${distToBall.toFixed(0)}`,
     };
   }
 
@@ -1032,24 +1019,30 @@ export class AIController {
 
   private calculatePower(unit: AIUnit, distance: number): number {
     const { min, max } = this.settings.shotPower;
-    const MAX_EFFECTIVE_DIST = 350;
-    let power = Phaser.Math.Linear(min, max, Math.min(distance / MAX_EFFECTIVE_DIST, 1));
+
+    const MAX_EFFECTIVE_DIST = 320;
+    let power = Phaser.Math.Linear(
+      min,
+      max,
+      Math.min(distance / MAX_EFFECTIVE_DIST, 1),
+    );
 
     switch (unit.getCapClass()) {
       case 'sniper':
-        power *= distance > 180 ? 1.18 : 1.05;
+        power *= distance > 160 ? 1.15 : 1.0;
         break;
       case 'tank':
-        power *= distance < 120 ? 1.1 : 0.82;
+        power *= distance < 110 ? 1.08 : 0.85;
         break;
       case 'trickster':
         power *= 0.95;
         break;
+      case 'balanced':
       default:
         break;
     }
 
-    return Phaser.Math.Clamp(power, 0.3, 1.0);
+    return Phaser.Math.Clamp(power, 0.35, 1.0);
   }
 
   private applyError(
@@ -1067,14 +1060,11 @@ export class AIController {
     dir.rotate((Math.random() - 0.5) * errorRange);
 
     const unitWithStats = unit as AIUnitWithStats;
-    const cls = unit.getCapClass() as CapClass;
-    const capClassStats = CAP_CLASSES[cls];
     const forceMultiplier =
-      unitWithStats.stats?.forceMultiplier ?? capClassStats?.forceMultiplier ?? 0.002;
-    const maxForce = unitWithStats.stats?.maxForce ?? capClassStats?.maxForce ?? 0.26;
+      unitWithStats.stats?.forceMultiplier ?? DEFAULT_FORCE_MULTIPLIER;
+    const maxForce = unitWithStats.stats?.maxForce ?? DEFAULT_MAX_FORCE;
 
-    const rawForce = power * forceMultiplier * 18;
-    const finalPower = Math.min(rawForce, maxForce);
+    const finalPower = Math.min(power * forceMultiplier * 200, maxForce);
 
     return { x: dir.x * finalPower, y: dir.y * finalPower };
   }
