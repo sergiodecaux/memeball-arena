@@ -26,6 +26,7 @@ import { MatchStateMachine, MatchPhase } from '../core/MatchStateMachine';
 import { MatchDirector } from '../controllers/match/MatchDirector';
 import { ShootingController, ShootEventData } from '../controllers/ShootingController';
 import { AIController } from '../ai/AIController';
+import type { AIMatchContext } from '../ai/MatchContext';
 import type { AIOpponentProfile } from '../ai/AIProfile';
 
 // Game modules
@@ -59,6 +60,7 @@ import { LeagueTier } from '../types/league';
 import { battlePassManager } from '../managers/BattlePassManager';
 import { TournamentManager } from '../managers/TournamentManager';
 import { MatchContext } from './game/types';
+import type { BracketStage } from '../types/tournament';
 import { FallbackManager } from '../assets/fallback/FallbackManager';
 
 import { MatchResult } from '../types/MatchResult';
@@ -981,6 +983,44 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Контекст режима матча для AIController (не путать со строковым MatchContext сцен). */
+  private buildAIMatchContext(): AIMatchContext {
+    const pd = playerData.get();
+
+    if (this.isRealtimePvP) {
+      return { mode: 'pvp' };
+    }
+
+    if (this.isDisguisedPvPBotMatch) {
+      return { mode: 'pvp' };
+    }
+
+    if (this.isCampaignMode) {
+      return { mode: 'campaign' };
+    }
+
+    if (this.matchContext === 'league') {
+      const lp = pd.leagueProgress;
+      return {
+        mode: 'league',
+        leagueTier: lp?.currentTier as AIMatchContext['leagueTier'],
+        leagueDivision: lp?.division,
+      };
+    }
+
+    if (this.matchContext === 'tournament') {
+      const t = pd.activeTournament;
+      const roundFromScene = this.round as BracketStage | undefined;
+      return {
+        mode: 'tournament',
+        tournamentTier: t?.tier,
+        tournamentRound: roundFromScene ?? t?.currentRound,
+      };
+    }
+
+    return { mode: 'friendly' };
+  }
+
   /** После AbilityManager P2 — колбэк карт и корректный init ИИ */
   private setupAIController(): void {
     if (!this.isAIEnabled || this.isRealtimePvP) return;
@@ -991,6 +1031,8 @@ export class GameScene extends Phaser.Scene {
     const playerUnits = this.caps.filter(c => c.owner === 1);
 
     this.aiController.init(aiUnits as any[], this.ball, playerUnits as any[]);
+
+    this.aiController.setMatchContext(this.buildAIMatchContext());
 
     this.aiController.setCaptainShotGate((u) =>
       this.captainMatchSystem?.aiTeamShotUnitAllowed(u as Unit) ?? true

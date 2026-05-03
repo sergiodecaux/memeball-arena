@@ -3,7 +3,13 @@
 import Phaser from 'phaser';
 import { Ball } from '../entities/Ball';
 import { AIDifficulty, PlayerNumber, normalizeGameAIDifficulty, AIDifficultyInput } from '../types';
-import { FIELD, GOAL, CapClass, FactionId } from '../constants/gameConstants';
+import { FIELD, GOAL, CapClass, FactionId, CAP_CLASSES } from '../constants/gameConstants';
+import {
+  AIMatchContext,
+  getContextAggressionBias,
+  getContextDifficultyModifier,
+  getContextReactionModifier,
+} from './MatchContext';
 import { Formation, playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
 import { AbilityScorer, AIUnit, CardScore, GameState } from './scoring/AbilityScorer';
@@ -113,11 +119,6 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
   },
 };
 
-// === КОНСТАНТЫ ПО УМОЛЧАНИЮ ===
-
-const DEFAULT_FORCE_MULTIPLIER = 0.0045;
-const DEFAULT_MAX_FORCE = 0.08;
-
 // === ОСНОВНОЙ КЛАСС ===
 
 export class AIController {
@@ -172,6 +173,9 @@ export class AIController {
   /** Ограничение выбора фишки (цепочка SUPER Xerxa и др.) */
   private captainShotGate?: (unit: AIUnit) => boolean;
 
+  /** Режим матча (лига / турнир / PvP-бот и т.д.) — задаётся после init через setMatchContext */
+  private aiMatchContext: AIMatchContext = { mode: 'friendly' };
+
   // ЗАЩИТА ОТ ДВОЙНОГО ХОДА
   public isThinking = false;
   private lastMoveTime = 0;
@@ -197,6 +201,50 @@ export class AIController {
 
   private allowedByCaptainGate(unit: AIUnit): boolean {
     return !this.captainShotGate || this.captainShotGate(unit);
+  }
+
+  public setMatchContext(ctx: AIMatchContext): void {
+    this.aiMatchContext = ctx;
+    this.applyContextToSettings();
+    this.updateAggression();
+    console.log(`[AI] 🎮 Match context: ${ctx.mode}`, ctx);
+  }
+
+  private applyContextToSettings(): void {
+    if (this.bossId) return;
+
+    const base = DIFFICULTY_SETTINGS[this.difficulty];
+    const diffMod = getContextDifficultyModifier(this.aiMatchContext);
+    const reactMod = getContextReactionModifier(this.aiMatchContext);
+
+    this.settings = { ...base };
+    this.settings.accuracy = Math.min(0.99, base.accuracy * diffMod);
+    this.settings.reactionTime = {
+      min: Math.round(base.reactionTime.min * reactMod),
+      max: Math.round(base.reactionTime.max * reactMod),
+    };
+
+    if (
+      this.aiMatchContext.mode === 'tournament' &&
+      (this.aiMatchContext.tournamentRound === '2' || this.aiMatchContext.tournamentRound === '4')
+    ) {
+      this.settings.formationAdaptation = true;
+      this.settings.cardUsageChance = Math.min(0.9, base.cardUsageChance * 1.3);
+    }
+
+    if (this.aiMatchContext.mode === 'league') {
+      if (this.aiMatchContext.leagueTier === 'nebula' || this.aiMatchContext.leagueTier === 'core') {
+        this.settings.passChance = Math.min(0.6, base.passChance * 1.4);
+      }
+    }
+
+    if (this.aiMatchContext.mode === 'pvp') {
+      this.settings.formationAdaptation = true;
+    }
+
+    console.log(
+      `[AI] ⚙️ Settings after context: acc=${this.settings.accuracy.toFixed(2)}, react=${this.settings.reactionTime.min}-${this.settings.reactionTime.max}ms`,
+    );
   }
 
   private calculateFieldBounds(): void {
@@ -374,7 +422,7 @@ export class AIController {
     this.state.playerScore = playerScore;
     this.state.aiScore = aiScore;
     this.updateAggression();
-    // Формация меняется только после гола (recordGoal), не между ходами
+    // Формация также может меняться в startTurn при formationAdaptation и после гола в recordGoal
   }
 
   recordGoal(scoredBy: 'player' | 'ai'): void {
@@ -394,22 +442,30 @@ export class AIController {
 
   private updateAggression(): void {
     const diff = this.state.aiScore - this.state.playerScore;
-    
+    const aggrBias = getContextAggressionBias(this.aiMatchContext);
+
+    let baseAggr: number;
     if (diff >= 2) {
-      this.state.aggression = 0.3;
+      baseAggr = 0.28;
     } else if (diff === 1) {
-      this.state.aggression = 0.5;
+      baseAggr = 0.48;
     } else if (diff === 0) {
-      this.state.aggression = 0.6;
+      baseAggr = 0.58 + aggrBias;
     } else if (diff === -1) {
-      this.state.aggression = 0.75;
+      baseAggr = 0.74 + aggrBias;
     } else {
-      this.state.aggression = 0.9;
+      baseAggr = 0.92 + aggrBias;
     }
-    
+
     if (this.state.consecutiveGoalsAgainst >= 2) {
-      this.state.aggression = Math.max(0.2, this.state.aggression - 0.2);
+      baseAggr = Math.max(0.18, baseAggr - 0.22);
     }
+
+    if (this.aiMatchContext.mode === 'tournament' && this.aiMatchContext.tournamentRound === '2') {
+      baseAggr = Math.min(0.95, baseAggr + 0.12);
+    }
+
+    this.state.aggression = Phaser.Math.Clamp(baseAggr, 0.15, 0.97);
   }
 
   // === ВЫБОР СХЕМЫ ===
@@ -483,7 +539,13 @@ export class AIController {
     this.isThinking = true;
     this.state.turnsSinceLastGoal++;
 
-    // Схема не пересчитывается во время хода — только после забитого гола (recordGoal)
+    if (this.settings.formationAdaptation) {
+      const dangerForm = AIUtils.evaluateDangerLevel(this.ball, this.fieldBounds, true);
+      const attackOppForm = AIUtils.evaluateAttackOpportunity(this.ball, this.fieldBounds, true);
+      if (dangerForm > 0.72 || attackOppForm > 0.68 || this.state.turnsSinceLastGoal % 4 === 0) {
+        this.selectFormation();
+      }
+    }
 
     const delay = Phaser.Math.Between(
       this.settings.reactionTime.min,
@@ -513,50 +575,56 @@ export class AIController {
       return;
     }
 
-    // ⭐ NEW: Сначала проверяем, стоит ли использовать карту
     if (this.shouldUseCard()) {
-      const cardUsed = this.tryUseCard();
-      if (cardUsed) {
-        // Карта использована — ход всё равно продолжается обычным ударом
-        // (или можно завершить ход здесь)
-      }
+      this.tryUseCard();
     }
-    
+
     const candidates = this.generateAllCandidates();
-    
+
     if (candidates.length === 0) {
       console.log('[AI] ❌ No valid moves!');
       this.finishMove();
       return;
     }
-    
+
     candidates.sort((a, b) => b.score - a.score);
 
     let selected: ShotCandidate;
-    if (this.difficulty === 'impossible') {
+
+    const isPvPBot = this.aiMatchContext.mode === 'pvp';
+    const isTournamentFinal =
+      this.aiMatchContext.mode === 'tournament' && this.aiMatchContext.tournamentRound === '2';
+    const isHighLeague =
+      this.aiMatchContext.mode === 'league' &&
+      (this.aiMatchContext.leagueTier === 'nebula' || this.aiMatchContext.leagueTier === 'core');
+
+    if (this.difficulty === 'impossible' || isTournamentFinal || isHighLeague) {
       const topN = Math.min(2, candidates.length);
       selected = candidates[0];
-      if (topN > 1 && Math.random() < 0.14) {
-        selected = Phaser.Math.RND.pick(candidates.slice(0, topN));
+      if (topN > 1 && Math.random() < 0.1) {
+        selected = candidates[1];
       }
     } else if (this.difficulty === 'hard') {
       selected = candidates[0];
-    } else if (this.difficulty === 'medium') {
-      // Medium: random among top 2-3 candidates
+    } else if (this.difficulty === 'medium' || isPvPBot) {
       const topN = Math.min(3, candidates.length);
-      selected = Phaser.Math.RND.pick(candidates.slice(0, topN));
+      const errorChance = isPvPBot ? 0.18 : 0.08;
+      if (Math.random() < errorChance && topN > 1) {
+        selected = candidates[Math.floor(Math.random() * topN)];
+      } else {
+        selected = Phaser.Math.RND.pick(candidates.slice(0, Math.min(2, topN)));
+      }
     } else {
-      // Easy: random among mid-tier candidates (more mistakes)
-      const topN = Math.min(3, candidates.length);
+      const topN = Math.min(4, candidates.length);
       const midStart = Math.max(1, Math.floor(topN / 2));
-      const selectionPool = candidates.slice(midStart, topN);
-      selected = selectionPool.length > 0 
-        ? Phaser.Math.RND.pick(selectionPool)
-        : Phaser.Math.RND.pick(candidates.slice(0, Math.max(1, topN - 1)));
+      const pool = candidates.slice(midStart, topN);
+      selected =
+        pool.length > 0 ? Phaser.Math.RND.pick(pool) : candidates[candidates.length - 1];
     }
-    
-    console.log(`[AI] 🎯 ${selected.description} (score: ${selected.score.toFixed(1)})`);
-    
+
+    console.log(
+      `[AI] 🎯 ${selected.description} (score:${selected.score.toFixed(1)}, mode:${this.aiMatchContext.mode})`,
+    );
     this.executeShot(selected);
   }
 
@@ -635,6 +703,7 @@ export class AIController {
     const danger = AIUtils.evaluateDangerLevel(this.ball, this.fieldBounds, true);
     const attackOpportunity = AIUtils.evaluateAttackOpportunity(this.ball, this.fieldBounds, true);
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
+    const goalOpenness = this.evaluateGoalOpenness();
     const bunkerAttackBoost = (1 + bunker * 0.62) * (1 + this.profileNoise.bunkerOffset * 0.35);
 
     for (const unit of this.aiUnits) {
@@ -647,19 +716,22 @@ export class AIController {
         if (bunker > 0.52) {
           goal.score *= bunkerAttackBoost;
         }
+        if (goalOpenness > 0.6) {
+          goal.score *= 1.0 + goalOpenness * 0.3;
+        }
         candidates.push(goal);
       }
 
       const defend = this.evaluateDefenseShot(unit);
       if (defend) {
         if (danger > 0.7) {
-          defend.score *= 1.3;
+          defend.score *= 1.35;
         }
-        if (danger < 0.3) {
-          defend.score *= 0.7;
+        if (danger < 0.25) {
+          defend.score *= 0.65;
         }
         if (bunker > 0.55 && danger < 0.68) {
-          defend.score *= 1 - bunker * 0.24;
+          defend.score *= 1 - bunker * 0.22;
         }
         candidates.push(defend);
       }
@@ -668,10 +740,10 @@ export class AIController {
         const pass = this.evaluatePass(unit);
         if (pass) {
           if (danger > 0.8) {
-            pass.score *= 0.5;
+            pass.score *= 0.45;
           }
           if (bunker > 0.48) {
-            pass.score *= 1.12;
+            pass.score *= 1.15;
           }
           candidates.push(pass);
         }
@@ -680,10 +752,10 @@ export class AIController {
       const pressure = this.evaluatePressure(unit);
       if (pressure) {
         if (danger > 0.7 && bunker < 0.38) {
-          pressure.score *= 0.6;
+          pressure.score *= 0.55;
         }
         if (bunker > 0.45) {
-          pressure.score *= 1 + bunker * 0.48;
+          pressure.score *= 1 + bunker * 0.45;
         }
         candidates.push(pressure);
       }
@@ -697,135 +769,187 @@ export class AIController {
   private evaluateGoalShot(unit: AIUnit): ShotCandidate | null {
     const uPos = unit.body.position;
     const bPos = this.ball.body.position;
-    
+
     const goalCenter = {
       x: this.fieldBounds.centerX,
       y: this.fieldBounds.bottom,
     };
-    
+
+    const unitBehindBall = uPos.y > bPos.y + 30;
+    if (unitBehindBall) return null;
+
     const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
-    
+
+    const maxHitDist: Record<string, number> = {
+      sniper: 320,
+      balanced: 260,
+      trickster: 240,
+      tank: 200,
+    };
+    const capClass = unit.getCapClass();
+    if (distToBall > (maxHitDist[capClass] ?? 260)) return null;
+
     const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y);
     const toGoal = new Phaser.Math.Vector2(goalCenter.x - bPos.x, goalCenter.y - bPos.y);
-    
+
     const angle = Math.abs(Phaser.Math.RadToDeg(toBall.angle() - toGoal.angle()));
     const normAngle = Math.abs(((angle + 180) % 360) - 180);
-    
-    if (normAngle > 90) return null;
-    
+
+    if (normAngle > 75) return null;
+
     const power = this.calculatePower(unit, distToBall);
     const dir = toBall.normalize();
     const force = this.applyError(dir, power, unit);
-    
-    let score = 50;
-    score += Math.max(0, 30 - distToBall / 10);
-    score += (90 - normAngle) / 3;
-    
-    const unitClass = unit.getCapClass();
-    
-    // ✅ IMPROVED: Enhanced role-aware bonuses
-    // Sniper: bonus for long-range shots with clear path to goal
-    if (unitClass === 'sniper') {
-      if (distToBall > 150) {
-        score += 25; // Long-range bonus
-      }
-      // Additional bonus if path to goal is relatively clear
-      score += 10;
-    }
-    
-    // Tank: penalty for very long shots (reduce random long bombs)
-    if (unitClass === 'tank' && distToBall > 200) {
-      score -= 15;
-    }
-    
-    // Trickster: bonus for medium-range shots with good angle
-    if (unitClass === 'trickster' && distToBall > 100 && distToBall < 180 && normAngle < 45) {
-      score += 15;
-    }
-    
-    score *= (0.5 + this.state.aggression * 0.5);
-    score *= 1 + this.profileNoise.aggressionOffset * 0.28;
 
-    // ✅ BOSS OVERRIDES
-    if (this.bossId === 'boss_krag') {
-      score *= 1.5; // Krag always wants to shoot
-    }
-    if (this.bossId === 'boss_unit734') {
-      // Unit 734 only takes high percentage shots
-      if (score < 60) score = 0;
-      else score *= 1.2;
-    }
-    
+    let score = 45;
+    score += Math.max(0, 35 - distToBall / 8);
+    score += (75 - normAngle) / 2.5;
+
+    const ballBetween = bPos.y > uPos.y && bPos.y < goalCenter.y;
+    if (ballBetween) score += 20;
+
+    const goalBlocked = this.playerUnits.some((p) => {
+      const pPos = p.body.position;
+      return Math.abs(pPos.x - goalCenter.x) < 60 && Math.abs(pPos.y - goalCenter.y) < 80;
+    });
+    if (!goalBlocked) score += 15;
+
+    const unitClass = unit.getCapClass();
+    if (unitClass === 'sniper' && distToBall > 130) score += 22;
+    if (unitClass === 'tank' && distToBall > 180) score -= 18;
+    if (unitClass === 'trickster' && distToBall > 90 && distToBall < 200 && normAngle < 40) score += 12;
+
+    score *= 0.45 + this.state.aggression * 0.55;
+    score *= 1 + this.profileNoise.aggressionOffset * 0.25;
+
+    if (this.bossId === 'boss_krag') score *= 1.5;
+    if (this.bossId === 'boss_unit734' && score < 65) return null;
+
     return {
       unit,
       target: goalCenter,
       score,
       type: 'goal',
       force,
-      description: `Goal by ${unit.getCapClass()} (dist:${distToBall.toFixed(0)})`,
+      description: `Goal by ${unit.getCapClass()} angle:${normAngle.toFixed(0)}° dist:${distToBall.toFixed(0)}`,
     };
   }
 
   private evaluateDefenseShot(unit: AIUnit): ShotCandidate | null {
     const uPos = unit.body.position;
     const bPos = this.ball.body.position;
-    
+    const bVel = this.ball.body.velocity ?? { x: 0, y: 0 };
+
     const ourGoal = { x: this.fieldBounds.centerX, y: this.fieldBounds.top };
     const ballToGoal = Phaser.Math.Distance.Between(bPos.x, bPos.y, ourGoal.x, ourGoal.y);
-    
-    if (ballToGoal > this.settings.defenseZone) return null;
-    
+
+    const ballMovingToOurGoal = bVel.y < -1.5;
+    const ballSpeed = Math.sqrt(bVel.x ** 2 + bVel.y ** 2);
+    const dynamicZone = this.settings.defenseZone + (ballMovingToOurGoal ? ballSpeed * 25 : 0);
+
+    if (ballToGoal > dynamicZone) return null;
+
     const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
-    const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
-    
-    const power = this.calculatePower(unit, distToBall) * 1.2;
-    const force = this.applyError(toBall, power, unit);
-    
-    let score = 40;
-    score += (this.settings.defenseZone - ballToGoal) / 5;
-    
+
+    const predictionTicks = 12;
+    const predictedBallX = bPos.x + bVel.x * predictionTicks;
+    const predictedBallY = bPos.y + bVel.y * predictionTicks;
+
+    const aimTarget =
+      ballSpeed > 2 ? { x: predictedBallX, y: predictedBallY } : { x: bPos.x, y: bPos.y };
+
+    const toTarget = new Phaser.Math.Vector2(
+      aimTarget.x - uPos.x,
+      aimTarget.y - uPos.y,
+    ).normalize();
+
+    const clearanceDir = new Phaser.Math.Vector2(
+      bPos.x < this.fieldBounds.centerX ? -1 : 1,
+      0.3,
+    ).normalize();
+
+    const finalDir = new Phaser.Math.Vector2(
+      toTarget.x * 0.7 + clearanceDir.x * 0.3,
+      toTarget.y * 0.7 + clearanceDir.y * 0.3,
+    ).normalize();
+
+    const power = this.calculatePower(unit, distToBall) * 1.35;
+    const force = this.applyError(finalDir, power, unit);
+
+    let score = 38;
+    score += (dynamicZone - ballToGoal) / 4.5;
+    if (ballMovingToOurGoal) score += ballSpeed * 4;
+    score -= distToBall / 18;
+
     const unitClass = unit.getCapClass();
-    
-    // ✅ IMPROVED: Enhanced role-aware defense bonuses
-    // Tank: significant bonus for defense (prioritize blocking shots)
-    if (unitClass === 'tank') {
-      score += 25; // Increased from 15
-    }
-    
-    // Sniper: small penalty to avoid wasting snipers on pure defense if others are closer
-    if (unitClass === 'sniper') {
-      score -= 10;
-    }
-    
-    // Goal-line blocking: extra heavy bonus for tanks when ball is very close to goal
+    if (unitClass === 'tank') score += 28;
+    if (unitClass === 'sniper') score -= 8;
+
     if (ballToGoal < 100) {
-      if (unitClass === 'tank') {
-        score += 30; // Heavy boost for goal-line clearing
-      }
-      // Boost all units for emergency defense
-      score += 20;
+      score += 45;
+      if (unitClass === 'tank') score += 35;
     }
-    
-    score -= distToBall / 20;
-    
-    if (this.state.aiScore < this.state.playerScore) {
-      score *= 1.3;
-    }
-    
-    // ✅ BOSS OVERRIDES
-    if (this.bossId === 'boss_unit734' || this.bossId === 'boss_oracle') {
-      // These bosses defend aggressively
-      score *= 1.3;
-    }
-    
+
+    if (this.state.consecutiveGoalsAgainst >= 2) score *= 1.4;
+    if (this.state.aiScore < this.state.playerScore) score *= 1.25;
+
+    if (this.bossId === 'boss_unit734' || this.bossId === 'boss_oracle') score *= 1.3;
+
     return {
       unit,
-      target: bPos,
+      target: aimTarget,
       score,
       type: 'defend',
       force,
-      description: `Defense by ${unit.getCapClass()}`,
+      description: `Defense by ${unit.getCapClass()} (ballSpeed:${ballSpeed.toFixed(1)})`,
     };
+  }
+
+  /** Насколько открыты ворота игрока (0..1). */
+  private evaluateGoalOpenness(): number {
+    const goalCenter = {
+      x: this.fieldBounds.centerX,
+      y: this.fieldBounds.bottom,
+    };
+    const ballPos = this.ball.body.position;
+    const goalHalfWidth = GOAL.WIDTH / 2;
+
+    let openScore = 1.0;
+
+    for (const p of this.playerUnits) {
+      const pPos = p.body.position;
+      const inGoalZone = Math.abs(pPos.x - goalCenter.x) < goalHalfWidth + 30;
+      const nearGoalLine = pPos.y > this.fieldBounds.bottom - 120;
+      if (inGoalZone && nearGoalLine) {
+        openScore -= 0.35;
+      }
+      if (this.isOnShotLine(pPos, ballPos, goalCenter)) {
+        openScore -= 0.25;
+      }
+    }
+
+    return Math.max(0, openScore);
+  }
+
+  private isOnShotLine(
+    point: { x: number; y: number },
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+  ): boolean {
+    const lineLen = Phaser.Math.Distance.Between(from.x, from.y, to.x, to.y);
+    if (lineLen === 0) return false;
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const t = ((point.x - from.x) * dx + (point.y - from.y) * dy) / (lineLen * lineLen);
+
+    if (t < 0 || t > 1) return false;
+
+    const projX = from.x + t * dx;
+    const projY = from.y + t * dy;
+    const perpDist = Phaser.Math.Distance.Between(point.x, point.y, projX, projY);
+
+    return perpDist < 35;
   }
 
   private evaluatePass(unit: AIUnit): ShotCandidate | null {
@@ -913,49 +1037,50 @@ export class AIController {
 
   private calculatePower(unit: AIUnit, distance: number): number {
     const { min, max } = this.settings.shotPower;
-    let power = Phaser.Math.Linear(min, max, Math.min(distance / 300, 1));
-    
-    // Учитываем класс юнита
+    const MAX_EFFECTIVE_DIST = 350;
+    let power = Phaser.Math.Linear(min, max, Math.min(distance / MAX_EFFECTIVE_DIST, 1));
+
     switch (unit.getCapClass()) {
       case 'sniper':
-        power *= 1.25;
+        power *= distance > 180 ? 1.18 : 1.05;
         break;
       case 'tank':
-        power *= 0.85;
+        power *= distance < 120 ? 1.1 : 0.82;
         break;
       case 'trickster':
-        power *= 1.0;
+        power *= 0.95;
+        break;
+      default:
         break;
     }
-    
-    return power;
+
+    return Phaser.Math.Clamp(power, 0.3, 1.0);
   }
 
   private applyError(
     dir: Phaser.Math.Vector2,
     power: number,
-    unit: AIUnit
+    unit: AIUnit,
   ): { x: number; y: number } {
-    let errorRange = (1 - this.settings.accuracy) * 0.5;
-    
-    // Снайпер точнее
-    if (unit.getCapClass() === 'sniper') {
-      errorRange *= 0.5;
-    }
-    
-    // Трикстер добавляет кривизну
+    let errorRange = (1 - this.settings.accuracy) * 0.4;
+
+    if (unit.getCapClass() === 'sniper') errorRange *= 0.45;
     if (unit.getCapClass() === 'trickster' && this.settings.useClassAbilities) {
-      dir.rotate((Math.random() - 0.5) * 0.3);
+      dir.rotate((Math.random() - 0.5) * 0.25);
     }
-    
+
     dir.rotate((Math.random() - 0.5) * errorRange);
-    
-    // ✅ ИСПРАВЛЕНО: Безопасный доступ к stats через приведение типа
+
     const unitWithStats = unit as AIUnitWithStats;
-    const forceMultiplier = unitWithStats.stats?.forceMultiplier ?? DEFAULT_FORCE_MULTIPLIER;
-    const maxForce = unitWithStats.stats?.maxForce ?? DEFAULT_MAX_FORCE;
-    const finalPower = Math.min(power * forceMultiplier * 200, maxForce);
-    
+    const cls = unit.getCapClass() as CapClass;
+    const capClassStats = CAP_CLASSES[cls];
+    const forceMultiplier =
+      unitWithStats.stats?.forceMultiplier ?? capClassStats?.forceMultiplier ?? 0.002;
+    const maxForce = unitWithStats.stats?.maxForce ?? capClassStats?.maxForce ?? 0.26;
+
+    const rawForce = power * forceMultiplier * 18;
+    const finalPower = Math.min(rawForce, maxForce);
+
     return { x: dir.x * finalPower, y: dir.y * finalPower };
   }
 

@@ -994,7 +994,8 @@ function loadTournamentAccessAssets(scene: Phaser.Scene): void {
 }
 
 /**
- * Загружает ассеты лиги (бейджи, дивизионы, звёзды, Orbit-панели)
+ * Загружает ассеты лиги (бейджи, дивизионы, звёзды, Orbit-панели).
+ * PNG лежат в репозитории: public/assets/ui/league/{badges,divisions,icons,orbit}
  */
 function loadLeagueAssets(scene: Phaser.Scene): void {
   if (import.meta.env.DEV) {
