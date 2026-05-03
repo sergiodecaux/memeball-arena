@@ -10,6 +10,8 @@ import { hapticImpact } from '../utils/Haptics';
 import { LeagueTier, LeagueProgress, LEAGUE_AI_DIFFICULTY, LEAGUE_TEAM_SIZE, LEAGUE_MATCH_DURATION, LEAGUE_ENTRY_FEE, LEAGUE_STAR_BUYBACK, createDefaultLeagueProgress, getLeagueTierOrder } from '../types/league';
 import { LeagueManager, ORBIT_STABILIZATION_COSTS } from '../managers/LeagueManager';
 import { LEAGUE_HUB_BG, LEAGUE_BADGE_KEYS, TOURNAMENT_CUP_KEYS, LEAGUE_ORBIT_KEYS } from '../config/assetKeys';
+import { loadImagesLeague } from '../assets/loading/ImageLoader';
+import { ensureLeagueBadgeTexture } from '../utils/leagueBadgeProcedural';
 import { addFullScreenBackground } from '../utils/ImageUtils';
 import { getLeagueTierInfo, LEAGUE_TIER_REWARDS } from '../types/leagueRewards';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
@@ -46,7 +48,11 @@ export class LeagueScene extends Phaser.Scene {
     super({ key: 'LeagueScene' });
     this.playerProgress = playerData.get().leagueProgress || createDefaultLeagueProgress();
   }
-  
+
+  preload(): void {
+    loadImagesLeague(this);
+  }
+
   create(data?: { 
     showOrbitDecay?: boolean; 
     fromMatch?: boolean; 
@@ -291,6 +297,8 @@ export class LeagueScene extends Phaser.Scene {
     
     // === BADGE WITH GLOW ===
     const badgeKey = LEAGUE_BADGE_KEYS[tier.toUpperCase() as keyof typeof LEAGUE_BADGE_KEYS];
+    ensureLeagueBadgeTexture(this, badgeKey, info.color, tier);
+
     if (this.textures.exists(badgeKey)) {
         // Glow behind badge
         if (this.textures.exists('flare_white')) {

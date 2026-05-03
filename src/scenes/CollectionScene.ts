@@ -787,7 +787,14 @@ export class CollectionScene extends Phaser.Scene {
 
     // Изображение юнита (всегда показываем, но затемняем если не открыт)
     const bestTextureKey = getRealUnitTextureKey(this, unit);
-    
+    let textureKeyToUse = bestTextureKey;
+    if (!textureKeyToUse && unit.assetKey && this.textures.exists(unit.assetKey)) {
+      textureKeyToUse = unit.assetKey;
+    }
+    if (!textureKeyToUse && unit.id && this.textures.exists(unit.id)) {
+      textureKeyToUse = unit.id;
+    }
+
     const addUnitImage = (keyToUse: string) => {
       try {
         if (!this.textures.exists(keyToUse)) {
@@ -808,8 +815,8 @@ export class CollectionScene extends Phaser.Scene {
 
     // ✅ FIX: Пытаемся использовать текстуру с обработкой ошибок
     let imageAdded = false;
-    if (bestTextureKey) {
-      imageAdded = addUnitImage(bestTextureKey);
+    if (textureKeyToUse) {
+      imageAdded = addUnitImage(textureKeyToUse);
     }
     
     if (!imageAdded) {

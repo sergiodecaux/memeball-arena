@@ -357,7 +357,8 @@ export function loadImagesRepository(scene: Phaser.Scene): void {
   loadFactionBackgrounds(scene);
   loadFactionTokens(scene);
   loadRewardIcons(scene);
-  loadCaptainUnitAssetsForCollection(scene);
+  // Все PNG юнитов из репозитория (включая капитанов), чтобы карточки не зависели только от ленивой догрузки
+  loadCapCollectionAssets(scene);
 }
 
 /**
@@ -506,6 +507,15 @@ function loadUIAssets(scene: Phaser.Scene): void {
   loadUIIcons(scene);
   loadAvatars(scene);
   loadAchievementIcons(scene);
+}
+
+/**
+ * Ассеты экрана лиги (бейджи тиров, дивизионы, звёзды, Orbit).
+ * Вызывать из preload LeagueScene / профиля, т.к. Boot не всегда грузит полный пакет.
+ */
+export function loadImagesLeague(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+  loadLeagueAssets(scene);
 }
 
 /**

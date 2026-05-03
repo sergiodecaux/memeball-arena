@@ -8,6 +8,7 @@ import { getColors, getFonts, TYPOGRAPHY, hexToString } from '../../config/theme
 import { tgApp } from '../../utils/TelegramWebApp';
 import { AudioManager } from '../../managers/AudioManager';
 import { LEAGUE_BADGE_KEYS } from '../../config/assetKeys';
+import { ensureLeagueBadgeTexture } from '../../utils/leagueBadgeProcedural';
 
 const ALL_TIERS: LeagueTier[] = [
   LeagueTier.METEORITE,
@@ -123,6 +124,8 @@ export class LeagueCarousel {
     
     // Бейдж лиги
     const badgeKey = LEAGUE_BADGE_KEYS[tier.toUpperCase() as keyof typeof LEAGUE_BADGE_KEYS];
+    ensureLeagueBadgeTexture(this.scene, badgeKey, info.color, tier);
+
     if (this.scene.textures.exists(badgeKey)) {
       const badge = this.scene.add.image(0, -cardHeight / 4, badgeKey);
       badge.setDisplaySize(100 * s, 100 * s);

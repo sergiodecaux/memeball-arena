@@ -17,6 +17,10 @@ import { AudioManager } from '../managers/AudioManager';
 import { FACTIONS, FactionId, SWIPE_NAVIGATION } from '../constants/gameConstants';
 import { hapticSelection, hapticImpact } from '../utils/Haptics';
 import { tgApp } from '../utils/TelegramWebApp';
+import { loadImagesLeague } from '../assets/loading/ImageLoader';
+import { ensureLeagueBadgeTexture } from '../utils/leagueBadgeProcedural';
+import { getLeagueTierInfo } from '../types/leagueRewards';
+import { LeagueTier } from '../types/league';
 
 type ProfileTab = 'stats' | 'trophies' | 'achievements';
 
@@ -47,6 +51,10 @@ export class ProfileScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'ProfileScene' });
+  }
+
+  preload(): void {
+    loadImagesLeague(this);
   }
 
   create(): void {
@@ -1001,6 +1009,14 @@ export class ProfileScene extends Phaser.Scene {
       this.contentContainer.add(cardBg);
 
       const iconKey = item.tier ? this.getLeagueIconKey(item.tier) : undefined;
+      if (iconKey && item.tier) {
+        try {
+          const tierInfo = getLeagueTierInfo(item.tier as LeagueTier);
+          ensureLeagueBadgeTexture(this, iconKey, tierInfo.color, String(item.tier));
+        } catch {
+          ensureLeagueBadgeTexture(this, iconKey, 0x6366f1, String(item.tier));
+        }
+      }
       if (iconKey && this.textures.exists(iconKey)) {
         const icon = this.add.image(50, currentY + h / 2, iconKey);
         icon.setDisplaySize(58, 58);

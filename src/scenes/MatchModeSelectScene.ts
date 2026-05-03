@@ -166,7 +166,10 @@ export class MatchModeSelectScene extends Phaser.Scene {
     audio.playMusic('bgm_menu');
     
     const { width, height } = this.cameras.main;
-    
+
+    // Если PNG splash нет в билде — градиентные фоны режимов (лига и др.)
+    this.ensureProceduralMatchSplashTextures();
+
     // Черная подложка
     this.add.rectangle(width / 2, height / 2, width, height, 0x000000).setDepth(0);
     
@@ -479,7 +482,21 @@ export class MatchModeSelectScene extends Phaser.Scene {
   
   private transitionBackground(textureKey: string, animate: boolean = true): void {
     const { width, height } = this.cameras.main;
-    
+
+    if (this.shouldRebuildSplash(textureKey)) {
+      const fallback = this.getSplashFallbackColors(textureKey);
+      if (fallback) {
+        if (this.textures.exists(textureKey)) {
+          try {
+            this.textures.remove(textureKey);
+          } catch {
+            /* ignore */
+          }
+        }
+        this.createSplashGradientTexture(textureKey, fallback[0], fallback[1]);
+      }
+    }
+
     if (!this.textures.exists(textureKey)) {
       console.warn(`[MatchModeSelect] Texture missing: ${textureKey}`);
       return;
@@ -708,6 +725,70 @@ export class MatchModeSelectScene extends Phaser.Scene {
         // Запустить матчмейкинг
         await safeSceneStart(this, 'MatchmakingScene', { mode: 'ranked' });
         break;
+    }
+  }
+
+  private shouldRebuildSplash(key: string): boolean {
+    if (!key || !this.textures.exists(key)) return true;
+    try {
+      const tex = this.textures.get(key);
+      const src = tex.getSourceImage();
+      const w =
+        src instanceof HTMLImageElement ? src.naturalWidth : ((src as { width?: number }).width ?? 0);
+      return !Number.isFinite(w) || w < 512;
+    } catch {
+      return true;
+    }
+  }
+
+  private getSplashFallbackColors(textureKey: string): [number, number] | undefined {
+    const map: Record<string, [number, number]> = {
+      match_bg_campaign: [0x0369a1, 0x020617],
+      match_bg_league: [0x6d28d9, 0x0b0820],
+      match_bg_tournament: [0xb45309, 0x1c1917],
+      match_bg_custom: [0x15803d, 0x052e16],
+      match_bg_pvp: [0xc2410c, 0x1f0707],
+    };
+    return map[textureKey];
+  }
+
+  private ensureProceduralMatchSplashTextures(): void {
+    (
+      [
+        ['match_bg_campaign', 0x0369a1, 0x020617],
+        ['match_bg_league', 0x6d28d9, 0x0b0820],
+        ['match_bg_tournament', 0xb45309, 0x1c1917],
+        ['match_bg_custom', 0x15803d, 0x052e16],
+        ['match_bg_pvp', 0xc2410c, 0x1f0707],
+      ] as const
+    ).forEach(([key, top, bot]) => {
+      if (this.shouldRebuildSplash(key)) {
+        if (this.textures.exists(key)) {
+          try {
+            this.textures.remove(key);
+          } catch {
+            /* ignore */
+          }
+        }
+        this.createSplashGradientTexture(key, top, bot);
+      }
+    });
+  }
+
+  private createSplashGradientTexture(key: string, topColor: number, bottomColor: number): void {
+    if (!key || this.textures.exists(key)) return;
+    const w = 1080;
+    const h = 1920;
+    const g = this.make.graphics({ x: 0, y: 0 });
+    g.fillGradientStyle(topColor, topColor, bottomColor, bottomColor, 1, 1, 1, 1);
+    g.fillRect(0, 0, w, h);
+    const rt = this.add.renderTexture(-6000, -6000, w, h);
+    rt.draw(g, 0, 0);
+    g.destroy();
+    rt.saveTexture(key);
+    rt.destroy();
+    if (import.meta.env.DEV) {
+      console.log(`[MatchModeSelect] Procedural splash texture: ${key}`);
     }
   }
 }
