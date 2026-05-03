@@ -2465,6 +2465,8 @@ export const UNITS_REPOSITORY: UnitData[] = [
     secondaryColor: 0xb91c1c,
     fragmentsRequired: 99,
     isCaptain: true,
+    isPremium: true,
+    premiumPrice: 2000,
     nameRu: 'Урок «Разрушитель миров»',
     accuracy: 0.91,
     passive: {
@@ -2517,6 +2519,8 @@ export const UNITS_REPOSITORY: UnitData[] = [
     secondaryColor: 0x6b21a8,
     fragmentsRequired: 99,
     isCaptain: true,
+    isPremium: true,
+    premiumPrice: 2000,
     nameRu: 'Этельгард «Пожиратель звёзд»',
     accuracy: 0.96,
     passive: {
@@ -2543,6 +2547,8 @@ export const UNITS_REPOSITORY: UnitData[] = [
     secondaryColor: 0x166534,
     fragmentsRequired: 99,
     isCaptain: true,
+    isPremium: true,
+    premiumPrice: 2000,
     nameRu: 'Ксеркса «Королева падальщиков»',
     accuracy: 0.93,
     passive: {
@@ -2849,7 +2855,13 @@ export function getAllShopUnits(): UnitData[] {
  * Получить все премиум юниты (только в магазине за кристаллы)
  */
 export function getPremiumUnits(): UnitData[] {
-  return UNITS_REPOSITORY.filter(u => u.isPremium === true);
+  const list = UNITS_REPOSITORY.filter(u => u.isPremium === true);
+  return list.sort((a, b) => {
+    const ca = a.isCaptain ? 0 : 1;
+    const cb = b.isCaptain ? 0 : 1;
+    if (ca !== cb) return ca - cb;
+    return (a.premiumPrice || 0) - (b.premiumPrice || 0);
+  });
 }
 
 /**

@@ -786,6 +786,8 @@ export class CollectionScene extends Phaser.Scene {
 
       // ✅ ЗАЩИТА: Безопасный доступ к цветам редкости
       const rarityColor = RARITY_COLORS[unit.rarity] || RARITY_COLORS.common;
+      const captainFrame = { border: 0xf59e0b, glow: 0xfde68a };
+      const isCaptainUnit = unit.isCaptain === true;
 
     // ✅ ОПТИМИЗАЦИЯ: Используем один Graphics объект для всех визуальных элементов карточки
     const cardGraphics = this.add.graphics();
@@ -794,13 +796,14 @@ export class CollectionScene extends Phaser.Scene {
     cardGraphics.fillStyle(0x000000, 0.45);
     cardGraphics.fillRoundedRect(-size / 2 + 2, -size / 2 + 2, size, size, 12);
     
-    // Фон карточки (легкий градиент/подсветка)
-    const bgColor = isOwned ? 0x111827 : 0x0b1120;
+    // Фон карточки — капитаны слегка золотистая подложка
+    const bgColor = isCaptainUnit ? (isOwned ? 0x1c1408 : 0x120c06) : isOwned ? 0x111827 : 0x0b1120;
     cardGraphics.fillStyle(bgColor, isOwned ? 0.95 : 0.75);
     cardGraphics.fillRoundedRect(-size / 2, -size / 2, size, size, 12);
     
-    // Рамка
-    cardGraphics.lineStyle(3, rarityColor.border, isOwned ? 1 : 0.6);
+    // Рамка: капитаны — янтарь (отличимо от редкости и BP)
+    const frameBorder = isCaptainUnit ? captainFrame.border : rarityColor.border;
+    cardGraphics.lineStyle(isCaptainUnit ? 4 : 3, frameBorder, isOwned ? 1 : 0.65);
     cardGraphics.strokeRoundedRect(-size / 2, -size / 2, size, size, 12);
     
     container.add(cardGraphics);
@@ -960,15 +963,15 @@ export class CollectionScene extends Phaser.Scene {
       container.add(bpBadgeText);
     } else if (unit.isCaptain) {
       const capBg = this.add.graphics();
-      capBg.fillStyle(0x0e7490, 0.95);
-      capBg.fillRoundedRect(-size / 2 + 4, -size / 2 + 4, 58, 17, 5);
-      capBg.lineStyle(1, 0x22d3ee, 0.85);
-      capBg.strokeRoundedRect(-size / 2 + 4, -size / 2 + 4, 58, 17, 5);
+      capBg.fillStyle(0x451a03, 0.96);
+      capBg.fillRoundedRect(-size / 2 + 4, -size / 2 + 4, 62, 17, 5);
+      capBg.lineStyle(2, 0xfbbf24, 1);
+      capBg.strokeRoundedRect(-size / 2 + 4, -size / 2 + 4, 62, 17, 5);
       container.add(capBg);
-      const capLabel = createText(this, Math.round(-size / 2 + 33), Math.round(-size / 2 + 12), 'КАПИТАН', {
+      const capLabel = createText(this, Math.round(-size / 2 + 35), Math.round(-size / 2 + 12), 'КАПИТАН', {
         size: 'xs',
         font: 'primary',
-        color: '#ecfeff',
+        color: '#fef3c7',
         stroke: true,
       }).setOrigin(0.5);
       container.add(capLabel);
@@ -1147,11 +1150,26 @@ export class CollectionScene extends Phaser.Scene {
     glow.strokeRoundedRect(-modalWidth / 2 - 4, -modalHeight / 2 - 4, modalWidth + 8, modalHeight + 8, 22);
     this.modalContainer.add(glow);
 
-    let yOffset = -modalHeight / 2 + 25;
+    const modalBottom = modalHeight / 2;
+    const modalTop = -modalBottom;
+    // На коротких экранах уменьшаем резерв футера, иначе шапка заходит в зону кнопок и текст скрывается под ними
+    const footerReserve = modalHeight < 520 ? 120 : Phaser.Math.Clamp(Math.round(modalHeight * 0.27), 136, 172);
+    const footerTop = modalTop + modalHeight - footerReserve;
+    const minScrollRegion = modalHeight < 540 ? 52 : 76;
+    const titleFontPx = modalHeight < 520 ? '18px' : '22px';
 
-    // Изображение юнита (большое, всегда в полном цвете в модалке)
-    const imageSize = 200;
-    
+    const headerPadTop = 22;
+    const gapAfterImage = 14;
+    const rarityBlock = 38;
+    const titleMaxGuess = modalHeight < 520 ? 58 : 78;
+    const sepLead = 15;
+    const overhead =
+      headerPadTop + gapAfterImage + rarityBlock + titleMaxGuess + sepLead + 4;
+    let imageSize = Math.floor(footerTop - modalTop - minScrollRegion - overhead);
+    imageSize = Phaser.Math.Clamp(imageSize, 84, 200);
+
+    let yOffset = modalTop + headerPadTop;
+
     const textureKey = unit.assetKey;
     const hdKey = `${textureKey}_512`;
     const bestTextureKey = getRealUnitTextureKey(this, unit);
@@ -1165,19 +1183,19 @@ export class CollectionScene extends Phaser.Scene {
       this.modalContainer.add(unitImage);
       imageAdded = true;
     }
-    
+
     if (!imageAdded) {
       // Fallback - показываем пустой прямоугольник
       const imageBg = this.add.rectangle(0, yOffset + imageSize / 2, imageSize, imageSize, 0x2a2a3e, 1);
       imageBg.setStrokeStyle(3, rarityColor.border, 1);
       this.modalContainer.add(imageBg);
-      
+
       if (import.meta.env.DEV) {
         console.warn(`[CollectionScene] ⚠️ Texture not found in modal: "${textureKey}" (hdKey: "${hdKey}", unit.id="${unit.id}")`);
       }
     }
 
-    yOffset += imageSize + 20;
+    yOffset += imageSize + gapAfterImage;
 
     // Редкость (с фоном)
     const rarityBg = this.add.graphics();
@@ -1185,7 +1203,10 @@ export class CollectionScene extends Phaser.Scene {
     rarityBg.fillRoundedRect(-modalWidth / 2 + 20, yOffset - 10, modalWidth - 40, 32, 8);
     this.modalContainer.add(rarityBg);
 
-    const rarityText = this.add.text(0, yOffset + 6, `⭐ ${COLLECTION_RU.rarity[rarity].toUpperCase()}`, {
+    const rarityLabel = unit.isCaptain
+      ? `⚓ ${COLLECTION_RU.rarity[rarity].toUpperCase()}`
+      : `⭐ ${COLLECTION_RU.rarity[rarity].toUpperCase()}`;
+    const rarityText = this.add.text(0, yOffset + 6, rarityLabel, {
       fontSize: '16px',
       color: rarityColor.text,
       fontStyle: 'bold',
@@ -1195,8 +1216,19 @@ export class CollectionScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.modalContainer.add(rarityText);
 
-    // Премиум бейдж
-    if (isPremium) {
+    // Премиум / капитан магазин бейдж
+    if (isPremium && unit.isCaptain) {
+      const captainShopBadge = this.add.text(0, yOffset + 6, '⚓ КАПИТАН', {
+        fontSize: '10px',
+        fontFamily: getFonts().tech,
+        color: '#fcd34d',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 2,
+      }).setOrigin(0.5);
+      captainShopBadge.setX(modalWidth / 2 - 62);
+      this.modalContainer.add(captainShopBadge);
+    } else if (isPremium) {
       const premiumBadge = this.add.text(0, yOffset + 6, '💎 PREMIUM', {
         fontSize: '10px',
         fontFamily: getFonts().tech,
@@ -1209,12 +1241,12 @@ export class CollectionScene extends Phaser.Scene {
       this.modalContainer.add(premiumBadge);
     }
 
-    yOffset += 38;
+    yOffset += rarityBlock;
 
-    // Название (с тенью)
+    // Название (высота учитывается для области прокрутки)
     const titleText = this.add.text(0, yOffset, getDisplayName(unit), {
       fontFamily: getFonts().tech,
-      fontSize: '22px',
+      fontSize: titleFontPx,
       color: '#ffffff',
       fontStyle: 'bold',
       wordWrap: { width: modalWidth - 50 },
@@ -1224,7 +1256,7 @@ export class CollectionScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.modalContainer.add(titleText);
 
-    yOffset += 35;
+    yOffset += Math.max(28, Math.ceil(titleText.height) + 8);
 
     // Разделительная линия
     const separator1 = this.add.graphics();
@@ -1232,17 +1264,16 @@ export class CollectionScene extends Phaser.Scene {
     separator1.lineBetween(-modalWidth / 2 + 30, yOffset, modalWidth / 2 - 30, yOffset);
     this.modalContainer.add(separator1);
 
-    yOffset += 15;
+    yOffset += sepLead;
 
-    const modalTop = -modalHeight / 2;
-    const footerReserve = 168;
-    const scrollRegionTop = yOffset;
-    const scrollRegionHeight = Math.max(
-      88,
-      modalHeight - (scrollRegionTop - modalTop) - footerReserve,
-    );
+    let scrollRegionTop = yOffset;
+    if (scrollRegionTop > footerTop - minScrollRegion) {
+      scrollRegionTop = footerTop - minScrollRegion;
+    }
+    let scrollRegionHeight = footerTop - scrollRegionTop;
+    scrollRegionHeight = Math.max(minScrollRegion, scrollRegionHeight);
 
-    const scrollRoot = this.add.container(0, scrollRegionTop).setDepth(3);
+    const scrollRoot = this.add.container(0, scrollRegionTop).setDepth(12);
     this.modalContainer.add(scrollRoot);
 
     let ly = 0;
@@ -1411,6 +1442,7 @@ export class CollectionScene extends Phaser.Scene {
       lineSpacing: 3,
       stroke: '#000000',
       strokeThickness: 2,
+      fontFamily: getFonts().primary,
     }).setOrigin(0.5, 0);
     scrollRoot.add(descText);
 
@@ -1495,7 +1527,7 @@ export class CollectionScene extends Phaser.Scene {
 
     const scrollContentHeight = ly;
 
-    const scrollMaskG = this.add.graphics().setDepth(2);
+    const scrollMaskG = this.add.graphics().setDepth(11);
     scrollMaskG.fillStyle(0xffffff, 1);
     scrollMaskG.fillRect(-modalWidth / 2 + 10, scrollRegionTop, modalWidth - 20, scrollRegionHeight);
     this.modalContainer.add(scrollMaskG);
@@ -1512,7 +1544,7 @@ export class CollectionScene extends Phaser.Scene {
 
     const scrollHit = this.add
       .rectangle(0, scrollRegionTop + scrollRegionHeight / 2, modalWidth - 28, scrollRegionHeight, 0x000000, 0)
-      .setDepth(4)
+      .setDepth(13)
       .setInteractive({ useHandCursor: maxScroll > 0 });
     this.modalContainer.add(scrollHit);
 
@@ -1555,13 +1587,12 @@ export class CollectionScene extends Phaser.Scene {
       this.input.off('wheel', onWheel);
     });
 
-    const footerTop = modalTop + modalHeight - footerReserve;
     const footerBtnCenterY = footerTop + 38;
     const btnW = modalWidth - 60;
     const btnH = 50;
 
     if (isOwned) {
-      const ownedBg = this.add.graphics().setDepth(5);
+      const ownedBg = this.add.graphics().setDepth(30);
       ownedBg.fillStyle(0x10b981, 0.2);
       ownedBg.fillRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
       ownedBg.lineStyle(2, 0x10b981, 0.6);
@@ -1577,12 +1608,12 @@ export class CollectionScene extends Phaser.Scene {
             fontStyle: 'bold',
           })
           .setOrigin(0.5)
-          .setDepth(6),
+          .setDepth(31),
       );
     } else if (isPremium) {
       const btnColor = canAffordPremium ? 0xf59e0b : 0x444444;
 
-      const buyBtnBg = this.add.graphics().setDepth(5);
+      const buyBtnBg = this.add.graphics().setDepth(30);
       buyBtnBg.fillStyle(btnColor, canAffordPremium ? 0.9 : 0.5);
       buyBtnBg.fillRoundedRect(-btnW / 2, footerBtnCenterY - btnH / 2, btnW, btnH, 12);
       if (canAffordPremium) {
@@ -1600,14 +1631,14 @@ export class CollectionScene extends Phaser.Scene {
             fontStyle: 'bold',
           })
           .setOrigin(0.5)
-          .setDepth(6),
+          .setDepth(31),
       );
 
       if (canAffordPremium) {
         const hitArea = this.add
           .rectangle(0, footerBtnCenterY, btnW, btnH, 0x000000, 0)
           .setInteractive({ useHandCursor: true })
-          .setDepth(7);
+          .setDepth(32);
         this.modalContainer.add(hitArea);
 
         hitArea.on('pointerdown', () => {
@@ -1637,7 +1668,7 @@ export class CollectionScene extends Phaser.Scene {
               color: '#ff6b6b',
             })
             .setOrigin(0.5)
-            .setDepth(6),
+            .setDepth(31),
         );
       }
     } else if (!isOwned && !isPremium && progress >= 1) {
@@ -1655,7 +1686,7 @@ export class CollectionScene extends Phaser.Scene {
           hapticImpact('light');
         }
       }, '#22c55e');
-      craftButton.setDepth(6);
+      craftButton.setDepth(30);
       this.modalContainer.add(craftButton);
     }
 
@@ -1809,7 +1840,7 @@ export class CollectionScene extends Phaser.Scene {
    * Кнопка ЗАКРЫТЬ — центр кнопки по Y в координатах модалки (относительно центра экрана)
    */
   private createModalCloseButtonAt(centerY: number, callback: () => void): Phaser.GameObjects.Container {
-    const container = this.add.container(0, centerY).setDepth(8);
+    const container = this.add.container(0, centerY).setDepth(36);
 
     const bg = this.add.graphics();
     bg.fillStyle(0x4a9eff, 1);

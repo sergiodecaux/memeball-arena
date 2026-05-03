@@ -812,18 +812,21 @@ export class ShopScene extends Phaser.Scene {
       color: hexToString(faction.color),
     }));
 
-    // ========== БЕЙДЖ РЕДКОСТИ + ПРЕМИУМ ==========
+    // ========== БЕЙДЖ РЕДКОСТИ + ПРЕМИУМ / КАПИТАН ==========
+    const isCapShop = unit.isCaptain === true;
+    const badgeW = isCapShop ? 92 : 75;
+    const capOrange = 0xd97706;
     const rarBg = this.add.graphics();
-    rarBg.fillStyle(rarityColor, 0.3);
-    rarBg.fillRoundedRect(tx + tw - 75, 28, 75, 20, 10);
-    rarBg.lineStyle(1, rarityColor, 0.6);
-    rarBg.strokeRoundedRect(tx + tw - 75, 28, 75, 20, 10);
+    rarBg.fillStyle(isCapShop ? capOrange : rarityColor, isCapShop ? 0.38 : 0.3);
+    rarBg.fillRoundedRect(tx + tw - badgeW, 28, badgeW, 20, 10);
+    rarBg.lineStyle(1, isCapShop ? 0xfbbf24 : rarityColor, 0.65);
+    rarBg.strokeRoundedRect(tx + tw - badgeW, 28, badgeW, 20, 10);
     container.add(rarBg);
     
-    container.add(this.add.text(tx + tw - 37, 38, '💎 LEGENDARY', {
+    container.add(this.add.text(tx + tw - badgeW / 2, 38, isCapShop ? '⚓ КАПИТАН' : '💎 LEGENDARY', {
       fontSize: '8px',
       fontFamily: fonts.tech,
-      color: '#fbbf24',
+      color: isCapShop ? '#fef3c7' : '#fbbf24',
       fontStyle: 'bold',
     }).setOrigin(0.5));
 
