@@ -5,6 +5,7 @@
  */
 
 import { FactionId } from '../constants/gameConstants';
+import { CAPTAIN_UNIT_IDS } from '../constants/captains';
 import { playerData } from './PlayerData';
 import { eventBus, GameEvents } from '../core/EventBus';
 
@@ -91,6 +92,14 @@ const ROOKIE_TASKS_CONFIG: Omit<RookieTask, 'progress' | 'completed' | 'claimed'
     reward: { coins: 700, crystals: 50 },
   },
   {
+    id: 'rookie_level_10_captain',
+    title: 'Капитан экипажа',
+    description: 'Достигни 10 уровня и заберите капитана в награде за уровень (выбор 1 из 4)',
+    icon: '⚓',
+    maxProgress: 1,
+    reward: { coins: 1200, crystals: 120 },
+  },
+  {
     id: 'rookie_perfect_game',
     title: 'Железная оборона',
     description: 'Выиграй матч, не пропустив голов',
@@ -131,7 +140,9 @@ class RookiePathManager {
     // Подписываемся на события для обновления прогресса
     eventBus.on(GameEvents.MATCH_FINISHED, this.onMatchFinished.bind(this));
     eventBus.on(GameEvents.GOAL_SCORED, this.onGoalScored.bind(this));
-    
+    eventBus.on('player:levelUp', this.onPlayerProgress.bind(this));
+    eventBus.on('player:unitGranted', this.onPlayerProgress.bind(this));
+
     console.log('[RookiePath] 🎓 Initialized');
   }
 
@@ -230,6 +241,13 @@ class RookiePathManager {
         changed = true;
       }
     }
+    if (changed) {
+      const allDone = ROOKIE_TASKS_CONFIG.every((c) => Boolean(progress.tasks[c.id]?.completed));
+      progress.pathCompleted = allDone;
+      if (!allDone) {
+        progress.completedAt = undefined;
+      }
+    }
     return changed;
   }
 
@@ -256,6 +274,12 @@ class RookiePathManager {
       case 'rookie_level_5':
         return Math.min(data.level, 5);
 
+      case 'rookie_level_10_captain': {
+        if (data.level < 10) return 0;
+        const hasCaptain = CAPTAIN_UNIT_IDS.some((id) => playerData.ownsUnit(id));
+        return hasCaptain ? 1 : 0;
+      }
+
       case 'rookie_perfect_game':
         return Math.min(stats.perfectGames, 1);
 
@@ -269,9 +293,9 @@ class RookiePathManager {
   // ═══════════════════════════════════════════════════════════════
 
   updateAllProgress(): void {
-    if (this.isPathCompleted()) return;
-
     const progress = this.getProgress();
+    if (progress.rewardClaimed) return;
+
     let changed = false;
 
     ROOKIE_TASKS_CONFIG.forEach(config => {
@@ -324,6 +348,10 @@ class RookiePathManager {
     if (data?.scoringPlayer === 1) {
       this.updateAllProgress();
     }
+  }
+
+  private onPlayerProgress(): void {
+    this.updateAllProgress();
   }
 
   // ═══════════════════════════════════════════════════════════════

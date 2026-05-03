@@ -3,7 +3,13 @@
 
 import Phaser from 'phaser';
 import { FactionId, FACTIONS, FACTION_IDS, CapClass } from '../constants/gameConstants';
-import { UNITS_REPOSITORY, getUnitsByFaction as getRepositoryUnitsByFaction, UnitData as RepoUnitData, UnitRarity, getUnitById, getDisplayName } from '../data/UnitsRepository';
+import {
+  getFactionUnitsForCollection,
+  UnitData as RepoUnitData,
+  UnitRarity,
+  getUnitById,
+  getDisplayName,
+} from '../data/UnitsRepository';
 import { mergeUnitDisplay } from '../data/unitDisplayOverrides';
 import { playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
@@ -175,7 +181,7 @@ export class CollectionScene extends Phaser.Scene {
 
     const selectedFaction = this.selectedFaction;
     const loadToken = ++this.unitPngLoadToken;
-    const units = getRepositoryUnitsByFaction(selectedFaction);
+    const units = getFactionUnitsForCollection(selectedFaction);
     const unitIds = units.map((unit) => unit.id);
 
     if (this.loadedFactionPngs.has(selectedFaction)) {
@@ -609,7 +615,7 @@ export class CollectionScene extends Phaser.Scene {
 
     // ✅ ИСПРАВЛЕНО: Показываем ВСЕ юниты включая Battle Pass
     // BP юниты отмечаются специальным бейджем в createUnitCard()
-    const allUnits = getRepositoryUnitsByFaction(this.selectedFaction);
+    const allUnits = getFactionUnitsForCollection(this.selectedFaction);
     let units = [...allUnits];
     units = units.filter((u) => this.filterRarity === 'all' || u.rarity === this.filterRarity);
     units = units.filter((u) => this.filterRole === 'all' || u.role === this.filterRole);
@@ -647,6 +653,9 @@ export class CollectionScene extends Phaser.Scene {
 
     const rarityOrder: UnitRarity[] = ['legendary', 'epic', 'rare', 'common'];
     const sortedUnits = [...units].sort((a, b) => {
+      const capA = a.isCaptain ? 1 : 0;
+      const capB = b.isCaptain ? 1 : 0;
+      if (capB !== capA) return capB - capA;
       const byRarity = rarityOrder.indexOf(a.rarity) - rarityOrder.indexOf(b.rarity);
       if (byRarity !== 0) return byRarity;
       return this.roleSortOrder.indexOf(a.role) - this.roleSortOrder.indexOf(b.role);
@@ -922,6 +931,20 @@ export class CollectionScene extends Phaser.Scene {
         stroke: true,
       }).setOrigin(0.5);
       container.add(bpBadgeText);
+    } else if (unit.isCaptain) {
+      const capBg = this.add.graphics();
+      capBg.fillStyle(0x0e7490, 0.95);
+      capBg.fillRoundedRect(-size / 2 + 4, -size / 2 + 4, 58, 17, 5);
+      capBg.lineStyle(1, 0x22d3ee, 0.85);
+      capBg.strokeRoundedRect(-size / 2 + 4, -size / 2 + 4, 58, 17, 5);
+      container.add(capBg);
+      const capLabel = createText(this, Math.round(-size / 2 + 33), Math.round(-size / 2 + 12), 'КАПИТАН', {
+        size: 'xs',
+        font: 'primary',
+        color: '#ecfeff',
+        stroke: true,
+      }).setOrigin(0.5);
+      container.add(capLabel);
     }
 
     // Индикатор редкости (треугольник в углу) - добавляем в cardGraphics

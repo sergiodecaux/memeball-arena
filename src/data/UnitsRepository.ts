@@ -5,6 +5,7 @@
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 import { FactionId, CapClass } from '../constants/gameConstants';
+import { CAPTAIN_BY_FACTION } from '../constants/captains';
 import { PassiveAbility, PassiveType } from '../types/passives';
 import type { PhysicsModifierId } from '../types/units';
 import { UNIT_PHYSICS_MODIFIER_TABLE } from './unitPhysicsModifiers';
@@ -2603,6 +2604,19 @@ export function getUnitsByFaction(factionId: FactionId): UnitData[] {
     console.error('[UnitsRepository] Error filtering units:', error);
     return [];
   }
+}
+
+/**
+ * Список для экрана коллекции: все фишки фракции без BP + капитан фракции всегда первый слот (если есть в репозитории).
+ */
+export function getFactionUnitsForCollection(factionId: FactionId): UnitData[] {
+  const base = getUnitsByFaction(factionId).filter((u) => u && !u.isBattlePass);
+  const captainId = CAPTAIN_BY_FACTION[factionId];
+  const captain = captainId ? getUnitById(captainId) : undefined;
+  if (!captain) return base;
+
+  const rest = base.filter((u) => u.id !== captain.id);
+  return [captain, ...rest];
 }
 
 /**

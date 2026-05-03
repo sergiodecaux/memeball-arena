@@ -5,6 +5,7 @@ import { BallTextures } from '../assets/textures/BallTextures';
 import { FieldTextures } from '../assets/textures/FieldTextures';
 import { AvatarTextures } from '../assets/textures/AvatarTextures';
 import { playerData } from '../data/PlayerData';
+import { rookiePathManager } from '../data/RookiePath';
 import { CARDS_CATALOG, CardDefinition } from '../data/CardsCatalog';
 import { CampaignGenerator } from '../assets/generation/CampaignGenerator';
 import { FactionGenerator } from '../assets/generation/FactionGenerator';
@@ -241,6 +242,8 @@ export class BootScene extends Phaser.Scene {
 
     try {
       const data = playerData.get();
+      rookiePathManager.initialize();
+      rookiePathManager.updateAllProgress();
       // #region agent log
       this.sendAgentLog({ sessionId: 'e0960d', runId: 'run-pre', hypothesisId: 'H4', location: 'BootScene.ts:navigateToNextScene', message: 'Navigation decision snapshot', data: { selectedFaction: data.selectedFaction ?? null, isProfileSetupComplete: Boolean(data.isProfileSetupComplete) }, timestamp: Date.now() });
       // #endregion

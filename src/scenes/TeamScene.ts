@@ -11,7 +11,7 @@ import {
   getClassName,
   UnitData,
 } from '../data/UnitsCatalog';
-import { getUnitsByFaction as getRepositoryUnitsByFaction, getDisplayName } from '../data/UnitsRepository';
+import { getFactionUnitsForCollection, getDisplayName } from '../data/UnitsRepository';
 import {
   getBallSkin,
   getFieldSkin,
@@ -182,7 +182,7 @@ export class TeamScene extends Phaser.Scene {
     const unitIds = [
       ...new Set<string>([
         ...playerData.getTeamUnits(faction),
-        ...getRepositoryUnitsByFaction(faction).map((unit) => unit.id),
+        ...getFactionUnitsForCollection(faction).map((unit) => unit.id),
         ...playerData.getOwnedUnits(faction).map((o) => o.id),
       ]),
     ];
@@ -2794,7 +2794,7 @@ export class TeamScene extends Phaser.Scene {
     // ✅ Выгружаем текстуры юнитов текущей фракции
     const currentFaction = playerData.getFaction();
     if (currentFaction) {
-      const units = getRepositoryUnitsByFaction(currentFaction);
+      const units = getFactionUnitsForCollection(currentFaction);
       let unloadedCount = 0;
       
       units.forEach(unit => {

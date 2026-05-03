@@ -2658,6 +2658,7 @@ class PlayerDataManager {
       this.data.ownedUniqueUnits.push(unitId);
       this.save();
       console.log(`✨ Unlocked unit: ${unitId}`);
+      eventBus.emit('player:unitGranted', { unitId });
     }
   }
 
