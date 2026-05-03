@@ -9,6 +9,7 @@ import { UNITS_REPOSITORY } from '../data/UnitsRepository';
 import { playerData } from '../data/PlayerData';
 import { FACTIONS, FactionId } from '../constants/gameConstants';
 import { getRealUnitTextureKey } from '../utils/TextureHelpers';
+import { UnitSelectionOverlay } from './UnitSelectionOverlay';
 
 export type LevelUpType = 'player' | 'faction';
 
@@ -490,20 +491,18 @@ export class LevelUpOverlay {
     if (hasUnitChoice) {
       const reward = this.config.rewards.rewards.find(r => r.type === 'unit_choice');
       if (reward && reward.choices && reward.choices.length > 0) {
-        import('./UnitSelectionOverlay').then(({ UnitSelectionOverlay }) => {
-          new UnitSelectionOverlay(
-            this.scene,
-            reward.choices || [],
-            true,
-            (unitId) => {
-              playerData.grantUnitReward(unitId);
-              this.showGenericRewards();
-            },
-            () => {
-              console.log('[LevelUpOverlay] Unit selection cancelled');
-            }
-          );
-        });
+        new UnitSelectionOverlay(
+          this.scene,
+          reward.choices || [],
+          true,
+          (unitId) => {
+            playerData.grantUnitReward(unitId);
+            this.showGenericRewards();
+          },
+          () => {
+            console.log('[LevelUpOverlay] Unit selection cancelled');
+          }
+        );
       } else {
         console.warn('[LevelUpOverlay] Unit choice reward has no choices!');
         this.showGenericRewards();

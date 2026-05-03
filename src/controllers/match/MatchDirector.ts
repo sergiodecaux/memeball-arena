@@ -670,6 +670,7 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
       winner,
       scores: { ...this.internalState.score },
       reason,
+      mode: this.config.mode,
     });
     
     return result;

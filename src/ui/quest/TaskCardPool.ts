@@ -232,24 +232,13 @@ export class TaskCardPool {
     const isClaimed = task.claimed;
     const isClaimable = isCompleted && !isClaimed;
 
-    bg.fillGradientStyle(0x111b2e, 0x141e35, 0x0c1220, 0x0c1220, 0.98, 0.98, 0.98, 0.98);
+    bg.fillGradientStyle(0x0f172a, 0x111827, 0x0b1220, 0x0b1220, 0.98, 0.98, 0.98, 0.98);
     bg.fillRoundedRect(-width / 2, 0, width, height, 14);
 
-    let borderColor = 0x334155;
-    let borderAlpha = 0.65;
-    if (isClaimable) {
-      borderColor = 0xffc857;
-      borderAlpha = 1;
-    } else if (isClaimed) {
-      borderColor = 0x38bdf8;
-      borderAlpha = 0.65;
-    }
+    const borderColor = isClaimable ? 0xfbbf24 : isClaimed ? 0x38bdf8 : 0x334155;
+    const borderAlpha = isClaimable ? 1 : isClaimed ? 0.55 : 0.5;
     bg.lineStyle(2, borderColor, borderAlpha);
     bg.strokeRoundedRect(-width / 2, 0, width, height, 14);
-    if (isClaimable) {
-      bg.lineStyle(1, 0x22c55e, 0.65);
-      bg.strokeRoundedRect(-width / 2 + 2, 2, width - 4, height - 4, 12);
-    }
 
     if (iconCol > 0 && 'icon' in task && task.icon) {
       card.iconText
@@ -317,7 +306,15 @@ export class TaskCardPool {
         new Phaser.Geom.Rectangle(-halfW, -halfH, btnW, halfH * 2),
         Phaser.Geom.Rectangle.Contains
       );
-      card.claimBtn.once('pointerdown', onClaim);
+      card.claimBtn.once('pointerdown', () => {
+        this.scene.time.delayedCall(0, () => {
+          try {
+            onClaim();
+          } catch (e) {
+            console.warn('[TaskCardPool] onClaim error', e);
+          }
+        });
+      });
     } else if (isClaimed) {
       card.claimBtn.setVisible(false);
       card.claimedBadge.setVisible(true);
@@ -331,7 +328,7 @@ export class TaskCardPool {
     const parts: string[] = [];
     if (reward.coins && reward.coins > 0) parts.push(`${reward.coins} монет`);
     if (reward.crystals && reward.crystals > 0) parts.push(`${reward.crystals} кристаллов`);
-    if (reward.xp && reward.xp > 0) parts.push(`${reward.xp} опыта Battle Pass`);
+    if (reward.xp && reward.xp > 0) parts.push(`${reward.xp} XP Battle Pass`);
     if (reward.fragments && reward.fragments > 0) parts.push(`${reward.fragments} фрагментов`);
     return parts.join('  ·  ');
   }

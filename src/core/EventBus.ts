@@ -176,6 +176,8 @@ export interface MatchFinishedPayload {
   winner: PlayerNumber | null;
   scores: { player1: number; player2: number };
   reason: string;
+  /** Режим матча из MatchDirector (лига / турнир / кампания и т.д.) — для заданий и аналитики */
+  mode?: 'standard' | 'campaign' | 'pvp' | 'tournament' | 'league' | 'custom';
 }
 
 export interface TurnStartedPayload {

@@ -4,6 +4,7 @@ import { hapticImpact, hapticSelection } from '../utils/Haptics';
 import { AudioManager } from '../managers/AudioManager';
 import { UNITS_REPOSITORY, UnitData, getDisplayName } from '../data/UnitsRepository';
 import { FACTIONS } from '../constants/gameConstants';
+import { isCaptainUnitId } from '../constants/captains';
 import { TEAM_LAYOUT, fitText, fitImage, getSafeArea } from './layout/TeamSceneLayout';
 import { getRealUnitTextureKey } from '../utils/TextureHelpers';
 
@@ -42,6 +43,7 @@ export class UnitSelectionOverlay extends Phaser.GameObjects.Container {
     this.setDepth(25000); // Очень высокий z-index
 
     this.createBackground();
+    this.createCaptainRewardBannerIfNeeded();
     this.createCardView();
     this.setupSwipe();
     this.showUnit(0);
@@ -128,6 +130,54 @@ export class UnitSelectionOverlay extends Phaser.GameObjects.Container {
         ease: 'Sine.easeInOut',
       });
     }
+  }
+
+  private createCaptainRewardBannerIfNeeded(): void {
+    const ids = this.unitChoices.filter(Boolean);
+    if (ids.length === 0 || !ids.every((id) => isCaptainUnitId(id))) return;
+
+    const { width, height } = this.scene.cameras.main;
+    const fonts = getFonts();
+    const colors = getColors();
+    const safe = getSafeArea(this.scene);
+    const s = Math.min(width / 390, height / 844);
+    const top = Math.max(10 * s, safe.top + 4);
+    const bw = Math.min(width - 28 * s, 380 * s);
+    const bx = width / 2 - bw / 2;
+    const barH = 56 * s;
+
+    const bar = this.scene.add.graphics();
+    bar.fillGradientStyle(0x312e81, 0x4c1d95, 0x1e1b4b, 0x4338ca, 0.95, 0.95, 0.95, 0.95);
+    bar.fillRoundedRect(bx, top, bw, barH, 16 * s);
+    bar.lineStyle(2, colors.uiGold, 0.9);
+    bar.strokeRoundedRect(bx, top, bw, barH, 16 * s);
+    bar.lineStyle(1, 0x22d3ee, 0.35);
+    bar.strokeRoundedRect(bx + 2, top + 2, bw - 4, barH - 4, 14 * s);
+    this.add(bar);
+
+    this.add(
+      this.scene.add
+        .text(width / 2, top + 19 * s, 'НАГРАДА: ВЫБОР КАПИТАНА', {
+          fontFamily: fonts.tech,
+          fontSize: `${12 * s}px`,
+          color: '#fef3c7',
+          fontStyle: 'bold',
+          align: 'center',
+        })
+        .setOrigin(0.5)
+    );
+
+    this.add(
+      this.scene.add
+        .text(width / 2, top + 38 * s, 'Уникальная ульта • Портрет и статы ниже', {
+          fontFamily: fonts.primary,
+          fontSize: `${9 * s}px`,
+          color: '#ddd6fe',
+          align: 'center',
+          wordWrap: { width: bw - 20 },
+        })
+        .setOrigin(0.5)
+    );
   }
 
   private createCardView(): void {

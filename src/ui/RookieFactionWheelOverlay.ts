@@ -2,6 +2,7 @@
 
 import Phaser from 'phaser';
 import { FACTIONS, FactionId } from '../constants/gameConstants';
+import { FACTION_UI, getUIFactionByGameFaction } from '../constants/factionUiConfig';
 import { getFonts } from '../config/themes';
 import { AudioManager } from '../managers/AudioManager';
 import { hapticImpact, hapticSelection } from '../utils/Haptics';
@@ -26,6 +27,7 @@ export class RookieFactionWheelOverlay extends Phaser.GameObjects.Container {
   private readonly slicesG: Phaser.GameObjects.Graphics;
   private readonly highlightG: Phaser.GameObjects.Graphics;
   private readonly wheelRoot: Phaser.GameObjects.Container;
+  private heroBackdrop?: Phaser.GameObjects.Image;
   private selectedIndex: number | null = null;
   private idleTween?: Phaser.Tweens.Tween;
   private confirmBtn?: Phaser.GameObjects.Container;
@@ -53,6 +55,16 @@ export class RookieFactionWheelOverlay extends Phaser.GameObjects.Container {
 
     const cx = width / 2;
     const cy = height * 0.44;
+
+    const ui0 = getUIFactionByGameFaction(this.factionIds[0]);
+    const heroKey0 = FACTION_UI[ui0].heroKey;
+    if (scene.textures.exists(heroKey0)) {
+      const hb = scene.add.image(cx, cy, heroKey0).setAlpha(0.16);
+      const cover = Math.max((width * 0.92) / hb.width, (this.wheelRadius * 2 + 220 * s) / hb.height);
+      hb.setScale(cover * 1.05);
+      this.heroBackdrop = hb;
+      this.add(hb);
+    }
 
     const panel = scene.add.graphics();
     panel.fillStyle(0x0c1224, 0.92);
@@ -120,17 +132,50 @@ export class RookieFactionWheelOverlay extends Phaser.GameObjects.Container {
       const mid = a0 + slice / 2;
       const lx = Math.cos(mid) * (this.wheelRadius * 0.58);
       const ly = Math.sin(mid) * (this.wheelRadius * 0.58);
-      const label = scene.add
-        .text(lx, ly, `${FACTION_ICONS[fid]}\n${FACTION_NAMES_RU[fid]}`, {
-          fontFamily: fonts.tech,
-          fontSize: `${10 * s}px`,
-          color: '#f8fafc',
-          align: 'center',
-          fontStyle: 'bold',
-        })
-        .setOrigin(0.5)
-        .setRotation(mid + Math.PI / 2);
-      this.wheelRoot.add(label);
+
+      const uiFaction = getUIFactionByGameFaction(fid);
+      const emblemKeys = [`icon_faction_${uiFaction}`, `ui_faction_${fid}`];
+      let emblemKey: string | null = null;
+      for (const k of emblemKeys) {
+        if (scene.textures.exists(k)) {
+          emblemKey = k;
+          break;
+        }
+      }
+
+      const sliceRoot = scene.add.container(lx, ly);
+      const shortLabel = FACTION_NAMES_RU[fid].split(/\s+/)[0] ?? FACTION_NAMES_RU[fid];
+
+      if (emblemKey) {
+        sliceRoot.add(
+          scene.add.image(0, -11 * s, emblemKey).setDisplaySize(38 * s, 38 * s)
+        );
+      } else {
+        sliceRoot.add(
+          scene.add
+            .text(0, -14 * s, FACTION_ICONS[fid], {
+              fontSize: `${22 * s}px`,
+            })
+            .setOrigin(0.5)
+        );
+      }
+
+      sliceRoot.add(
+        scene.add
+          .text(0, 16 * s, shortLabel, {
+            fontFamily: fonts.tech,
+            fontSize: `${9 * s}px`,
+            color: '#f8fafc',
+            align: 'center',
+            fontStyle: 'bold',
+            stroke: '#0f172a',
+            strokeThickness: Math.max(2, Math.round(2 * s)),
+          })
+          .setOrigin(0.5)
+      );
+
+      sliceRoot.setRotation(mid + Math.PI / 2);
+      this.wheelRoot.add(sliceRoot);
     }
 
     this.wheelRoot.add(
@@ -201,6 +246,21 @@ export class RookieFactionWheelOverlay extends Phaser.GameObjects.Container {
     const a1 = a0 + slice;
     const fid = this.factionIds[index];
     const fc = FACTIONS[fid];
+
+    const ui = getUIFactionByGameFaction(fid);
+    const hk = FACTION_UI[ui].heroKey;
+    if (this.heroBackdrop && scene.textures.exists(hk)) {
+      this.heroBackdrop.setTexture(hk);
+    } else if (!this.heroBackdrop && scene.textures.exists(hk)) {
+      const { width, height } = scene.cameras.main;
+      const cx = width / 2;
+      const cy = height * 0.44;
+      const hb = scene.add.image(cx, cy, hk).setAlpha(0.16);
+      const cover = Math.max((width * 0.92) / hb.width, (this.wheelRadius * 2 + 220 * s) / hb.height);
+      hb.setScale(cover * 1.05);
+      this.heroBackdrop = hb;
+      this.addAt(hb, 1);
+    }
 
     this.highlightG.clear();
     this.highlightG.lineStyle(5, 0xfef08a, 1);

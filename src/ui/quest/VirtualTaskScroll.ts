@@ -37,7 +37,9 @@ export class VirtualTaskScroll {
   }
 
   updateScroll(scrollY: number): void {
+    const changed = Math.abs(scrollY - this.scrollY) >= 0.35;
     this.scrollY = scrollY;
+    if (!changed && !this.dataDirty) return;
     this.applyVisibility();
   }
 

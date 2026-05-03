@@ -1,8 +1,9 @@
 // Система ежедневных заданий в стиле Mobile Legends
 
 import { playerData } from './PlayerData';
-import { FactionId } from '../constants/gameConstants';
 import { eventBus, GameEvents, GoalScoredPayload, MatchFinishedPayload, LeagueMatchWonPayload, CardUsedPayload } from '../core/EventBus';
+import { battlePassManager } from '../managers/BattlePassManager';
+import { getUnitsByFaction } from './UnitsCatalog';
 
 export type DailyTaskType = 
   | 'play_matches'
@@ -11,6 +12,7 @@ export type DailyTaskType =
   | 'clean_sheets'
   | 'complete_campaign'
   | 'play_league'
+  | 'play_tournament'
   | 'use_abilities';
 
 export type WeeklyTaskType =
@@ -18,6 +20,7 @@ export type WeeklyTaskType =
   | 'weekly_goals'
   | 'weekly_clean_sheets'
   | 'weekly_league_wins'
+  | 'weekly_tournament_matches'
   | 'weekly_cards_used';
 
 export interface DailyTask {
@@ -125,6 +128,13 @@ const DAILY_TASK_TEMPLATES: Omit<DailyTask, 'id' | 'progress' | 'completed' | 'c
     reward: { coins: 400, crystals: 25 },
   },
   {
+    type: 'play_tournament',
+    title: 'Турнир',
+    description: 'Сыграй 1 матч турнира (брекет)',
+    maxProgress: 1,
+    reward: { coins: 450, crystals: 30 },
+  },
+  {
     type: 'use_abilities',
     title: 'Использовать способности',
     description: 'Используй 5 способностей юнитов',
@@ -176,6 +186,14 @@ export const WEEKLY_TASK_TEMPLATES: Array<
     icon: '🌟',
     titleKey: 'task_weekly_league',
     defaultTitle: 'Победи в 10 матчах Галактической Лиги',
+  },
+  {
+    type: 'weekly_tournament_matches',
+    maxProgress: 8,
+    reward: { coins: 800, crystals: 35, xp: 120 },
+    icon: '🏆',
+    titleKey: 'task_weekly_tournament',
+    defaultTitle: 'Сыграй 8 матчей в турнирах',
   },
   {
     type: 'weekly_cards_used',
@@ -366,26 +384,48 @@ class DailyTasksManager {
    * Всегда включает 3 основных задания: score_goals, win_matches, clean_sheets
    */
   private generateDailyTasks(): DailyTask[] {
-    // ✅ ОБНОВЛЕНО: Всегда генерируем 3 конкретных ежедневных задания
     const coreTasks: DailyTaskType[] = ['score_goals', 'win_matches', 'clean_sheets'];
-    
+    const modeTasks: DailyTaskType[] = ['play_league', 'play_tournament'];
+
     const tasks: DailyTask[] = [];
-    
-    // Добавляем 3 основных задания
+    const stamp = Date.now();
+
     coreTasks.forEach((taskType, index) => {
-      const template = DAILY_TASK_TEMPLATES.find(t => t.type === taskType);
+      const template = DAILY_TASK_TEMPLATES.find((t) => t.type === taskType);
       if (template) {
         tasks.push({
           ...template,
-          id: `daily_${Date.now()}_${index}`,
+          id: `daily_${stamp}_${index}`,
           progress: 0,
           completed: false,
           claimed: false,
         });
       }
     });
-    
+
+    modeTasks.forEach((taskType, index) => {
+      const template = DAILY_TASK_TEMPLATES.find((t) => t.type === taskType);
+      if (template) {
+        tasks.push({
+          ...template,
+          id: `daily_${stamp}_m${index}`,
+          progress: 0,
+          completed: false,
+          claimed: false,
+        });
+      }
+    });
+
     return tasks;
+  }
+
+  private grantFragmentsSync(amount: number): void {
+    const faction = playerData.getFaction();
+    if (!faction || amount <= 0) return;
+    const factionUnits = getUnitsByFaction(faction);
+    if (factionUnits.length === 0) return;
+    const randomUnit = factionUnits[Math.floor(Math.random() * factionUnits.length)];
+    playerData.addUnitFragments(randomUnit.id, amount);
   }
 
   /**
@@ -447,22 +487,8 @@ class DailyTasksManager {
     // Выдать награды
     if (task.reward.coins) playerData.addCoins(task.reward.coins);
     if (task.reward.crystals) playerData.addCrystals(task.reward.crystals);
-    if (task.reward.xp) playerData.addXP(task.reward.xp);
-    
-    // ✅ ИСПРАВЛЕНО: Фрагменты выдаются для текущей фракции игрока
-    if (task.reward.fragments) {
-      const faction = playerData.getFaction();
-      if (faction) {
-        // Получаем случайного юнита из фракции и выдаём фрагменты
-        import('./UnitsCatalog').then(({ getUnitsByFaction }) => {
-          const factionUnits = getUnitsByFaction(faction);
-          if (factionUnits.length > 0) {
-            const randomUnit = factionUnits[Math.floor(Math.random() * factionUnits.length)];
-            playerData.addUnitFragments(randomUnit.id, task.reward.fragments!);
-          }
-        });
-      }
-    }
+    if (task.reward.xp) battlePassManager.addXP(task.reward.xp, 'daily_task');
+    if (task.reward.fragments) this.grantFragmentsSync(task.reward.fragments);
 
     task.claimed = true;
     this.save(data);
@@ -480,20 +506,8 @@ class DailyTasksManager {
     // Выдать награды
     if (task.reward.coins) playerData.addCoins(task.reward.coins);
     if (task.reward.crystals) playerData.addCrystals(task.reward.crystals);
-    if (task.reward.xp) playerData.addXP(task.reward.xp);
-
-    if (task.reward.fragments) {
-      const faction = playerData.getFaction();
-      if (faction) {
-        import('./UnitsCatalog').then(({ getUnitsByFaction }) => {
-          const factionUnits = getUnitsByFaction(faction);
-          if (factionUnits.length > 0) {
-            const randomUnit = factionUnits[Math.floor(Math.random() * factionUnits.length)];
-            playerData.addUnitFragments(randomUnit.id, task.reward.fragments!);
-          }
-        });
-      }
-    }
+    if (task.reward.xp) battlePassManager.addXP(task.reward.xp, 'weekly_task');
+    if (task.reward.fragments) this.grantFragmentsSync(task.reward.fragments);
 
     task.claimed = true;
     this.saveWeeklyData();
@@ -553,6 +567,13 @@ class DailyTasksManager {
 
     const matchFinishedCallback = (payload: MatchFinishedPayload) => {
       this.updateTaskProgress('play_matches', 1);
+      if (payload.mode === 'league') {
+        this.updateTaskProgress('play_league', 1);
+      }
+      if (payload.mode === 'tournament') {
+        this.updateTaskProgress('play_tournament', 1);
+        this.updateWeeklyProgress('tournament_matches', 1);
+      }
       if (payload.winner === 1) {
         this.updateTaskProgress('win_matches', 1);
         this.updateWeeklyProgress('wins', 1);

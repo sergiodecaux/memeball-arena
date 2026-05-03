@@ -610,21 +610,7 @@ export class MatchStateMachine extends Phaser.Events.EventEmitter {
       }
     });
 
-    // При входе в FINISHED — эмитим событие окончания матча
-    this.onEnter(MatchPhase.FINISHED, (ctx) => {
-      let winner: PlayerNumber | null = null;
-      if (ctx.score.player1 > ctx.score.player2) {
-        winner = 1;
-      } else if (ctx.score.player2 > ctx.score.player1) {
-        winner = 2;
-      }
-
-      eventBus.dispatch(GameEvents.MATCH_FINISHED, {
-        winner,
-        scores: { ...ctx.score },
-        reason: 'normal',
-      });
-    });
+    // FINISHED: событие match:finished шлёт только MatchDirector (один раз, с mode и reason).
   }
 
   // ============================================================
