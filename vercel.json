@@ -1,6 +1,5 @@
 {
   "version": 2,
-  "compress": true,
   "headers": [
     {
       "source": "/(.*)",
