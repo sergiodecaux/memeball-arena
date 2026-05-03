@@ -160,8 +160,9 @@ export class FieldRenderer {
         scene.textures.exists(assets.wallStraight) &&
         scene.textures.exists(assets.wallCorner);
 
-      // Для киберов модульные тайлы не используем — только PNG фон
-      if (this.factionId === 'cyborg') {
+      // Если есть арт поля field_<faction>.png — не смешиваем с модульным полом/стенами
+      // (иначе тайлы перекрывают PNG; у киборгов это уже было задано отдельно).
+      if (this.hasArenaBackground) {
         this.hasModularAssets = false;
       }
 
@@ -562,7 +563,8 @@ export class FieldRenderer {
   // ==================== PERIMETER WALLS (не cyborg) ====================
 
   private createPerimeterWalls(): void {
-    if (this.factionId === 'cyborg') {
+    // Киборги и поля с полноэкранным PNG уже содержат борта — не рисуем второй слой
+    if (this.factionId === 'cyborg' || this.hasArenaBackground) {
       return;
     }
 
