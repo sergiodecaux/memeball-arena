@@ -21,6 +21,7 @@ import { getProfileCardModifiers } from '../../ai/AIProfile';
 import { GameStartData, MultiplayerManager, PvPPlayer } from '../../managers/MultiplayerManager';
 import { getUnit, getStarterUnits, UnitData, TUTORIAL_LEGENDARY_UNITS } from '../../data/UnitsCatalog';
 import { UNITS_REPOSITORY, UnitRarity, getUnitById as getRepositoryUnit, getUnitsByFactionAndRole } from '../../data/UnitsRepository';
+import { applyCaptainSlotToAiUnitIds } from '../../utils/aiCaptainRoster';
 
 // === AI UPGRADE PRESETS BY DIFFICULTY ===
 
@@ -50,6 +51,8 @@ export interface EntityFactoryConfig {
   isTutorialMatch?: boolean;  // Флаг обучающего матча
   /** Профиль экономики бота — смещение раритетности юнитов */
   aiProfile?: AIOpponentProfile;
+  /** Инжект капитана в ростер AI (уровень игрока ≥10 и т.д.). */
+  aiIncludeCaptain?: boolean;
 }
 
 export class EntityFactory {
@@ -85,7 +88,14 @@ export class EntityFactory {
     Unit.resetCounters();
 
     if (this.config.isPvPMode) {
-      return this.createPvPCaps();
+      const roster = this.config.pvpData?.players;
+      if (roster && roster.length >= 2) {
+        return this.createPvPCaps();
+      }
+      console.warn(
+        '[EntityFactory] PvP без полного roster с сервера — спавн как фракция vs фракция (размер из playerTeamSize/aiTeamSize)'
+      );
+      return this.createFactionCaps();
     } else if (this.config.useFactions) {
       return this.createFactionCaps();
     } else {
@@ -116,11 +126,32 @@ export class EntityFactory {
     console.log(`[EntityFactory] 📋 Player team (${playerTeamSize}):`, playerTeam);
 
     // Получаем команду оппонента (с учётом сложности AI)
-    const opponentTeam = this.getAITeamForDifficulty(
+    let opponentTeam = this.getAITeamForDifficulty(
       this.config.opponentFaction, 
       aiTeamSize, 
       this.config.aiDifficulty
     );
+    opponentTeam = applyCaptainSlotToAiUnitIds(opponentTeam, this.config.opponentFaction, aiTeamSize, {
+      includeCaptain: !!this.config.aiIncludeCaptain,
+      reserveBossSlot: !!(this.config.isBossLevel && this.config.bossUnitId),
+    });
+    // Ровно aiTeamSize id: капитан только заменяет слот в массиве (см. applyCaptainSlotToAiUnitIds).
+    if (opponentTeam.length !== aiTeamSize) {
+      console.warn(
+        `[EntityFactory] Opponent roster length ${opponentTeam.length} expected ${aiTeamSize} — fixing`
+      );
+      opponentTeam = opponentTeam.slice(0, aiTeamSize);
+      const pad = this.getDefaultTeam(this.config.opponentFaction, aiTeamSize);
+      while (opponentTeam.length < aiTeamSize) {
+        opponentTeam.push(pad[opponentTeam.length % pad.length]);
+      }
+      if (this.config.aiIncludeCaptain) {
+        opponentTeam = applyCaptainSlotToAiUnitIds(opponentTeam, this.config.opponentFaction, aiTeamSize, {
+          includeCaptain: true,
+          reserveBossSlot: !!(this.config.isBossLevel && this.config.bossUnitId),
+        });
+      }
+    }
     console.log(`[EntityFactory] 🤖 Opponent team (${aiTeamSize}, ${this.config.aiDifficulty}):`, opponentTeam);
 
     // ===== PLAYER UNITS =====
@@ -432,8 +463,8 @@ export class EntityFactory {
       console.error(`[EntityFactory] ❌ No starter units for faction ${factionId}`);
       return [];
     }
-    
-    return [starters.balanced, starters.tank, starters.sniper].slice(0, teamSize);
+
+    return this.getDefaultTeam(factionId, teamSize);
   }
 
   /**
@@ -464,7 +495,7 @@ export class EntityFactory {
       difficulty,
       this.config.aiProfile ? getProfileCardModifiers(this.config.aiProfile.tier).rarityWeightShift : 0
     );
-    const factionUnits = UNITS_REPOSITORY.filter(u => u.factionId === factionId);
+    const factionUnits = UNITS_REPOSITORY.filter((u) => u.factionId === factionId && !u.isCaptain);
     const roles = this.pickAIRoleSlots(teamSize);
     const team: string[] = [];
 
@@ -481,8 +512,10 @@ export class EntityFactory {
       }
 
       if (candidates.length === 0) {
-        const byRole = getUnitsByFactionAndRole(factionId, role).filter(u => !team.includes(u.id));
-        candidates = byRole.length > 0 ? byRole : factionUnits.filter(u => !team.includes(u.id));
+        const byRole = getUnitsByFactionAndRole(factionId, role).filter(
+          (u) => !u.isCaptain && !team.includes(u.id)
+        );
+        candidates = byRole.length > 0 ? byRole : factionUnits.filter((u) => !team.includes(u.id));
       }
 
       if (candidates.length > 0) {

@@ -110,6 +110,7 @@ const STATE_TRANSITIONS: Record<MatchPhase, TransitionConfig> = {
       MatchPhase.WAITING,  // Отмена прицеливания
       MatchPhase.MOVING,   // Выстрел
       MatchPhase.PAUSED,
+      MatchPhase.FINISHED, // Конец матча по таймеру (ничья / победа) — не блокировать результат
     ],
   },
   
@@ -374,6 +375,20 @@ export class MatchStateMachine extends Phaser.Events.EventEmitter {
     this.context.lastShootingUnitId = unitId;
     this.context.selectedUnitId = undefined;
     return this.transition(MatchPhase.MOVING);
+  }
+
+  /**
+   * Все объекты остановились, игрок НЕ меняется (бонусный ход).
+   */
+  objectsStoppedSamePlayer(): boolean {
+    if (this.currentPhase !== MatchPhase.MOVING) {
+      return false;
+    }
+
+    this.context.turnNumber++;
+    this.context.lastShootingUnitId = undefined;
+
+    return this.transition(MatchPhase.WAITING);
   }
 
   /**

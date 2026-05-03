@@ -486,17 +486,15 @@ export class LevelUpOverlay {
     // Показываем награды
     const hasUnitChoice = this.config.rewards.rewards.some(r => r.type === 'unit_choice');
     
-    if (hasUnitChoice && this.config.factionId) {
-      // Показываем выбор юнита используя UnitSelectionOverlay
+    if (hasUnitChoice) {
       const reward = this.config.rewards.rewards.find(r => r.type === 'unit_choice');
       if (reward && reward.choices && reward.choices.length > 0) {
         import('./UnitSelectionOverlay').then(({ UnitSelectionOverlay }) => {
           new UnitSelectionOverlay(
             this.scene,
             reward.choices || [],
-            true, // ✅ При повышении уровня награда всегда доступна
+            true,
             (unitId) => {
-              // Выдаём юнит наградой (с автодобавлением в резерв/команду)
               playerData.grantUnitReward(unitId);
               this.showGenericRewards();
             },

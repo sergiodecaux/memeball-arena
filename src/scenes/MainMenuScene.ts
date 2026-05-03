@@ -82,6 +82,9 @@ export class MainMenuScene extends Phaser.Scene {
     this.load.image('ui_rewards_crystals', 'assets/ui/icons/rewards/icon_currency_crystals.png');
     this.load.image('ui_settings_gear', 'assets/ui/icons/system/icon_settings_gear.png');
     this.load.image('ui_player_level', 'assets/ui/icons/player/icon_player_level.png');
+    this.load.image('ui_lucky_wheel_rim', 'assets/ui/lucky-wheel/wheel_rim.png');
+    this.load.image('ui_lucky_wheel_pointer', 'assets/ui/lucky-wheel/wheel_pointer.png');
+    this.load.image('ui_lucky_wheel_center', 'assets/ui/lucky-wheel/wheel_center.png');
   }
 
   shutdown(): void {

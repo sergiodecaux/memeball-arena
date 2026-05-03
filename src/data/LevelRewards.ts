@@ -1,6 +1,7 @@
 // Система наград за повышение уровня игрока и фракций
 
 import { FactionId } from '../constants/gameConstants';
+import { CAPTAIN_UNIT_IDS } from '../constants/captains';
 import { UNITS_REPOSITORY } from './UnitsRepository';
 
 export type RewardType = 'coins' | 'crystals' | 'unit_choice' | 'fragments' | 'card_pack' | 'chest';
@@ -80,6 +81,11 @@ export const PLAYER_LEVEL_REWARDS: LevelReward[] = [
       { type: 'coins', amount: 2500 },
       { type: 'crystals', amount: 250 },
       { type: 'chest', amount: 1, message: 'Средний сундук' },
+      {
+        type: 'unit_choice',
+        choices: [...CAPTAIN_UNIT_IDS],
+        message: 'Выбери Капитана (1 из 4)! Достижение: 10 уровень.',
+      },
     ],
   },
   {

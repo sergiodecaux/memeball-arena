@@ -11,7 +11,7 @@ import { tgApp } from '../utils/TelegramWebApp';
 import { safeSceneStart } from '../utils/SceneHelpers';
 import { FACTION_IDS, type FactionId } from '../constants/gameConstants';
 import { eventBus, GameEvents, type EventPayload } from '../core/EventBus';
-import { getAccountLevelMatchCaps } from '../match/accountLevelMatchRules';
+import { getMatchDurationForTeamSize } from '../match/accountLevelMatchRules';
 import { generateHumanLikeOpponentNickname } from '../utils/humanLikeNickname';
 
 type MatchmakingMode = 'casual' | 'ranked';
@@ -247,7 +247,7 @@ export class MatchmakingScene extends Phaser.Scene {
     const data = playerData.get();
     const mmrBucket = data.pvpStats?.[this.mode]?.rating ?? 1000;
 
-    const bracket = getAccountLevelMatchCaps(playerData.get().level ?? 1);
+    const bracket = this.progressionBracket();
 
     pMgr.findGame(this.mode, {
       playerName: playerData.getNickname() || data.nickname || 'Player',
@@ -335,8 +335,17 @@ export class MatchmakingScene extends Phaser.Scene {
     return rest[Math.floor(Math.random() * rest.length)];
   }
 
-  private progressionBracket(): ReturnType<typeof getAccountLevelMatchCaps> {
-    return getAccountLevelMatchCaps(playerData.get().level ?? 1);
+  /** Размер команды и таймер по слотам мастерства выбранной фракции (онлайн PvP / подготовка). */
+  private progressionBracket(): { teamSize: 3 | 4 | 5; matchDurationSeconds: number } {
+    const faction = (playerData.getFaction() || 'magma') as FactionId;
+    const teamSize = Math.min(
+      5,
+      Math.max(3, playerData.getAllowedTeamSize(faction))
+    ) as 3 | 4 | 5;
+    return {
+      teamSize,
+      matchDurationSeconds: getMatchDurationForTeamSize(teamSize),
+    };
   }
 
   private async gotoMatchPrepFromServer(

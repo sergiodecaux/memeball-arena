@@ -16,6 +16,7 @@ import { AudioManager } from '../../managers/AudioManager';
 import { eventBus } from '../../core/EventBus';
 import { GameSceneState, GameSceneData, StartPositions, GameUnit } from './types';
 import { EntityFactory } from './EntityFactory';
+import { applyCaptainSlotToAiUnitIds } from '../../utils/aiCaptainRoster';
 import { LevelConfig, ChapterConfig } from '../../types/CampaignTypes';
 import { getChapter } from '../../data/CampaignData';
 import { MultiplayerManager } from '../../managers/MultiplayerManager';
@@ -220,7 +221,34 @@ export class GameSceneSetup {
       lastServerSnapshot: undefined,
       fieldScale: 1,
       fieldSkinId: 'field_default',
+      aiIncludeCaptain: false,
     };
+  }
+
+  /** Бот получает капитана при уровне игрока ≥ 10 и матче против AI. */
+  private refreshAiCaptainFlag(
+    state: GameSceneState,
+    data?: GameSceneData,
+    campaignLevel?: LevelConfig
+  ): void {
+    const accountLevel = playerData.get().level ?? 1;
+    if (accountLevel < 10) {
+      state.aiIncludeCaptain = false;
+      return;
+    }
+    if (campaignLevel?.id === '1-1') {
+      state.aiIncludeCaptain = false;
+      return;
+    }
+    if (campaignLevel?.isBoss) {
+      state.aiIncludeCaptain = false;
+      return;
+    }
+    if (!state.isAIEnabled) {
+      state.aiIncludeCaptain = false;
+      return;
+    }
+    state.aiIncludeCaptain = true;
   }
 
   private initializeCampaignMode(
@@ -244,6 +272,7 @@ export class GameSceneSetup {
     );
 
     console.log(`[GameSceneSetup] Campaign Level: ${levelConfig.name}, AI: ${levelConfig.aiDifficulty}`);
+    this.refreshAiCaptainFlag(state, undefined, levelConfig);
   }
 
   private initializeStandardMode(state: GameSceneState, data?: GameSceneData): void {
@@ -304,6 +333,8 @@ export class GameSceneSetup {
     }
 
     state.matchRemainingTime = state.matchDuration;
+
+    this.refreshAiCaptainFlag(state, data);
   }
 
   private getRandomOpponentFaction(playerFaction: FactionId): FactionId {
@@ -333,6 +364,17 @@ export class GameSceneSetup {
       (sceneData?.teamSize === undefined || sceneData.teamSize <= 0)
     ) {
       return 3;
+    }
+
+    // PvP без server roster: размер матча по мастерству фракции, не по числу заполненных слотов в меню
+    if (
+      state.isPvPMode &&
+      !state.pvpData &&
+      state.useFactions &&
+      state.playerFaction &&
+      (sceneData?.teamSize === undefined || sceneData.teamSize <= 0)
+    ) {
+      return Math.min(5, Math.max(3, playerData.getAllowedTeamSize(state.playerFaction)));
     }
 
     // Если есть явное переопределение (тестовый уровень кампании), используем его
@@ -506,6 +548,7 @@ export class GameSceneSetup {
       // ✅ NEW: Tutorial match flag
       isTutorialMatch: isTutorialMatch,
       aiProfile: state.aiOpponentProfile,
+      aiIncludeCaptain: !!state.aiIncludeCaptain,
     });
 
     const ballResult = factory.createBall();
@@ -649,27 +692,34 @@ export class GameSceneSetup {
     }
 
     // Для AI с учётом сложности
+    let team: string[] = [];
+
     if (state.aiDifficulty && state.aiDifficulty !== 'easy') {
-      const factionUnits = UNITS_REPOSITORY.filter((u: any) => u.factionId === state.opponentFaction);
-      const team: string[] = [];
-      
-      // Упрощённая логика: выбираем случайные юниты
+      const factionUnits = UNITS_REPOSITORY.filter(
+        (u: any) => u.factionId === state.opponentFaction && !u.isCaptain
+      );
+
       for (let i = 0; i < teamSize; i++) {
         if (factionUnits.length > 0) {
           const randomUnit = factionUnits[Math.floor(Math.random() * factionUnits.length)];
           team.push(randomUnit.id);
         }
       }
+    } else {
+      const starters = STARTER_UNITS_BY_FACTION[state.opponentFaction];
+      if (starters) {
+        team = [starters.balanced, starters.tank, starters.sniper].slice(0, teamSize);
+      }
+    }
+
+    if (!state.aiIncludeCaptain || team.length === 0) {
       return team;
     }
 
-    // Fallback на стартовые
-    const starters = STARTER_UNITS_BY_FACTION[state.opponentFaction];
-    if (starters) {
-      return [starters.balanced, starters.tank, starters.sniper].slice(0, teamSize);
-    }
-
-    return [];
+    return applyCaptainSlotToAiUnitIds(team, state.opponentFaction, teamSize, {
+      includeCaptain: true,
+      reserveBossSlot: false,
+    });
   }
 
   /**

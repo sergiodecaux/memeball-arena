@@ -61,6 +61,9 @@ export interface MatchDirectorConfig {
   
   // 💰 League (опционально)
   entryFee?: number; // Вступительный взнос для лиги
+
+  /** Опционально: бонусный ход без смены игрока (капитаны). */
+  resolveTurnAdvance?: (lastShootingUnitRuntimeId?: string) => 'switch' | 'same_player';
 }
 
 // ========== ВНУТРЕННЕЕ СОСТОЯНИЕ ==========
@@ -92,6 +95,8 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
   private config: MatchDirectorConfig;
   private stateMachine: MatchStateMachine;
   
+  private resolveTurnAdvance?: MatchDirectorConfig['resolveTurnAdvance'];
+  
   private internalState: MatchInternalState;
   
   // Таймер матча
@@ -111,6 +116,7 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
     
     this.scene = config.scene;
     this.config = config;
+    this.resolveTurnAdvance = config.resolveTurnAdvance;
     this.remainingTime = config.matchDuration;
     
     // Создаём машину состояний
@@ -132,6 +138,10 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
     
     this.setupStateMachineHandlers();
     this.subscribeToEvents();
+  }
+
+  setResolveTurnAdvance(fn?: MatchDirectorConfig['resolveTurnAdvance']): void {
+    this.resolveTurnAdvance = fn;
   }
 
   // ============================================================
@@ -503,9 +513,17 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
     this.stoppedFrames = 0;
     
     console.log('[MatchDirector] All objects stopped');
-    
-    // Переходим в waiting и меняем игрока
-    this.stateMachine.objectsStopped();
+
+    const ctx = this.stateMachine.getContext();
+    const lastShooterId = ctx.lastShootingUnitId;
+    const advance =
+      this.resolveTurnAdvance?.(lastShooterId) ?? 'switch';
+
+    if (advance === 'same_player') {
+      this.stateMachine.objectsStoppedSamePlayer();
+    } else {
+      this.stateMachine.objectsStopped();
+    }
     
     eventBus.dispatch(GameEvents.OBJECTS_STOPPED, {
       turnNumber: this.stateMachine.getTurnNumber(),

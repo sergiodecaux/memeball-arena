@@ -434,6 +434,11 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
           this.selectedUnits.push(unit.id);
           this.highlightSelectedUnit(unit.id, true);
           this.emit('unit_selected_for_pair', { unitId: unit.id, step: 1 });
+          // Пассивка «Измерительный трюк»: один выбранный союзник меняется местами с мячом
+          if (card.id === 'void_swap' && this.isVoidSwapBallExchangeActive()) {
+            this.executeCard();
+            return true;
+          }
           return true;
         } else if (this.selectedUnits.length === 1) {
           if (this.selectedUnits[0] === unit.id) {
@@ -638,9 +643,17 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       return false;
     }
 
-    if (card.targetType === 'unit_ally_pair' && (!data.unitIds || data.unitIds.length < 2)) {
-      console.warn(`[AbilityManager] Card ${cardId} requires 2 unitIds`);
-      return false;
+    if (card.targetType === 'unit_ally_pair') {
+      const ids = data.unitIds;
+      if (cardId === 'void_swap' && ids?.length === 1) {
+        if (!this.isVoidSwapBallExchangeActive()) {
+          console.warn(`[AbilityManager] void_swap with 1 unit requires card_enhance swap_with_ball`);
+          return false;
+        }
+      } else if (!ids || ids.length < 2) {
+        console.warn(`[AbilityManager] Card ${cardId} requires 2 unitIds`);
+        return false;
+      }
     }
 
     try {
@@ -651,7 +664,11 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
         case 'cyborg_shield':       return this.applyEnergyShield(data.unitIds![0]);
         case 'cyborg_tether':       return this.applyMagneticTether(data.unitIds![0]);
         case 'cyborg_barrier':      return this.applyPhotonBarrier(data.position!);
-        case 'void_swap':           return this.applyPhaseSwap(data.unitIds![0], data.unitIds![1]);
+        case 'void_swap':
+          if (data.unitIds!.length === 1) {
+            return this.applyPhaseSwapWithBall(data.unitIds![0]);
+          }
+          return this.applyPhaseSwap(data.unitIds![0], data.unitIds![1]);
         case 'void_ghost':          return this.applyGhostPhase(data.unitIds![0]);
         case 'void_wormhole':       return this.applyWormhole(data.position!);
         case 'insect_toxin':        return this.applyNeurotoxin(data.unitIds![0]);
@@ -1011,7 +1028,18 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
 
   private applyPhotonBarrier(position: { x: number; y: number }): boolean {
     const { x, y } = position;
-    const barrierLength = 100;
+    let lengthMult = 1;
+    const activeUnit = this.getLastActiveUnit();
+    if (activeUnit && activeUnit instanceof Unit && this.passiveManager) {
+      const enhancement = this.passiveManager.getCardEnhancement(
+        activeUnit.getUnitId(),
+        'cyborg_barrier'
+      );
+      lengthMult += enhancement.radiusBonus;
+      this.passiveManager.notifyCardEnhancement(activeUnit.getUnitId(), 'cyborg_barrier');
+    }
+
+    let barrierLength = 100 * lengthMult;
 
     const x1 = x - barrierLength / 2;
     const x2 = x + barrierLength / 2;
@@ -1121,7 +1149,96 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       pos2,
     });
 
+    const activeForSwap = this.getLastActiveUnit();
+    if (activeForSwap && activeForSwap instanceof Unit && this.passiveManager) {
+      const uid = activeForSwap.getUnitId();
+      const e = this.passiveManager.getCardEnhancement(uid, 'void_swap');
+      if (e.special || e.radiusBonus > 0 || e.durationBonus > 0) {
+        this.passiveManager.notifyCardEnhancement(uid, 'void_swap');
+      }
+    }
+
     console.log(`[AbilityManager] Phase Swap: ${unitId1} <-> ${unitId2}`);
+    return true;
+  }
+
+  /**
+   * Пассивка «Измерительный трюк» (void_trickster): обмен позициями одного союзника и мяча.
+   */
+  private applyPhaseSwapWithBall(unitId: string): boolean {
+    const unit = this.resolveCapByUnitRef(unitId);
+    const ball = this.getBall();
+
+    if (!unit || !ball?.body) {
+      console.warn('[AbilityManager] Phase Swap+Ball: unit or ball not found');
+      return false;
+    }
+
+    if (!(unit instanceof Unit)) {
+      console.warn('[AbilityManager] Phase Swap+Ball: target must be Unit');
+      return false;
+    }
+
+    if (!unit.body) {
+      console.warn('[AbilityManager] Phase Swap+Ball: unit has no body');
+      return false;
+    }
+
+    if (unit.isStunned()) {
+      this.playInvalidPlacementFeedback('unit_stunned');
+      return false;
+    }
+
+    const posUnit = { x: unit.x, y: unit.y };
+    const posBall = ball.getPosition();
+
+    try {
+      if (typeof (unit as Unit).teleportTo === 'function') {
+        unit.teleportTo(posBall.x, posBall.y);
+      } else {
+        this.scene.matter.body.setPosition(unit.body, posBall);
+        this.scene.matter.body.setVelocity(unit.body, { x: 0, y: 0 });
+        unit.sprite?.setPosition?.(posBall.x, posBall.y);
+      }
+
+      this.scene.matter.body.setPosition(ball.body, posUnit);
+      this.scene.matter.body.setVelocity(ball.body, { x: 0, y: 0 });
+      this.scene.matter.body.setAngularVelocity(ball.body, 0);
+      ball.sprite.setPosition(posUnit.x, posUnit.y);
+    } catch (e) {
+      console.error('[AbilityManager] Phase Swap+Ball: teleport failed', e);
+      return false;
+    }
+
+    if (this.vfxManager) {
+      try {
+        this.vfxManager.playTeleportEffect(posUnit.x, posUnit.y, FACTIONS.void.color);
+        this.vfxManager.playTeleportEffect(posBall.x, posBall.y, FACTIONS.void.color);
+        this.vfxManager.playSwapTrailEffect(posUnit.x, posUnit.y, posBall.x, posBall.y, FACTIONS.void.color);
+      } catch (err) {
+        console.warn('[AbilityManager] Phase Swap+Ball: VFX error', err);
+      }
+    }
+
+    eventBus.dispatch(GameEvents.SWAP_EXECUTED, {
+      playerId: this.playerId,
+      unit1Id: unitId,
+      unit2Id: 'ball',
+      pos1: posUnit,
+      pos2: posBall,
+    });
+
+    if (this.passiveManager) {
+      const active = this.getLastActiveUnit();
+      if (active && active instanceof Unit) {
+        const e = this.passiveManager.getCardEnhancement(active.getUnitId(), 'void_swap');
+        if (e.special === 'swap_with_ball') {
+          this.passiveManager.notifyCardEnhancement(active.getUnitId(), 'void_swap');
+        }
+      }
+    }
+
+    console.log(`[AbilityManager] Phase Swap+Ball: ${unitId} <-> ball`);
     return true;
   }
 
@@ -1237,6 +1354,16 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     const bounds = this.getFieldBounds();
     const x2 = bounds.centerX + (bounds.centerX - x);
     const y2 = bounds.centerY + (bounds.centerY - y);
+
+    let attractRadiusPx = 0;
+    const activeWh = this.getLastActiveUnit();
+    if (activeWh && activeWh instanceof Unit && this.passiveManager) {
+      const enhancement = this.passiveManager.getCardEnhancement(activeWh.getUnitId(), 'void_wormhole');
+      this.passiveManager.notifyCardEnhancement(activeWh.getUnitId(), 'void_wormhole');
+      if (enhancement.special === 'attract_ball' && enhancement.attractRadiusPx && enhancement.attractRadiusPx > 0) {
+        attractRadiusPx = enhancement.attractRadiusPx;
+      }
+    }
 
     // Базовые проверки
     if (!this.scene?.matter?.world) {
@@ -1385,16 +1512,46 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     } catch {}
 
     // Регистрируем активный эффект для корректного cleanup/expiry
+    const attractUpdate =
+      attractRadiusPx > 0
+        ? () => {
+            const ball = this.getBall();
+            if (!ball?.body) return;
+            const pullToward = (px: number, py: number) => {
+              const d = Phaser.Math.Distance.Between(ball.x, ball.y, px, py);
+              if (d > attractRadiusPx || d < 4) return;
+              const f = 0.00022 * (1 - d / attractRadiusPx);
+              const ang = Math.atan2(py - ball.y, px - ball.x);
+              this.scene.matter.body.applyForce(ball.body, ball.body.position, {
+                x: Math.cos(ang) * f,
+                y: Math.sin(ang) * f,
+              });
+            };
+            pullToward(x, y);
+            pullToward(x2, y2);
+          }
+        : undefined;
+
+    if (attractUpdate) {
+      this.scene.events.on('update', attractUpdate);
+    }
+
     this.activeEffects.push({
       id: wormholeId,
       type: 'wormhole',
-      data: { wormholeEffect, portalA, portalB, collisionHandler, pos1: { x, y }, pos2: { x: x2, y: y2 } },
+      data: { wormholeEffect, portalA, portalB, collisionHandler, pos1: { x, y }, pos2: { x: x2, y: y2 }, attractUpdate },
       expiresAtTurn: this.currentTurn + 4,
       destroy: () => {
         try {
           wormholeEffect?.destroy?.();
         } catch (e) {
           console.warn('[AbilityManager] Wormhole destroy: VFX error', e);
+        }
+
+        if (attractUpdate) {
+          try {
+            this.scene.events.off('update', attractUpdate);
+          } catch {}
         }
 
         try {
@@ -1423,6 +1580,18 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     const success = unit.activateAbility({ fromAbilityCard: true });
     if (!success) return false;
 
+    if (this.passiveManager) {
+      const enhancement = this.passiveManager.getCardEnhancement(unitId, 'insect_toxin');
+      this.passiveManager.notifyCardEnhancement(unitId, 'insect_toxin');
+      if (enhancement.durationBonus > 0) {
+        unit.extendToxicChargeDuration(Math.ceil(enhancement.durationBonus));
+      }
+      if (enhancement.special === 'aoe_toxin' && (enhancement.radiusBonus || 0) > 0) {
+        const r = enhancement.radiusBonus || 60;
+        this.damageUnitsInRadius(unit.x, unit.y, r);
+      }
+    }
+
     eventBus.dispatch(GameEvents.VFX_STATUS_EFFECT, {
       x: unit.x,
       y: unit.y,
@@ -1440,10 +1609,20 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
 
     const ballRadius = 15;
 
-    if (this.vfxManager) {
-      const mimicEffect = this.vfxManager.createMimicBall(x, y, ballRadius);
+    let doubleDecoy = false;
+    const activeMimic = this.getLastActiveUnit();
+    if (activeMimic && activeMimic instanceof Unit && this.passiveManager) {
+      const enhancement = this.passiveManager.getCardEnhancement(activeMimic.getUnitId(), 'insect_mimic');
+      this.passiveManager.notifyCardEnhancement(activeMimic.getUnitId(), 'insect_mimic');
+      doubleDecoy = enhancement.special === 'double_decoy';
+    }
 
-      const mimicBody = this.scene.matter.add.circle(x, y, ballRadius, {
+    const spawnMimicAt = (mx: number, my: number): void => {
+      if (!this.vfxManager) return;
+
+      const mimicEffect = this.vfxManager.createMimicBall(mx, my, ballRadius);
+
+      const mimicBody = this.scene.matter.add.circle(mx, my, ballRadius, {
         isSensor: true,
         isStatic: false,
         label: `mimic_${Date.now()}`,
@@ -1475,10 +1654,10 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       const collisionHandler = (event: any) => {
         event.pairs.forEach((pair: any) => {
           if (pair.bodyA === mimicBody || pair.bodyB === mimicBody) {
-            const activeEffect = this.activeEffects.find(e => e.id === effectId);
+            const activeEffect = this.activeEffects.find((e) => e.id === effectId);
             if (activeEffect) {
               activeEffect.destroy();
-              this.activeEffects = this.activeEffects.filter(e => e.id !== effectId);
+              this.activeEffects = this.activeEffects.filter((e) => e.id !== effectId);
             }
           }
         });
@@ -1490,10 +1669,18 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
         this.scene.matter.world.off('collisionstart', collisionHandler);
         originalDestroy();
       };
+    };
+
+    if (this.vfxManager) {
+      spawnMimicAt(x, y);
+      if (doubleDecoy) {
+        spawnMimicAt(x + 42, y - 28);
+      }
     }
 
     console.log(
-      `[AbilityManager] Biomimicry (fake ball) at (${x.toFixed(0)}, ${y.toFixed(0)})`
+      `[AbilityManager] Biomimicry (fake ball) at (${x.toFixed(0)}, ${y.toFixed(0)})` +
+        (doubleDecoy ? ' +decoy' : '')
     );
     return true;
   }
@@ -1938,6 +2125,13 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   
   private getLastActiveUnit(): GameUnit | undefined {
     return this.lastActiveUnit;
+  }
+
+  /** У активного юнита пассивка «Измерительный трюк» — swap одного союзника с мячом. */
+  private isVoidSwapBallExchangeActive(): boolean {
+    const u = this.getLastActiveUnit();
+    if (!u || !(u instanceof Unit) || !this.passiveManager) return false;
+    return this.passiveManager.getCardEnhancement(u.getUnitId(), 'void_swap').special === 'swap_with_ball';
   }
 
   public getCurrentTurn(): number {

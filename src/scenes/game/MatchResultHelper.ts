@@ -118,9 +118,13 @@ export class GameResultFactory {
     */
     
     // Temporary stubs until new system is implemented
-    const rewards = { coins: isWin ? 100 : 50, xp: isWin ? 50 : 25, leagueStars: 1 };
+    const rewards = {
+      coins: isDraw ? 55 : isWin ? 100 : 45,
+      xp: isDraw ? 28 : isWin ? 50 : 22,
+      leagueStars: 1,
+    };
     const pvpResult = {
-      ratingChange: isWin ? 20 : -10,
+      ratingChange: isDraw ? 0 : isWin ? 20 : -10,
       isWin,
       isDraw,
       goalsScored: myScore,

@@ -74,6 +74,12 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     const radius = Math.min(118 * s, (panelW - 56) / 2 - 8);
     this.wheelRoot = scene.add.container(cx, cy - 8 * s);
 
+    const rimKey = 'ui_lucky_wheel_rim';
+    if (scene.textures.exists(rimKey)) {
+      const rim = scene.add.image(0, 0, rimKey).setDisplaySize((radius + 20 * s) * 2, (radius + 20 * s) * 2);
+      this.wheelRoot.add(rim);
+    }
+
     const colors = [
       0x1e293b, 0x312e81, 0x134e4a, 0x713f12, 0x4c1d95, 0x831843, 0x164e63, 0x422006,
     ];
@@ -86,21 +92,21 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       const a0 = -Math.PI / 2 + i * slice;
       const a1 = a0 + slice;
       g.fillStyle(colors[i % colors.length], 1);
-      g.slice(0, 0, radius, a0, a1, true);
+      g.slice(0, 0, radius * 0.92, a0, a1, true);
       g.fillPath();
       g.lineStyle(2, 0xfbbf24, 0.35);
-      g.slice(0, 0, radius, a0, a1, true);
+      g.slice(0, 0, radius * 0.92, a0, a1, true);
       g.strokePath();
     }
 
-    g.lineStyle(3, 0xfef08a, 0.95);
-    g.strokeCircle(0, 0, radius);
+    g.lineStyle(2.5, 0xfef08a, 0.92);
+    g.strokeCircle(0, 0, radius * 0.92);
     this.wheelRoot.add(g);
 
     for (let i = 0; i < n; i++) {
       const mid = -Math.PI / 2 + (i + 0.5) * slice;
-      const tx = Math.cos(mid) * (radius * 0.62);
-      const ty = Math.sin(mid) * (radius * 0.62);
+      const tx = Math.cos(mid) * (radius * 0.58);
+      const ty = Math.sin(mid) * (radius * 0.58);
       const short =
         LUCKY_WHEEL_REWARDS[i].label.length > 14
           ? LUCKY_WHEEL_REWARDS[i].label.slice(0, 12) + '…'
@@ -118,15 +124,28 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       this.wheelRoot.add(label);
     }
 
-    const hub = scene.add.circle(0, 0, 14 * s, 0xfbbf24, 1);
-    hub.setStrokeStyle(2, 0xfffbeb, 0.9);
-    this.wheelRoot.add(hub);
+    const centerKey = 'ui_lucky_wheel_center';
+    if (scene.textures.exists(centerKey)) {
+      this.wheelRoot.add(
+        scene.add.image(0, 0, centerKey).setDisplaySize(34 * s, 34 * s)
+      );
+    } else {
+      const hub = scene.add.circle(0, 0, 14 * s, 0xfbbf24, 1);
+      hub.setStrokeStyle(2, 0xfffbeb, 0.9);
+      this.wheelRoot.add(hub);
+    }
 
     this.add(this.wheelRoot);
 
-    const pointer = scene.add.triangle(cx, cy - 8 * s - radius - 14 * s, 0, 18 * s, -12 * s, 0, 12 * s, 0, 0xfbbf24, 1);
-    pointer.setStrokeStyle(2, 0xfffbeb, 0.95);
-    this.add(pointer);
+    const ptrKey = 'ui_lucky_wheel_pointer';
+    const ptrY = cy - 8 * s - radius - 16 * s;
+    if (scene.textures.exists(ptrKey)) {
+      this.add(scene.add.image(cx, ptrY, ptrKey).setDisplaySize(34 * s, 42 * s));
+    } else {
+      const pointer = scene.add.triangle(cx, ptrY, 0, 18 * s, -12 * s, 0, 12 * s, 0, 0xfbbf24, 1);
+      pointer.setStrokeStyle(2, 0xfffbeb, 0.95);
+      this.add(pointer);
+    }
 
     const closeBtn = scene.add.container(cx + panelW / 2 - 28 * s, cy - panelH / 2 + 26 * s);
     const closeBg = scene.add.circle(0, 0, 16 * s, 0x1f2937, 0.95);

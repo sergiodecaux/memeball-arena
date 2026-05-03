@@ -18,6 +18,15 @@ import {
 import { eventBus, GameEvents } from '../core/EventBus';
 import type { FieldBounds } from '../types';
 
+/** Модификаторы карты от пассивок `card_enhance` */
+export interface CardEnhancement {
+  radiusBonus: number;
+  durationBonus: number;
+  special: string | null;
+  /** Пиксели радиуса притяжения мяча (Wormhole / Затмение), не проценты */
+  attractRadiusPx?: number;
+}
+
 export class PassiveManager extends Phaser.Events.EventEmitter {
   private scene: Phaser.Scene;
   private readonly getFieldBounds: () => FieldBounds;
@@ -35,7 +44,9 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private readonly boundOnGoalScored = this.onGoalScored.bind(this);
   private readonly boundOnTurnStarted = this.onTurnStarted.bind(this);
   private readonly boundOnTurnEnded = this.onTurnEnded.bind(this);
-  
+  /** Баффы позиционных пассивок (своя половина / защита ворот), пересчитываются каждый ход */
+  private static readonly POSITIONAL_BUFF_PREFIX = '__pos__';
+
   constructor(scene: Phaser.Scene, getFieldBounds: () => FieldBounds) {
     super();
     this.scene = scene;
@@ -58,19 +69,28 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   public registerUnit(unit: Unit): void {
     const unitId = unit.getUnitId();
     this.units.set(unitId, unit);
-    
-    this.state.units[unitId] = {
-      unitId,
-      shotCount: 0,
-      hasUsedOncePerMatch: false,
-      currentStacks: {},
-      activeBuffs: [],
-      activeDebuffs: [],
-    };
-    
-    console.log(`[PassiveManager] Registered unit: ${unitId}`);
+
+    if (!this.state.units[unitId]) {
+      this.state.units[unitId] = {
+        unitId,
+        shotCount: 0,
+        hasUsedOncePerMatch: false,
+        currentStacks: {},
+        activeBuffs: [],
+        activeDebuffs: [],
+      };
+    }
+
+    if (import.meta.env.DEV) {
+      console.log(`[PassiveManager] Registered unit: ${unitId}`);
+    }
   }
-  
+
+  public unregisterUnit(unitId: string): void {
+    this.units.delete(unitId);
+    delete this.state.units[unitId];
+  }
+
   public registerBall(ball: Ball): void {
     this.ball = ball;
   }
@@ -139,7 +159,34 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     // Уменьшаем длительность эффектов
     this.tickEffectDurations();
   }
-  
+
+  private stripPositionalBuffs(unitId: string): void {
+    const st = this.state.units[unitId];
+    if (!st) return;
+    st.activeBuffs = st.activeBuffs.filter(
+      (b) => !b.sourceUnitId.startsWith(PassiveManager.POSITIONAL_BUFF_PREFIX)
+    );
+  }
+
+  private updatePositionalPassives(): void {
+    this.units.forEach((unit, unitId) => {
+      const passive = this.getUnitPassive(unitId);
+      if (!passive || passive.type !== 'conditional') return;
+
+      this.stripPositionalBuffs(unitId);
+
+      const cond = passive.params.condition;
+      if (cond === 'own_half' && this.isOnOwnHalf(unit)) {
+        const src = `${PassiveManager.POSITIONAL_BUFF_PREFIX}own_${unitId}`;
+        this.applyBuff(unit, 'defense', passive.params.value ?? 0.15, 1, src);
+      }
+      if (cond === 'defending' && this.isDefending(unit) && passive.name === 'Био-крепость') {
+        const src = `${PassiveManager.POSITIONAL_BUFF_PREFIX}def_${unitId}`;
+        this.applyBuff(unit, 'mass', passive.params.value ?? 0.3, 1, src);
+      }
+    });
+  }
+
   // ========== ОБРАБОТКА УДАРА ПО МЯЧУ ==========
   
   public onBallHit(unit: Unit, force: Phaser.Math.Vector2): Phaser.Math.Vector2 {
@@ -464,14 +511,14 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   
   // ========== УСИЛЕНИЕ КАРТ ==========
   
-  public getCardEnhancement(unitId: string, cardType: string): { radiusBonus: number; durationBonus: number; special: string | null } {
+  public getCardEnhancement(unitId: string, cardType: string): CardEnhancement {
     const passive = this.getUnitPassive(unitId);
     if (!passive || passive.type !== 'card_enhance') {
       return { radiusBonus: 0, durationBonus: 0, special: null };
     }
-    
+
     const params = passive.params;
-    let result = { radiusBonus: 0, durationBonus: 0, special: null as string | null };
+    let result: CardEnhancement = { radiusBonus: 0, durationBonus: 0, special: null };
     
     // Magma Champion: Lava Pool +25% radius
     if (passive.name === 'Властелин лавы' && cardType === 'magma_lava') {
@@ -488,10 +535,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       result.radiusBonus = params.value || 0.30;
     }
     
-    // Darkstar: Wormhole attracts ball
+    // Darkstar: Wormhole attracts ball (радиус в пикселях, не %)
     if (passive.name === 'Затмение' && cardType === 'void_wormhole') {
       result.special = 'attract_ball';
-      result.radiusBonus = params.radius || 30;
+      result.attractRadiusPx = params.radius ?? 30;
     }
     
     // Portal Master: Swap with ball
@@ -528,12 +575,20 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     const passive = this.getUnitPassive(unitId);
     if (passive.type !== 'card_enhance') return;
     const e = this.getCardEnhancement(unitId, cardTypeKey);
-    if (!e.special && e.radiusBonus <= 0 && e.durationBonus <= 0) return;
+    if (
+      !e.special &&
+      e.radiusBonus <= 0 &&
+      e.durationBonus <= 0 &&
+      !(e.attractRadiusPx && e.attractRadiusPx > 0)
+    ) {
+      return;
+    }
     const unit = this.units.get(unitId);
     if (!unit) return;
     const parts: string[] = [passive.name];
     if (e.radiusBonus > 0) parts.push(`+${Math.round(e.radiusBonus * 100)}% зона`);
     if (e.durationBonus > 0) parts.push(`+${e.durationBonus} ход`);
+    if (e.attractRadiusPx && e.attractRadiusPx > 0) parts.push(`↓мяч ${Math.round(e.attractRadiusPx)}px`);
     if (e.special) parts.push('★');
     this.showPassiveActivation(unit, parts.join(' '), 0x7dd3fc);
   }
@@ -543,12 +598,12 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   public hasImmunity(unit: Unit, effectType: string): boolean {
     const passive = this.getUnitPassive(unit.getUnitId());
     if (!passive || passive.type !== 'counter') return false;
-    
-    // Iron Sentinel: Immunity to slow and stun from Insect
+
+    // Антитоксин: иммунитет к замедлению / стану; дебафф скорости от аур считаем замедлением
     if (passive.name === 'Антитоксин') {
-      return effectType === 'slow' || effectType === 'stun';
+      return effectType === 'slow' || effectType === 'stun' || effectType === 'speed';
     }
-    
+
     return false;
   }
   
@@ -625,20 +680,6 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     if (triggerCondition === 'ally_hit' && params.value) {
       this.applyBuff(unit, 'power', params.value, params.duration || 1, unitId);
       this.showPassiveActivation(unit, passive.name, 0xffaa77);
-    }
-    
-    // Defending: +mass or +defense
-    if (triggerCondition === 'defending' && this.isDefending(unit)) {
-      if (passive.name === 'Био-крепость') {
-        this.applyBuff(unit, 'mass', params.value || 0.30, 1, unitId);
-        this.showPassiveActivation(unit, passive.name, 0x88ff99);
-      }
-    }
-    
-    // Own half: +defense
-    if (triggerCondition === 'own_half' && this.isOnOwnHalf(unit)) {
-      this.applyBuff(unit, 'defense', params.value || 0.15, 1, unitId);
-      this.showPassiveActivation(unit, passive.name, 0x99bbff);
     }
     
     // After swap: +defense
@@ -758,7 +799,12 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private applyDebuff(unit: Unit, stat: string, value: number, duration: number, sourceId: string): void {
     const unitState = this.state.units[unit.getUnitId()];
     if (!unitState) return;
-    
+
+    if (this.hasImmunity(unit, stat)) {
+      this.showPassiveActivation(unit, 'Иммунитет!', 0x00ff00);
+      return;
+    }
+
     const effect: ActivePassiveEffect = {
       id: `${sourceId}_${stat}_${Date.now()}`,
       sourceUnitId: sourceId,
@@ -798,6 +844,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
   
   private applyAuraDebuff(unit: Unit, stat: string, value: number, sourceId: string): void {
+    if (this.hasImmunity(unit, stat)) {
+      this.showPassiveActivation(unit, 'Иммунитет!', 0x00ff00);
+      return;
+    }
     this.state.activeAuras.push({
       id: `aura_debuff_${sourceId}_${stat}`,
       sourceUnitId: sourceId,
@@ -1114,9 +1164,11 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     // Dynamic mass bonus (Bio-fortress when defending)
     const unitState = this.state.units[unitId];
     if (unitState) {
+      let sum = 0;
       for (const buff of unitState.activeBuffs) {
-        if (buff.effectType === 'mass') return buff.value;
+        if (buff.effectType === 'mass') sum += buff.value;
       }
+      if (sum !== 0) return sum;
     }
     
     return 0;

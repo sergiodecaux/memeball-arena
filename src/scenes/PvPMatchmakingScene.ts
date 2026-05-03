@@ -8,6 +8,9 @@ import { DEFAULT_PVP_CONFIG } from '../types/pvp';
 import { hapticImpact, hapticSelection } from '../utils/Haptics';
 import { tgApp } from '../utils/TelegramWebApp';
 import { safeSceneStart } from '../utils/SceneHelpers';
+import { playerData } from '../data/PlayerData';
+import { FACTION_IDS, type FactionId } from '../constants/gameConstants';
+import { getMatchDurationForTeamSize } from '../match/accountLevelMatchRules';
 
 type MatchmakingMode = 'casual' | 'ranked';
 
@@ -293,7 +296,18 @@ export class PvPMatchmakingScene extends Phaser.Scene {
       });
       
       // Начинаем поиск матча
-      this.pvpManager.findGame(this.mode);
+      const pdata = playerData.get();
+      const faction = (playerData.getFaction() || 'magma') as FactionId;
+      const teamSize = Math.min(5, Math.max(3, playerData.getAllowedTeamSize(faction)));
+      const mmrBucket = pdata.pvpStats?.[this.mode]?.rating ?? 1000;
+
+      this.pvpManager.findGame(this.mode, {
+        playerName: playerData.getNickname() || pdata.nickname || 'Player',
+        mmr: mmrBucket,
+        factionId: faction,
+        teamSize,
+        teamUnitIds: playerData.getTeamUnits(faction).filter(Boolean) as string[],
+      });
       
     } catch (error) {
       console.error('[PvPMatchmakingScene] Connection failed:', error);
@@ -367,22 +381,49 @@ export class PvPMatchmakingScene extends Phaser.Scene {
     this.time.delayedCall(2000, () => this.handleBack());
   }
   
+  /** Как в MatchmakingScene: фракция с сервера или случайная чужая. */
+  private opponentFactionPreferServer(
+    factionId?: string,
+    playerFaction?: FactionId
+  ): FactionId {
+    if (factionId && FACTION_IDS.includes(factionId as FactionId)) {
+      return factionId as FactionId;
+    }
+    const pf = playerFaction || playerData.getFaction() || 'magma';
+    const rest = FACTION_IDS.filter((f) => f !== pf);
+    return rest[Math.floor(Math.random() * rest.length)];
+  }
+
   private startMatch(matchData: any): void {
     console.log('[PvPMatchmakingScene] Starting match:', matchData);
-    
-    // Cleanup
+
     this.cleanup();
-    
-    // Start GameScene with PVP mode
-    this.scene.stop('PvPMatchmakingScene');
-    safeSceneStart(this, 'GameScene', {
-      mode: 'pvp',
-      roomId: matchData.roomId,
-      yourTeam: matchData.yourTeam,
-      opponentId: matchData.opponentId,
-      matchContext: this.mode,
-      useFactions: true,
+
+    const playerFaction = (playerData.getFaction() || 'magma') as FactionId;
+    const oppFaction = this.opponentFactionPreferServer(matchData.opponentFactionId, playerFaction);
+    const teamSize = Math.min(5, Math.max(3, playerData.getAllowedTeamSize(playerFaction))) as 3 | 4 | 5;
+    const matchDuration = getMatchDurationForTeamSize(teamSize);
+    const isBot = matchData.isBotOpponent === true;
+    const opponentName = String(matchData.opponentName || 'Opponent').trim() || 'Opponent';
+
+    void safeSceneStart(this, 'MatchPreparationScene', {
+      matchContext: this.mode === 'ranked' ? 'ranked' : 'casual',
+      isAI: isBot,
+      aiDifficulty:
+        this.mode === 'ranked' ? Phaser.Math.Between(2, 3) : Phaser.Math.Between(1, 2),
+      opponentName,
+      opponentFaction: oppFaction,
+      teamSize,
+      matchDuration,
+      ...(isBot
+        ? {}
+        : {
+            pvpRoomId: matchData.roomId,
+            pvpOpponentId: matchData.opponentId,
+            pvpYourTeam: matchData.yourTeam ?? 1,
+          }),
     });
+    this.scene.stop('PvPMatchmakingScene');
   }
   
   private async handleBack(): Promise<void> {

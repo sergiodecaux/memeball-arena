@@ -186,6 +186,8 @@ export interface GameSceneState {
   
   fieldScale: number;
   fieldSkinId: string;
+  /** Противник-бот получает капитана фракции (по уровню аккаунта игрока и режиму). */
+  aiIncludeCaptain?: boolean;
 }
 
 export function createInitialState(): GameSceneState {
@@ -220,5 +222,6 @@ export function createInitialState(): GameSceneState {
     lastServerSnapshot: undefined,
     fieldScale: 1,
     fieldSkinId: 'field_default',
+    aiIncludeCaptain: false,
   };
 }

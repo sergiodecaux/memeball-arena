@@ -3,6 +3,7 @@
 
 import Phaser from 'phaser';
 import { GAME, GOAL, FactionId } from '../constants/gameConstants';
+import { isCaptainUnitId } from '../constants/captains';
 import { FieldBounds, PlayerNumber, AIDifficulty } from '../types';
 import { Unit } from '../entities/Unit';
 import { Ball } from '../entities/Ball';
@@ -35,6 +36,7 @@ import { CelebrationManager } from './game/CelebrationManager';
 import { CollisionHandler } from './game/CollisionHandler';
 import { HapticManager } from './game/HapticManager';
 import { PassiveManager } from '../systems/PassiveManager';
+import { CaptainMatchSystem } from '../systems/CaptainMatchSystem';
 import { LevelConfig, ChapterConfig } from '../types/CampaignTypes';
 import { CampaignDialogueSystem } from '../managers/CampaignDialogueSystem';
 import { CARD_TEXT_RU, UI_RU, getTargetHintRU } from '../localization/cardTexts';
@@ -99,6 +101,10 @@ export class GameScene extends Phaser.Scene {
 
   // === РљРѕРЅС‚СЂРѕР»Р»РµСЂС‹ ===
   private shootingController!: ShootingController;
+  private captainMatchSystem?: CaptainMatchSystem;
+  private captainSuperPanel?: Phaser.GameObjects.Container;
+  private captainSuperEnergyGfx?: Phaser.GameObjects.Graphics;
+  private captainSuperLastReady = false;
   private aiController?: AIController;
 
   // === РњРµРЅРµРґР¶РµСЂС‹ ===
@@ -457,6 +463,7 @@ export class GameScene extends Phaser.Scene {
     HapticManager.init();
     this.createMatchDirector();
     this.createControllers();
+    this.createCaptainMatchSystem();
     this.createManagers();
     this.createUI();
     this.subscribeToEvents();
@@ -556,15 +563,21 @@ export class GameScene extends Phaser.Scene {
       if (this.abilityManager?.isActivating()) {
         console.log('[GameScene] ESC pressed - cancelling ability');
         this.abilityManager.cancelActivation();
+      } else if (this.captainMatchSystem?.isUltTargeting()) {
+        this.captainMatchSystem.cancelUlt();
       }
     });
 
     // вњ… РџСЂРёРѕСЂРёС‚РµС‚ 2: РћР±СЂР°Р±РѕС‚РєР° РєР»РёРєР° РїРѕ РѕР±СЉРµРєС‚Р°Рј (Р®РЅРёС‚С‹) РґР»СЏ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
     this.input.on('gameobjectdown', (pointer: Phaser.Input.Pointer, gameObject: any) => {
       // РџСЂРѕРІРµСЂСЏРµРј РїСЂРёРѕСЂРёС‚РµС‚ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
-      if (this.shouldAbilityHandleInput()) {
+      if (this.shouldGameplayOverlayConsumeInput()) {
         const tappedUnit = this.findTappedUnit(gameObject);
-        
+        if (tappedUnit && tappedUnit instanceof Unit && this.captainMatchSystem?.handleUnitTap(tappedUnit)) {
+          pointer.event.stopPropagation();
+          return;
+        }
+
         if (tappedUnit) {
           console.log('[GameScene] Global input: Unit tapped for ability', tappedUnit.id);
           const processed = this.abilityManager.onUnitTapped(tappedUnit);
@@ -593,26 +606,37 @@ export class GameScene extends Phaser.Scene {
         }
       }
       
-      // РџСЂРѕРІРµСЂСЏРµРј РїСЂРёРѕСЂРёС‚РµС‚ СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
-      if (this.shouldAbilityHandleInput()) {
+      const abilityActive = this.abilityManager?.isActivating() ?? false;
+
+      if (abilityActive) {
         const state = this.abilityManager.getState();
-        
+
         if (state === 'SELECTING_POINT') {
           console.log('[GameScene] Global input: Field tapped for ability at', pointer.worldX, pointer.worldY);
           const processed = this.abilityManager.onFieldTapped(pointer.worldX, pointer.worldY);
-          
+
           if (processed) {
             pointer.event.stopPropagation();
           }
         }
+      } else if (this.captainMatchSystem?.handleWorldPointer(pointer.worldX, pointer.worldY)) {
+        pointer.event.stopPropagation();
       }
     });
 
     // вњ… РџСЂРёРѕСЂРёС‚РµС‚ 4: РџСЂР°РІС‹Р№ РєР»РёРє / РґРІРѕР№РЅРѕР№ С‚Р°Рї РґР»СЏ РѕС‚РјРµРЅС‹
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.rightButtonDown() && this.abilityManager?.isActivating()) {
-        console.log('[GameScene] Right click - cancelling ability');
-        this.abilityManager.cancelActivation();
+      if (
+        pointer.rightButtonDown() &&
+        (this.abilityManager?.isActivating() || this.captainMatchSystem?.isUltTargeting())
+      ) {
+        console.log('[GameScene] Right click - cancelling ability / captain ult');
+        if (this.abilityManager?.isActivating()) {
+          this.abilityManager.cancelActivation();
+        }
+        if (this.captainMatchSystem?.isUltTargeting()) {
+          this.captainMatchSystem.cancelUlt();
+        }
       }
     });
 
@@ -623,9 +647,11 @@ export class GameScene extends Phaser.Scene {
    * вњ… Р”РћР‘РђР’Р›Р•РќРћ: РџСЂРѕРІРµСЂРєР°, РґРѕР»Р¶РЅР° Р»Рё СЃРёСЃС‚РµРјР° СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№ РѕР±СЂР°Р±Р°С‚С‹РІР°С‚СЊ РІРІРѕРґ
    * РЎРѕРіР»Р°СЃРЅРѕ РўР—: РµСЃР»Рё AbilityManager.isActivating() === true, РІРІРѕРґ РёРґС‘С‚ С‚СѓРґР°
    */
-  private shouldAbilityHandleInput(): boolean {
+  private shouldGameplayOverlayConsumeInput(): boolean {
     if (!this.abilityManager) return false;
-    return this.abilityManager.isActivating();
+    if (this.abilityManager.isActivating()) return true;
+    if (this.captainMatchSystem?.isUltTargeting()) return true;
+    return false;
   }
 
   /**
@@ -833,6 +859,128 @@ export class GameScene extends Phaser.Scene {
     this.shootingController.onSwap(this.onSwap.bind(this));
   }
 
+  private createCaptainMatchSystem(): void {
+    if (!this.ball || !this.matchDirector) return;
+
+    this.captainMatchSystem = new CaptainMatchSystem({
+      scene: this,
+      getCaps: () => this.caps as Unit[],
+      getBall: () => this.ball,
+      getFieldBounds: () => this.fieldBounds,
+      shootingController: this.shootingController,
+      getHumanOwner: () => this.getMyOwner(),
+      isPvP: this.isRealtimePvP,
+    });
+
+    this.matchDirector.setResolveTurnAdvance((lastId) =>
+      this.captainMatchSystem?.resolveTurnAdvanceAfterStop(lastId) ?? 'switch'
+    );
+
+    if (this.isRealtimePvP) return;
+
+    const { width, height } = this.cameras.main;
+    const margin = Math.max(14, Math.round(width * 0.032));
+    const panelW = 132;
+    const panelH = 112;
+    const cx = width - margin - panelW / 2;
+    const cy = height - this.CARD_PANEL_Y_OFFSET + 10 - panelH / 2;
+    const panel = this.add.container(cx, cy).setDepth(151).setScrollFactor(0);
+
+    const hw = panelW / 2;
+    const hh = panelH / 2;
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0f172a, 0.94);
+    bg.fillRoundedRect(-hw, -hh, panelW, panelH, 16);
+    bg.lineStyle(2, 0x475569, 0.9);
+    bg.strokeRoundedRect(-hw, -hh, panelW, panelH, 16);
+    panel.add(bg);
+
+    const energyBg = this.add.graphics();
+    energyBg.fillStyle(0x1e293b, 1);
+    energyBg.fillRoundedRect(-hw + 8, -hh + 14, panelW - 16, 12, 6);
+    panel.add(energyBg);
+
+    const energyFill = this.add.graphics();
+    panel.add(energyFill);
+    this.captainSuperEnergyGfx = energyFill;
+
+    const btnZone = this.add
+      .rectangle(0, hh - 28, panelW - 16, 46, 0x334155, 1)
+      .setStrokeStyle(2, 0x64748b, 0.9)
+      .setInteractive({ useHandCursor: true });
+    btnZone.on('pointerdown', () => {
+      if (this.captainMatchSystem?.tryBeginUltFromUi()) {
+        AudioManager.getInstance().playUIClick();
+      }
+    });
+    panel.add(btnZone);
+    panel.add(
+      this.add
+        .text(0, hh - 28, 'SUPER', {
+          fontSize: '15px',
+          color: '#f8fafc',
+          fontStyle: 'bold',
+        })
+        .setOrigin(0.5)
+    );
+
+    panel.add(
+      this.add
+        .text(0, -hh + 8, 'CAPTAIN', {
+          fontSize: '11px',
+          color: '#94a3b8',
+        })
+        .setOrigin(0.5)
+    );
+
+    this.captainSuperPanel = panel;
+  }
+
+  private refreshCaptainSuperHud(): void {
+    if (!this.captainMatchSystem || !this.captainSuperEnergyGfx) return;
+    const frac = this.captainMatchSystem.getHumanEnergyFraction();
+    const ready = this.captainMatchSystem.canHumanActivateUlt();
+    const panelW = 132;
+    const barW = panelW - 16;
+    const barLeft = -(panelW / 2) + 8;
+    const barTop = -(112 / 2) + 14;
+
+    this.captainSuperEnergyGfx.clear();
+    this.captainSuperEnergyGfx.fillStyle(ready ? 0xf59e0b : 0x3b82f6, 1);
+    if (frac > 0) {
+      this.captainSuperEnergyGfx.fillRoundedRect(barLeft, barTop, barW * frac, 12, 6);
+    }
+    if (ready !== this.captainSuperLastReady) {
+      this.captainSuperLastReady = ready;
+      if (ready && this.captainSuperPanel) {
+        this.tweens.killTweensOf(this.captainSuperPanel);
+        this.captainSuperPanel.setScale(1);
+        this.tweens.add({
+          targets: this.captainSuperPanel,
+          scaleX: { from: 1, to: 1.05 },
+          scaleY: { from: 1, to: 1.05 },
+          duration: 200,
+          yoyo: true,
+          repeat: 1,
+          ease: 'Sine.easeInOut',
+        });
+      }
+    }
+    if (this.captainSuperPanel) {
+      const hasCaptain = this.caps.some(
+        (c) =>
+          c.owner === this.getMyOwner() &&
+          c instanceof Unit &&
+          isCaptainUnitId(c.getUnitId())
+      );
+      if (!hasCaptain) {
+        this.captainSuperLastReady = false;
+      }
+      this.captainSuperPanel.setVisible(hasCaptain);
+    }
+  }
+
   /** После AbilityManager P2 — колбэк карт и корректный init ИИ */
   private setupAIController(): void {
     if (!this.isAIEnabled || this.isRealtimePvP) return;
@@ -843,6 +991,10 @@ export class GameScene extends Phaser.Scene {
     const playerUnits = this.caps.filter(c => c.owner === 1);
 
     this.aiController.init(aiUnits as any[], this.ball, playerUnits as any[]);
+
+    this.aiController.setCaptainShotGate((u) =>
+      this.captainMatchSystem?.aiTeamShotUnitAllowed(u as Unit) ?? true
+    );
 
     this.aiController.setCardUsedCallback((cardId, targetData) => {
       console.log(`[GameScene] AI using card: ${cardId}`, targetData);
@@ -2283,7 +2435,9 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    this.announcer.announceResult(result.isWin);
+    this.announcer.announceMatchOutcome(
+      result.isDraw ? 'draw' : result.isWin ? 'win' : 'loss'
+    );
     
     // вњ… League & Tournament: РћР±СЂР°Р±РѕС‚РєР° СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ
     this.handleMatchResult(result);
@@ -2487,6 +2641,8 @@ export class GameScene extends Phaser.Scene {
 
   private onTurnChange(data: { player: PlayerNumber; turnNumber: number }): void {
     const { player } = data;
+
+    this.captainMatchSystem?.onTurnOwnerChanged(player);
     
     // Cleanup previous state
     if (this.abilityManager.isActivating()) this.abilityManager.cancelActivation();
@@ -2655,6 +2811,7 @@ export class GameScene extends Phaser.Scene {
           this.aiController &&
           !this.aiController.isThinking) {
         this.maybeSyncAIFormationBeforeAITurn();
+        this.captainMatchSystem?.tryActivateAiCaptainUltIfReady();
         this.aiController.startTurn();
       }
       // Don't set aiTurnScheduled to false here - it's reset at the start of next turn
@@ -2689,6 +2846,9 @@ export class GameScene extends Phaser.Scene {
       
       this.abilityManager?.update(delta);
       this.player2AbilityManager?.update(delta);
+
+      this.captainMatchSystem?.update(time, delta);
+      this.refreshCaptainSuperHud();
       
       // CHEAT: BOSS NO COOLDOWN
       if (this.campaignLevelConfig?.isBoss && this.player2AbilityManager) {
@@ -3738,6 +3898,8 @@ export class GameScene extends Phaser.Scene {
     this.abilityButton?.destroy();
     this.vfxManager?.destroy();
     this.passiveManager?.destroy();
+    this.captainMatchSystem?.destroy();
+    this.captainSuperPanel?.destroy();
     this.achievementManager?.destroy();
     this.campaignDialogue?.destroy();
     this.campaignDialogue = undefined;

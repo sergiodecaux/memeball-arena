@@ -189,6 +189,24 @@ export class AnnouncerManager {
   }
 
   /**
+   * Итог матча: победа / поражение / ничья (ничья не озвучивается как поражение).
+   */
+  public announceMatchOutcome(
+    outcome: 'win' | 'loss' | 'draw',
+    onComplete?: () => void
+  ): void {
+    if (outcome === 'draw') {
+      if (this.scene?.cache.audio.exists('voice_draw')) {
+        this.announce('voice_draw', { priority: 'high', onComplete });
+      } else if (onComplete) {
+        this.scene.time.delayedCall(120, onComplete);
+      }
+      return;
+    }
+    this.announceResult(outcome === 'win', onComplete);
+  }
+
+  /**
    * Немедленно воспроизводит звук без очереди (для SFX)
    */
   public playSFX(key: string, volume = 1.0): void {

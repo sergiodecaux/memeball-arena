@@ -13,7 +13,7 @@ import { getUnit } from './UnitsCatalog';
 // ==================== ВЕРСИЯ АССЕТОВ ====================
 // ⚠️ УВЕЛИЧИВАЙ ЭТО ЧИСЛО КАЖДЫЙ РАЗ КОГДА ОБНОВЛЯЕШЬ PNG ФИШЕК!
 // Это заставит Telegram перезагрузить изображения
-const ASSETS_VERSION = '4'; // Обновлено: 2026-01-20 (исправлены пути для Vite production build)
+const ASSETS_VERSION = '5'; // Капитаны + PNG в assets/units/captains
 
 // #region agent log
 try {
@@ -73,9 +73,9 @@ export interface UnitData {
   passive: PassiveAbility;     // Пассивная способность
   /** Перекрывает таблицу `unitPhysicsModifiers.ts`, если задано */
   physicsModifier?: PhysicsModifierId;
+  /** Уникальный капитан фракции (награда за 10 уровень аккаунта) */
+  isCaptain?: boolean;
 }
-
-// ==================== ЦВЕТА РЕДКОСТИ ====================
 
 export const RARITY_COLORS: Record<UnitRarity, number> = {
   common: 0x9ca3af,      // Серый
@@ -2441,6 +2441,114 @@ export const UNITS_REPOSITORY: UnitData[] = [
       name: 'Точность пустоты',
       description: '+35% точность и сила. Премиум юнит.',
       params: { value: 0.35, target: 'self' }
+    },
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // ⚓ КАПИТАНЫ (награда: 10 уровень аккаунта — выбор 1 из 4)
+  // ═══════════════════════════════════════════════════════════════
+  {
+    id: 'captain_urok',
+    factionId: 'magma',
+    name: 'Urok',
+    title: 'World-Breaker',
+    role: 'tank',
+    rarity: 'legendary',
+    stats: { power: 92, defense: 96, speed: 72, technique: 78 },
+    specialAbility: 'Tectonic Rift',
+    description:
+      'Танк-инициатор магмы. [ПАССИВКА] Осада гор: союзники в радиусе 150 px получают ×1.3 массу. [УЛЬТА] Тектонический разлом: конус 45°, отбрасывание и блок выбора на ход соперника.',
+    assetKey: 'captain_urok',
+    assetPath: `assets/units/captains/captain_urok.png?v=${ASSETS_VERSION}`,
+    primaryColor: 0xea580c,
+    secondaryColor: 0xb91c1c,
+    fragmentsRequired: 99,
+    isCaptain: true,
+    nameRu: 'Урок «Разрушитель миров»',
+    accuracy: 0.91,
+    passive: {
+      type: 'none',
+      name: 'Осада гор',
+      description: 'Аура: масса союзников ×1.3 в радиусе 150 px от Урока.',
+      params: {},
+    },
+  },
+  {
+    id: 'captain_chronos',
+    factionId: 'cyborg',
+    name: 'Chronos',
+    title: 'Arbiter of Time',
+    role: 'balanced',
+    rarity: 'legendary',
+    stats: { power: 82, defense: 84, speed: 80, technique: 94 },
+    specialAbility: 'Stasis Sphere',
+    description:
+      'Тактик киборгов. [ПАССИВКА] Общая сеть: прицел союзников +40%, виден второй отскок. [УЛЬТА] Сфера стазиса: юнит замирает (static) на два цикла остановки.',
+    assetKey: 'captain_chronos',
+    assetPath: `assets/units/captains/captain_chronos.png?v=${ASSETS_VERSION}`,
+    primaryColor: 0x38bdf8,
+    secondaryColor: 0x2563eb,
+    fragmentsRequired: 99,
+    isCaptain: true,
+    nameRu: 'Хронос «Судья времени»',
+    accuracy: 0.94,
+    passive: {
+      type: 'none',
+      name: 'Общая сеть',
+      description: 'Линия прицела союзников длиннее на 40%; подсказка второго отскока.',
+      params: {},
+    },
+  },
+  {
+    id: 'captain_ethelgard',
+    factionId: 'void',
+    name: 'Ethelgard',
+    title: 'Star-Eater',
+    role: 'tank',
+    rarity: 'legendary',
+    stats: { power: 86, defense: 90, speed: 76, technique: 88 },
+    specialAbility: 'Collapse',
+    description:
+      'Защитник пустоты. [ПАССИВКА] Тёмная гравитация: мяч в 100 px тянется к ближайшему союзнику Void. [УЛЬТА] Коллапс: сингулярность 2 с.',
+    assetKey: 'captain_ethelgard',
+    assetPath: `assets/units/captains/captain_ethelgard.png?v=${ASSETS_VERSION}`,
+    primaryColor: 0xa855f7,
+    secondaryColor: 0x6b21a8,
+    fragmentsRequired: 99,
+    isCaptain: true,
+    nameRu: 'Этельгард «Пожиратель звёзд»',
+    accuracy: 0.96,
+    passive: {
+      type: 'none',
+      name: 'Тёмная гравитация',
+      description: 'Мяч у союзников Void в радиусе 100 px слегка притягивается к ним.',
+      params: {},
+    },
+  },
+  {
+    id: 'captain_xerxa',
+    factionId: 'insect',
+    name: 'Xerxa',
+    title: 'Scavenger Queen',
+    role: 'balanced',
+    rarity: 'legendary',
+    stats: { power: 88, defense: 82, speed: 88, technique: 86 },
+    specialAbility: 'Swarm Call',
+    description:
+      'Лидер роя. [ПАССИВКА] Разум роя: два насекомых ближе 80 px — +15% сила. [УЛЬТА] Зов роя: после удара Ксерксой — ещё один ход насекомым при 50% силы.',
+    assetKey: 'captain_xerxa',
+    assetPath: `assets/units/captains/captain_xerxa.png?v=${ASSETS_VERSION}`,
+    primaryColor: 0x4ade80,
+    secondaryColor: 0x166534,
+    fragmentsRequired: 99,
+    isCaptain: true,
+    nameRu: 'Ксеркса «Королева падальщиков»',
+    accuracy: 0.93,
+    passive: {
+      type: 'none',
+      name: 'Разум роя',
+      description: 'Пары насекомых одной команды ближе 80 px получают +15% к силе удара.',
+      params: {},
     },
   },
 ];

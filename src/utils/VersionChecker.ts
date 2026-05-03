@@ -13,7 +13,7 @@ export interface VersionInfo {
 }
 
 // ✅ Текущая версия клиента (обновляется автоматически при билде)
-export const CURRENT_VERSION = '1.0.104';
+export const CURRENT_VERSION = '1.0.105';
 
 const VERSION_CHECK_INTERVAL = 3 * 60 * 1000; // Проверка каждые 3 минуты
 const VERSION_URL = `${import.meta.env.BASE_URL}version.json`;

@@ -168,7 +168,10 @@ export class AIController {
 
   private moveCompleteCallback?: () => void;
   private thinkingTimer?: Phaser.Time.TimerEvent;
-  
+
+  /** Ограничение выбора фишки (цепочка SUPER Xerxa и др.) */
+  private captainShotGate?: (unit: AIUnit) => boolean;
+
   // ЗАЩИТА ОТ ДВОЙНОГО ХОДА
   public isThinking = false;
   private lastMoveTime = 0;
@@ -186,6 +189,14 @@ export class AIController {
     this.calculateFieldBounds();
 
     console.log(`[AI] 🤖 Created: ${this.difficulty}, profile=${this.profile.tier}`);
+  }
+
+  setCaptainShotGate(fn: ((unit: AIUnit) => boolean) | undefined): void {
+    this.captainShotGate = fn;
+  }
+
+  private allowedByCaptainGate(unit: AIUnit): boolean {
+    return !this.captainShotGate || this.captainShotGate(unit);
   }
 
   private calculateFieldBounds(): void {
@@ -627,6 +638,7 @@ export class AIController {
     const bunkerAttackBoost = (1 + bunker * 0.62) * (1 + this.profileNoise.bunkerOffset * 0.35);
 
     for (const unit of this.aiUnits) {
+      if (!this.allowedByCaptainGate(unit)) continue;
       const goal = this.evaluateGoalShot(unit);
       if (goal) {
         if (attackOpportunity > 0.6) {

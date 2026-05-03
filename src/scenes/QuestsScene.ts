@@ -4,7 +4,7 @@ import Phaser from 'phaser';
 import { playerData } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
 import { tgApp } from '../utils/TelegramWebApp';
-import { dailyTasksManager, DailyTask } from '../data/DailyTasks';
+import { dailyTasksManager } from '../data/DailyTasks';
 import { SwipeNavigationManager } from '../ui/SwipeNavigationManager';
 import { battlePassManager } from '../managers/BattlePassManager';
 import { getCurrentSeason, BP_XP_REWARDS, getXPProgress } from '../data/BattlePassData';
@@ -14,18 +14,15 @@ import { FactionId } from '../constants/gameConstants';
 import { RookieFactionWheelOverlay } from '../ui/RookieFactionWheelOverlay';
 import { ensureSafeImageLoading } from '../assets/loading/ImageLoader';
 import { loadAudioMenu, loadAudioRewardClaim } from '../assets/loading/AudioLoader';
-
-interface TaskCard {
-  container: Phaser.GameObjects.Container;
-  y: number;
-  height: number;
-}
+import { TaskCardPool, QuestRow } from '../ui/quest/TaskCardPool';
+import { VirtualTaskScroll } from '../ui/quest/VirtualTaskScroll';
 
 export class QuestsScene extends Phaser.Scene {
   private scrollY = 0;
   private maxScrollY = 0;
   private contentContainer!: Phaser.GameObjects.Container;
-  private cards: TaskCard[] = [];
+  private taskCardPool?: TaskCardPool;
+  private virtualTaskScroll?: VirtualTaskScroll;
   private isDragging = false;
   private lastPointerY = 0;
   private scrollVelocity = 0;
@@ -93,6 +90,10 @@ export class QuestsScene extends Phaser.Scene {
   
   shutdown(): void {
     this.swipeManager?.destroy();
+    this.virtualTaskScroll?.destroy();
+    this.virtualTaskScroll = undefined;
+    this.taskCardPool?.destroy();
+    this.taskCardPool = undefined;
   }
   
   update(): void {
@@ -101,6 +102,54 @@ export class QuestsScene extends Phaser.Scene {
       this.scrollVelocity *= 0.92;
       this.applyScrollPosition();
     }
+  }
+
+  private destroyVirtualTaskList(): void {
+    this.virtualTaskScroll?.destroy();
+    this.virtualTaskScroll = undefined;
+  }
+
+  private ensureTaskCardPool(cardWidth: number): TaskCardPool {
+    if (!this.taskCardPool) {
+      this.taskCardPool = new TaskCardPool(this, cardWidth, () => this.s, 14);
+    } else {
+      this.taskCardPool.setCardWidth(cardWidth);
+    }
+    return this.taskCardPool;
+  }
+
+  private sortQuestRows(tasks: QuestRow[]): QuestRow[] {
+    return [...tasks].sort((a, b) => {
+      const stateA = a.claimed ? 2 : a.completed ? 0 : 1;
+      const stateB = b.claimed ? 2 : b.completed ? 0 : 1;
+      return stateA - stateB;
+    });
+  }
+
+  /** Перезагрузка daily/weekly в виртуальный список без полного redrawQuestsUI */
+  private refreshVirtualDailyWeeklyAfterClaim(delayMs: number): void {
+    this.time.delayedCall(delayMs, () => {
+      if (!this.scene.isActive()) return;
+      this.refreshHeaderCurrency();
+      if (
+        (this.activeTab !== 'daily' && this.activeTab !== 'weekly') ||
+        !this.virtualTaskScroll ||
+        !this.taskCardPool
+      ) {
+        return;
+      }
+      const isWeekly = this.activeTab === 'weekly';
+      const raw = (isWeekly ? dailyTasksManager.getWeeklyData().tasks : dailyTasksManager.getDailyData().tasks) as QuestRow[];
+      const sorted = this.sortQuestRows(raw);
+      this.virtualTaskScroll.setTasks(sorted);
+      const { height } = this.cameras.main;
+      const viewportHeight = height - this.topOffset - this.bottomInset;
+      const bottom = this.virtualTaskScroll.getContentBottomY();
+      this.maxScrollY = Math.max(0, bottom + 16 - viewportHeight + 40);
+      this.scrollY = Phaser.Math.Clamp(this.scrollY, 0, this.maxScrollY);
+      this.virtualTaskScroll.updateScroll(this.scrollY);
+      this.applyScrollPosition();
+    });
   }
   
   private handleBack(): void {
@@ -225,7 +274,7 @@ export class QuestsScene extends Phaser.Scene {
   }
 
   private clearContentArea(): void {
-    this.cards = [];
+    this.destroyVirtualTaskList();
     this.scrollY = 0;
     this.scrollVelocity = 0;
     this.lastAppliedContentY = Number.NaN;
@@ -374,211 +423,53 @@ export class QuestsScene extends Phaser.Scene {
       this.renderBattlePassInfo();
     } else if (this.activeTab === 'weekly') {
       const weeklyData = dailyTasksManager.getWeeklyData();
-      this.renderTasks(weeklyData.tasks as any[], true);
+      this.renderTasksVirtual(weeklyData.tasks, true);
     } else {
       const dailyData = dailyTasksManager.getDailyData();
-      this.renderTasks(dailyData.tasks as any[], false);
+      this.renderTasksVirtual(dailyData.tasks, false);
     }
   }
 
-  private renderTasks(tasks: any[], isWeekly: boolean): void {
+  private renderTasksVirtual(tasks: QuestRow[], isWeekly: boolean): void {
     const { width, height } = this.cameras.main;
 
     if (!tasks || tasks.length === 0) {
       console.warn(`[QuestsScene] No ${isWeekly ? 'weekly' : 'daily'} tasks found`);
+      this.destroyVirtualTaskList();
       this.createEmptyState();
+      this.maxScrollY = 0;
       return;
     }
 
-    // Сортировка: CLAIMABLE -> IN_PROGRESS -> CLAIMED
-    const sortedTasks = [...tasks].sort((a, b) => {
-      const stateA = a.claimed ? 2 : (a.completed ? 0 : 1);
-      const stateB = b.claimed ? 2 : (b.completed ? 0 : 1);
-      return stateA - stateB;
-    });
-
-    this.cards = [];
-
-    let y = 20;
+    const sortedTasks = this.sortQuestRows(tasks);
     const cardWidth = Math.min(width - 32, 370);
+    const pool = this.ensureTaskCardPool(cardWidth);
+    const viewportHeight = height - this.topOffset - this.bottomInset;
     const cardX = width / 2;
 
-    sortedTasks.forEach((task) => {
-      const card = this.createTaskCard(cardX, y, cardWidth, task, isWeekly);
-      this.contentContainer.add(card.container);
-      this.cards.push(card);
-
-      y += card.height + 16;
-    });
-
-    const visibleHeight = height - this.topOffset - this.bottomInset;
-    this.maxScrollY = Math.max(0, y - visibleHeight + 40);
-  }
-  
-  private createTaskCard(x: number, y: number, width: number, task: DailyTask, isWeekly: boolean = false): TaskCard {
-    const fonts = getFonts();
-    const s = this.s;
-    const container = this.add.container(x, y);
-    const iconCol = isWeekly && (task as any).icon ? Math.round(34 * s) : 0;
-    const height = Math.round(160 * s);
-    const padding = Math.round(14 * s);
-    
-    const isCompleted = task.completed;
-    const isClaimed = task.claimed;
-    const isClaimable = isCompleted && !isClaimed;
-    
-    const bg = this.add.graphics();
-    bg.fillGradientStyle(0x111b2e, 0x141e35, 0x0c1220, 0x0c1220, 0.98, 0.98, 0.98, 0.98);
-    bg.fillRoundedRect(-width / 2, 0, width, height, 14);
-
-    let borderColor = 0x334155;
-    let borderAlpha = 0.65;
-
-    if (isClaimable) {
-      borderColor = 0xffc857;
-      borderAlpha = 1;
-    } else if (isClaimed) {
-      borderColor = 0x38bdf8;
-      borderAlpha = 0.65;
-    }
-
-    bg.lineStyle(2, borderColor, borderAlpha);
-    bg.strokeRoundedRect(-width / 2, 0, width, height, 14);
-    if (isClaimable) {
-      bg.lineStyle(1, 0x22c55e, 0.65);
-      bg.strokeRoundedRect(-width / 2 + 2, 2, width - 4, height - 4, 12);
-    }
-    container.add(bg);
-
-    if (iconCol > 0) {
-      container.add(
-        this.add
-          .text(-width / 2 + padding + iconCol / 2, padding + Math.round(20 * s), String((task as any).icon), {
-            fontSize: `${24 * s}px`,
-          })
-          .setOrigin(0.5, 0.5)
-      );
-    }
-
-    const titleX = -width / 2 + padding + iconCol;
-    const title = this.add.text(titleX, padding, task.title, {
-      fontSize: `${15 * s}px`,
-      fontFamily: fonts.tech,
-      color: '#fef9c3',
-      fontStyle: 'bold',
-      wordWrap: { width: width - padding * 2 - iconCol },
-      maxLines: 2,
-    }).setOrigin(0, 0);
-    container.add(title);
-
-    const desc = this.add.text(titleX, padding + Math.round(38 * s), task.description, {
-      fontSize: `${11 * s}px`,
-      fontFamily: fonts.primary,
-      color: '#94a3b8',
-      wordWrap: { width: width - padding * 2 - iconCol },
-      maxLines: 2,
-    }).setOrigin(0, 0);
-    container.add(desc);
-
-    const progressLineY = padding + Math.round(62 * s);
-    const progressText = this.add.text(titleX, progressLineY, `Прогресс: ${task.progress} / ${task.maxProgress}`, {
-      fontSize: `${12 * s}px`,
-      fontFamily: fonts.primary,
-      color: '#e2e8f0',
-    }).setOrigin(0, 0);
-    container.add(progressText);
-
-    const barWidth = width - padding * 2;
-    const barHeight = Math.max(8, Math.round(9 * s));
-    const barY = progressLineY + Math.round(18 * s);
-
-    const barBg = this.add.graphics();
-    barBg.fillStyle(0x1f2937, 0.8);
-    barBg.fillRoundedRect(-width / 2 + padding, barY, barWidth, barHeight, 5);
-    container.add(barBg);
-
-    const progress = Math.min(task.progress / task.maxProgress, 1);
-    const fillWidth = barWidth * progress;
-
-    if (fillWidth > 0) {
-      const barFill = this.add.graphics();
-      barFill.fillStyle(isCompleted ? 0x34d399 : 0x22d3ee, 1);
-      barFill.fillRoundedRect(-width / 2 + padding, barY, fillWidth, barHeight, 5);
-      container.add(barFill);
-    }
-
-    const rewardY = barY + barHeight + Math.round(14 * s);
-    const rewardSummary = this.rewardSubtitleLines(task.reward).join('  ·  ');
-    container.add(
-      this.add.text(-width / 2 + padding, rewardY, `Награды: ${rewardSummary}`, {
-        fontSize: `${11 * s}px`,
-        fontFamily: fonts.tech,
-        color: '#fde68a',
-        wordWrap: { width: width - padding * 2 },
-      }).setOrigin(0, 0)
-    );
-
-    const btnY = height - padding - Math.round(18 * s);
-    const btnWidth = Math.round(118 * s);
-    const btnHeight = Math.round(34 * s);
-    const btnX = width / 2 - padding - btnWidth / 2;
-
-    if (isClaimable) {
-      const btn = this.createClaimButton(btnX, btnY, btnWidth, btnHeight, () => {
-        if (isWeekly) this.handleClaimWeeklyTask(task.id);
-        else this.handleClaimTask(task.id);
+    if (!this.virtualTaskScroll) {
+      this.virtualTaskScroll = new VirtualTaskScroll(this, this.contentContainer, pool, {
+        viewportHeight,
+        contentStartY: 20,
+        cardCenterX: cardX,
+        isWeekly,
+        onClaim: (taskId) =>
+          isWeekly ? this.handleClaimWeeklyTask(taskId) : this.handleClaimTask(taskId),
       });
-      container.add(btn);
-    } else if (isClaimed) {
-      const btnBg = this.add.graphics();
-      btnBg.fillStyle(0x1e293b, 0.82);
-      btnBg.fillRoundedRect(btnX - btnWidth / 2, btnY - btnHeight / 2, btnWidth, btnHeight, 999);
-      container.add(btnBg);
-
-      container.add(
-        this.add.text(btnX, btnY, 'ЗАБРАНО', {
-          fontSize: `${11 * s}px`,
-          fontFamily: fonts.tech,
-          color: '#94a3b8',
-          fontStyle: 'bold',
-        }).setOrigin(0.5)
-      );
+    } else {
+      this.virtualTaskScroll.applyConfigPatch({
+        viewportHeight,
+        cardCenterX: cardX,
+        isWeekly,
+        onClaim: (taskId) =>
+          isWeekly ? this.handleClaimWeeklyTask(taskId) : this.handleClaimTask(taskId),
+      });
     }
 
-    return { container, y, height };
-  }
-  
-  private createClaimButton(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    onClick: () => void
-  ): Phaser.GameObjects.Container {
-    const fonts = getFonts();
-    const btn = this.add.container(x, y);
-
-    const bg = this.add.graphics();
-    bg.fillGradientStyle(0xfff1b8, 0xffc24a, 0xf59e0b, 0xb45309, 1);
-    bg.fillRoundedRect(-width / 2, -height / 2, width, height, 999);
-    bg.lineStyle(2, 0xfffbeb, 0.95);
-    bg.strokeRoundedRect(-width / 2, -height / 2, width, height, 999);
-    btn.add(bg);
-
-    const text = this.add.text(0, 0, 'ЗАБРАТЬ', {
-      fontSize: '13px',
-      fontFamily: fonts.tech,
-      color: '#1a0f08',
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    btn.add(text);
-
-    const hitArea = new Phaser.Geom.Rectangle(-width / 2, -height / 2, width, height);
-    btn.setInteractive(hitArea, Phaser.Geom.Rectangle.Contains);
-    btn.setSize(width, height);
-    btn.on('pointerdown', onClick);
-
-    return btn;
+    this.virtualTaskScroll.setTasks(sortedTasks);
+    const bottom = this.virtualTaskScroll.getContentBottomY();
+    this.maxScrollY = Math.max(0, bottom + 16 - viewportHeight + 40);
+    this.virtualTaskScroll.updateScroll(this.scrollY);
   }
   
   private createEmptyState(): void {
@@ -691,8 +582,9 @@ export class QuestsScene extends Phaser.Scene {
 
     AudioManager.getInstance().playSFX('sfx_cash', { volume: 0.78 });
     AudioManager.getInstance().playSFX('sfx_card_pop', { volume: 0.45 });
+    this.refreshHeaderCurrency();
     this.showClaimCelebration('Задание выполнено', detail);
-    this.scheduleQuestsRestart(1020);
+    this.refreshVirtualDailyWeeklyAfterClaim(1020);
   }
 
   private handleClaimWeeklyTask(taskId: string): void {
@@ -704,8 +596,9 @@ export class QuestsScene extends Phaser.Scene {
 
     AudioManager.getInstance().playSFX('sfx_cash', { volume: 0.78 });
     AudioManager.getInstance().playSFX('sfx_card_pop', { volume: 0.45 });
+    this.refreshHeaderCurrency();
     this.showClaimCelebration('Недельное задание', detail);
-    this.scheduleQuestsRestart(1020);
+    this.refreshVirtualDailyWeeklyAfterClaim(1020);
   }
   
   private renderBattlePassInfo(): void {
@@ -868,6 +761,7 @@ export class QuestsScene extends Phaser.Scene {
   
   private applyScrollPosition(): void {
     if (!this.contentContainer) return;
+    this.virtualTaskScroll?.updateScroll(this.scrollY);
     const y = this.topOffset - this.scrollY;
     if (this.lastAppliedContentY === y) return;
     this.lastAppliedContentY = y;

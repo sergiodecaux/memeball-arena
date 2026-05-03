@@ -125,6 +125,13 @@ export class ShootingController {
   // ✅ Passive System
   private passiveManager: PassiveManager | null = null;
 
+  private captainTrajectoryHooks: {
+    getDistanceMultiplier(): number;
+    shouldAlwaysDrawSecondBounce(): boolean;
+  } | null = null;
+  private captainShotForceScale: ((cap: ShootableUnit) => number) | null = null;
+  private captainSelectionFilter: ((cap: ShootableUnit) => boolean) | null = null;
+
   private pendingShot: { cap: ShootableUnit; localIndex: number; hitOffset: number } | null = null;
   private hasFiredThisTurn = false;
 
@@ -454,6 +461,7 @@ export class ShootingController {
           lineWidth = 3;
         }
       }
+      aimDistMult *= this.captainTrajectoryHooks?.getDistanceMultiplier?.() ?? 1;
       const dist = (300 + (force * 500 * aimLength)) * aimDistMult;
 
       const hit = this.raycastWalls(startX, startY, dir.x, dir.y, dist);
@@ -737,6 +745,23 @@ export class ShootingController {
   public setPassiveManager(manager: PassiveManager): void {
     this.passiveManager = manager;
   }
+
+  public setCaptainTrajectoryHooks(
+    hooks: {
+      getDistanceMultiplier(): number;
+      shouldAlwaysDrawSecondBounce(): boolean;
+    } | null
+  ): void {
+    this.captainTrajectoryHooks = hooks;
+  }
+
+  public setCaptainShotForceScale(fn: ((cap: ShootableUnit) => number) | null): void {
+    this.captainShotForceScale = fn;
+  }
+
+  public setCaptainSelectionFilter(fn: ((cap: ShootableUnit) => boolean) | null): void {
+    this.captainSelectionFilter = fn;
+  }
   setEnabled(enabled: boolean): void { this.isEnabled = enabled; if (!enabled) { this.clearAimingState(); this.deselectCap(); } else { this.hasFiredThisTurn = false; } }
   registerCap(cap: ShootableUnit, localIndex: number): void { this.registeredCaps.set(cap, localIndex); cap.sprite.setInteractive({ useHandCursor: true }); }
   getCapIndex(cap: ShootableUnit): number { return this.registeredCaps.get(cap) ?? -1; }
@@ -790,6 +815,12 @@ export class ShootingController {
       return;
     }
 
+    if (clickedCap && isUnit(clickedCap) && clickedCap.isCaptainSelectionBanned()) {
+      console.log('[ShootingController] Captain rift — выбор запрещён');
+      this.showErrorFeedback(clickedCap);
+      return;
+    }
+
     if (clickedCap) {
         if (this.selectedCap !== clickedCap) this.selectCap(clickedCap);
         this.startAiming(pointer);
@@ -838,6 +869,10 @@ export class ShootingController {
               if (cap.id !== this.tutorialAllowedUnitId) {
                   continue; // Пропускаем неразрешённых юнитов
               }
+          }
+
+          if (this.captainSelectionFilter && !this.captainSelectionFilter(cap)) {
+            continue;
           }
           
           // Проверка попадания в радиус
@@ -944,6 +979,11 @@ export class ShootingController {
       // ✅ ПАССИВКИ: Модификация силы удара
       if (cap instanceof Unit && this.passiveManager) {
         modifiedForce = this.passiveManager.onBallHit(cap, modifiedForce);
+      }
+
+      const capMul = this.captainShotForceScale?.(cap) ?? 1;
+      if (capMul !== 1) {
+        modifiedForce.set(modifiedForce.x * capMul, modifiedForce.y * capMul);
       }
       
       // ✅ ТОЧНОСТЬ: Применение разброса

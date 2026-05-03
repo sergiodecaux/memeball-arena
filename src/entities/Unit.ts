@@ -104,6 +104,12 @@ export class Unit {
   
   private status: UnitStatus = UnitStatus.NONE;
   private statusDuration: number = 0;
+
+  /** Запрет выбора после ульты Урока (ход соперника). */
+  private captainSelectionBanTurns: number = 0;
+
+  /** Стазис Хроноса (отдельно от обычного STUN). */
+  private captainStasisActive: boolean = false;
   private abilityCooldown: number = 0;
   
   // Визуальные эффекты способностей
@@ -183,6 +189,7 @@ export class Unit {
     this.createPhysicsBody(x, y);
     this.setupInteractivity();
     this.startGlowPulse();
+    this.tryRegisterWithPassiveManager();
   }
 
   get x(): number { return this.body.position.x; }
@@ -355,6 +362,33 @@ export class Unit {
    */
   public isStunned(): boolean {
     return this.status === UnitStatus.STUNNED;
+  }
+
+  public applyCaptainRiftSelectionBan(turns: number = 1): void {
+    this.captainSelectionBanTurns = Math.max(this.captainSelectionBanTurns, turns);
+  }
+
+  public tickCaptainSelectionBanTurn(): void {
+    if (this.captainSelectionBanTurns > 0) this.captainSelectionBanTurns--;
+  }
+
+  public isCaptainSelectionBanned(): boolean {
+    return this.captainSelectionBanTurns > 0;
+  }
+
+  public enterCaptainStasis(): void {
+    if (this.captainStasisActive) return;
+    this.captainStasisActive = true;
+    this.scene.matter.body.setVelocity(this.body, { x: 0, y: 0 });
+    this.scene.matter.body.setStatic(this.body, true);
+    this.sprite.setAlpha(0.72);
+  }
+
+  public exitCaptainStasis(): void {
+    if (!this.captainStasisActive) return;
+    this.captainStasisActive = false;
+    this.scene.matter.body.setStatic(this.body, false);
+    this.sprite.setAlpha(1);
   }
 
   /**
@@ -1533,6 +1567,23 @@ export class Unit {
   
   public setPassiveManager(manager: PassiveManager): void {
     this.passiveManager = manager;
+    manager.registerUnit(this);
+  }
+
+  /** Если GameScene уже создала PassiveManager — регистрируемся (юниты, появившиеся после старта матча). */
+  private tryRegisterWithPassiveManager(): void {
+    const gs = this.scene.scene.get('GameScene') as { passiveManager?: PassiveManager } | undefined;
+    const pm = gs?.passiveManager;
+    if (pm) {
+      this.passiveManager = pm;
+      pm.registerUnit(this);
+    }
+  }
+
+  /** Доп. ходы заряда нейротоксина от пассивок (карта insect_toxin). */
+  public extendToxicChargeDuration(extraTurns: number): void {
+    if (this.status !== UnitStatus.TOXIC_CHARGED || extraTurns <= 0) return;
+    this.statusDuration += extraTurns;
   }
   
   getCurveStrength(): number { 
@@ -1575,7 +1626,7 @@ export class Unit {
     if (ballSpeed < 1) return null;
     const perpX = -ballVelocity.y / ballSpeed;
     const perpY = ballVelocity.x / ballSpeed;
-    const curveMagnitude = this.stats.curveStrength * this.lastHitOffset * ballSpeed * 0.15;
+    const curveMagnitude = this.getCurveStrength() * this.lastHitOffset * ballSpeed * 0.15;
     this.lastHitOffset = 0;
     return { x: perpX * curveMagnitude, y: perpY * curveMagnitude };
   }
@@ -1672,6 +1723,9 @@ export class Unit {
   destroy(): void {
   if (this.isDestroyed) return;
   this.isDestroyed = true;
+
+  this.passiveManager?.unregisterUnit(this.unitId);
+  this.passiveManager = null;
   
   this.clearStatus();
   this.stopGlowPulse();
