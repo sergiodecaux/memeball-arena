@@ -422,7 +422,7 @@ export class AIController {
     this.state.playerScore = playerScore;
     this.state.aiScore = aiScore;
     this.updateAggression();
-    // Формация также может меняться в startTurn при formationAdaptation и после гола в recordGoal
+    // Смена схемы: только в recordGoal при formationAdaptation (как у игрока после гола).
   }
 
   recordGoal(scoredBy: 'player' | 'ai'): void {
@@ -539,13 +539,8 @@ export class AIController {
     this.isThinking = true;
     this.state.turnsSinceLastGoal++;
 
-    if (this.settings.formationAdaptation) {
-      const dangerForm = AIUtils.evaluateDangerLevel(this.ball, this.fieldBounds, true);
-      const attackOppForm = AIUtils.evaluateAttackOpportunity(this.ball, this.fieldBounds, true);
-      if (dangerForm > 0.72 || attackOppForm > 0.68 || this.state.turnsSinceLastGoal % 4 === 0) {
-        this.selectFormation();
-      }
-    }
+    // Схема ИИ меняется только после гола (recordGoal → selectFormation), как у игрока после сброса позиций —
+    // не переставляем фишки посреди матча.
 
     const delay = Phaser.Math.Between(
       this.settings.reactionTime.min,
