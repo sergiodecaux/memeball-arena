@@ -405,18 +405,19 @@ export class LevelUpOverlay {
       case 'unit_choice': {
         label = 'Выбор юнита';
         amountText = 'Выбери 1';
-        // Показать мини-стек из 3
         const stack = this.scene.add.container(0, -4);
         const choices = reward.choices || [];
-        choices.slice(0, 3).forEach((id, i) => {
+        const preview = choices.slice(0, Math.min(choices.length, 4));
+        const span = preview.length;
+        preview.forEach((id, i) => {
           const unit = UNITS_REPOSITORY.find(u => u.id === id);
-          const offset = (i - 1) * 18;
+          const offset = span <= 1 ? 0 : (i - (span - 1) / 2) * 20;
           const textureKey = unit ? getRealUnitTextureKey(this.scene, unit) : null;
           if (textureKey) {
-            const img = this.scene.add.image(offset, 0, textureKey).setDisplaySize(42, 42);
+            const img = this.scene.add.image(offset, 0, textureKey).setDisplaySize(38, 38);
             stack.add(img);
           } else {
-            const txt = this.scene.add.text(offset, 0, '?', { fontSize: '28px', color: '#fff' }).setOrigin(0.5);
+            const txt = this.scene.add.text(offset, 0, '?', { fontSize: '26px', color: '#fff' }).setOrigin(0.5);
             stack.add(txt);
           }
         });

@@ -2612,7 +2612,10 @@ export function getUnitsByFaction(factionId: FactionId): UnitData[] {
 export function getFactionUnitsForCollection(factionId: FactionId): UnitData[] {
   const base = getUnitsByFaction(factionId).filter((u) => u && !u.isBattlePass);
   const captainId = CAPTAIN_BY_FACTION[factionId];
-  const captain = captainId ? getUnitById(captainId) : undefined;
+  let captain = captainId ? getUnitById(captainId) : undefined;
+  if (!captain || captain.factionId !== factionId) {
+    captain = UNITS_REPOSITORY.find((u) => u.factionId === factionId && u.isCaptain);
+  }
   if (!captain) return base;
 
   const rest = base.filter((u) => u.id !== captain.id);

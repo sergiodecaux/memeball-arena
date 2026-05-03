@@ -357,6 +357,7 @@ export function loadImagesRepository(scene: Phaser.Scene): void {
   loadFactionBackgrounds(scene);
   loadFactionTokens(scene);
   loadRewardIcons(scene);
+  loadCaptainUnitAssetsForCollection(scene);
 }
 
 /**
@@ -928,6 +929,33 @@ function loadCapCollectionAssets(scene: Phaser.Scene): void {
 
   if (import.meta.env.DEV) {
     console.log(`[ImageLoader] ✅ Queued ${loadedCount} unit textures (HD + base keys)`);
+  }
+}
+
+/**
+ * Капитаны в отдельной папке PNG — явно кладём их в очередь preload коллекции,
+ * иначе карточки могут открываться до завершения ленивой загрузки и выглядеть «пустыми».
+ */
+export function loadCaptainUnitAssetsForCollection(scene: Phaser.Scene): void {
+  ensureSafeImageLoading(scene);
+  let queued = 0;
+  UNITS_REPOSITORY.forEach((unit) => {
+    if (!unit?.isCaptain) return;
+    let assetPath = unit.assetPath;
+    if (assetPath.startsWith('/')) {
+      assetPath = assetPath.substring(1);
+    }
+    if (assetPath.includes('?')) {
+      assetPath = assetPath.split('?')[0];
+    }
+    const baseKey = unit.assetKey;
+    if (!scene.textures.exists(baseKey) || !isRealImageLoaded(baseKey)) {
+      scene.load.image(baseKey, assetPath);
+      queued++;
+    }
+  });
+  if (import.meta.env.DEV) {
+    console.log(`[ImageLoader] Collection: queued ${queued} captain PNG(s)`);
   }
 }
 
