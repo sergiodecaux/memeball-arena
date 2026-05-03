@@ -239,7 +239,7 @@ export class TaskCardPool {
 
     const borderColor = isClaimable ? colors.uiAccent : isClaimed ? 0x22c55e : 0x444455;
     const borderAlpha = isClaimable ? 1 : isClaimed ? 0.65 : 0.55;
-    bg.lineStyle(2, borderColor, borderAlpha);
+    bg.lineStyle(1.5, borderColor, borderAlpha);
     bg.strokeRoundedRect(-width / 2, 0, width, height, 16);
 
     if (iconCol > 0 && 'icon' in task && task.icon) {

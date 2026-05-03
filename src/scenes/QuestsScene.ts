@@ -41,7 +41,7 @@ export class QuestsScene extends Phaser.Scene {
   private activeTab: 'path' | 'daily' | 'weekly' | 'battlepass' = 'path';
   private tabContainer!: Phaser.GameObjects.Container;
   private s!: number;
-  /** Маска области скролла (как в ShopScene), не удалять при clearContentArea */
+  /** GeometryMask в координатах экрана (не внутри контейнера скролла) */
   private contentScrollMask?: Phaser.GameObjects.Graphics;
   
   constructor() {
@@ -98,6 +98,8 @@ export class QuestsScene extends Phaser.Scene {
     this.virtualTaskScroll = undefined;
     this.taskCardPool?.destroy();
     this.taskCardPool = undefined;
+    this.contentScrollMask?.destroy();
+    this.contentScrollMask = undefined;
   }
   
   update(): void {
@@ -292,27 +294,26 @@ export class QuestsScene extends Phaser.Scene {
     this.scrollVelocity = 0;
     this.lastAppliedContentY = Number.NaN;
     if (this.contentContainer) {
-      const mask = this.contentScrollMask;
-      const kids = [...this.contentContainer.list];
-      for (const ch of kids) {
-        if (ch !== mask) ch.destroy(true);
-      }
+      this.contentContainer.removeAll(true);
     }
   }
 
-  /** Область скролла как в ShopScene — контент не залезает под вкладки */
+  /**
+   * Маска в мировых координатах (как mask в ShopScene), иначе при скролле «окно» уезжает
+   * вместе с контейнером и снизу остаётся пустая тёмная полоса и артефакты по краям.
+   */
   private ensureContentScrollMask(): void {
     const { width, height } = this.cameras.main;
     const viewH = Math.max(40, height - this.topOffset - this.bottomInset);
-    if (!this.contentScrollMask || !this.contentScrollMask.active) {
-      this.contentScrollMask = this.add.graphics({ x: 0, y: 0 });
-      this.contentContainer.addAt(this.contentScrollMask, 0);
+    if (!this.contentScrollMask || !this.contentScrollMask.scene) {
+      this.contentScrollMask = this.add.graphics();
+      this.contentScrollMask.setDepth(2);
       this.contentScrollMask.setVisible(false);
-      this.contentContainer.setMask(this.contentScrollMask.createGeometryMask());
     }
     this.contentScrollMask.clear();
     this.contentScrollMask.fillStyle(0xffffff, 1);
-    this.contentScrollMask.fillRect(0, 0, width + 8, viewH);
+    this.contentScrollMask.fillRect(0, this.topOffset, width + 16, viewH);
+    this.contentContainer.setMask(this.contentScrollMask.createGeometryMask());
   }
 
   /** Перерисовка без полного scene.restart — дешевле для WebView */
