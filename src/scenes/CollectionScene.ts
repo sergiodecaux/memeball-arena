@@ -345,8 +345,16 @@ export class CollectionScene extends Phaser.Scene {
       this.factionBg = this.add.image(this.width / 2, this.height / 2, bgKey);
       this.factionBg.setOrigin(0.5);
       this.factionBg.setDisplaySize(this.width, this.height);
-      this.factionBg.setAlpha(0.25);
+      this.factionBg.setAlpha(0.22);
       this.factionBg.setDepth(0.5);
+      this.tweens.add({
+        targets: this.factionBg,
+        y: '+=5',
+        duration: 3000,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
     }
   }
 
@@ -682,8 +690,8 @@ export class CollectionScene extends Phaser.Scene {
     });
 
     // Сетка 3xN с увеличенными размерами
-    const cardSize = 110;
-    const gap = 14;
+    const cardSize = 120;
+    const gap = 18;
     const cols = 3;
     // ✅ Правильные отступы: карточки начинаются с запасом от topOffset
     const padding = 16; // Отступы слева и справа
@@ -701,8 +709,10 @@ export class CollectionScene extends Phaser.Scene {
     let successCount = 0;
     let errorCount = 0;
 
+    const captainCardSize = 135;
+    const rowStride = captainCardSize + gap;
     const rows = Math.ceil(sortedUnits.length / cols);
-    const totalHeight = rows * (cardSize + gap + 35) + startY + bottomPadding;
+    const totalHeight = rows * rowStride + startY + bottomPadding;
     const visibleHeight = this.height - this.topOffset;
     this.maxScrollY = Math.max(0, totalHeight - visibleHeight);
 
@@ -725,10 +735,11 @@ export class CollectionScene extends Phaser.Scene {
         const col = i % cols;
         const row = Math.floor(i / cols);
         const x = startX + col * (cardSize + gap);
-        const y = startY + row * (cardSize + gap + 35);
+        const y = startY + row * rowStride;
 
         try {
-          const card = this.createUnitCard(unit, x, y, cardSize);
+          const adjustedSize = unit.isCaptain ? captainCardSize : cardSize;
+          const card = this.createUnitCard(unit, x, y, adjustedSize);
           if (card) {
             this.contentContainer.add(card);
             successCount++;
@@ -789,24 +800,28 @@ export class CollectionScene extends Phaser.Scene {
       const captainFrame = { border: 0xf59e0b, glow: 0xfde68a };
       const isCaptainUnit = unit.isCaptain === true;
 
-    // ✅ ОПТИМИЗАЦИЯ: Используем один Graphics объект для всех визуальных элементов карточки
+    // 1) Тень — отдельным слоём для глубины (не смешиваем с заливкой карты)
+    const shadow = this.add.graphics();
+    shadow.fillStyle(0x000000, 0.5);
+    shadow.fillRoundedRect(-size / 2 + 4, -size / 2 + 6, size, size, 12);
+    container.add(shadow);
+
+    // 2) Подложка + обводка карточки
     const cardGraphics = this.add.graphics();
-    
-    // Тень под карточкой
-    cardGraphics.fillStyle(0x000000, 0.45);
-    cardGraphics.fillRoundedRect(-size / 2 + 2, -size / 2 + 2, size, size, 12);
-    
-    // Фон карточки — капитаны слегка золотистая подложка
     const bgColor = isCaptainUnit ? (isOwned ? 0x1c1408 : 0x120c06) : isOwned ? 0x111827 : 0x0b1120;
-    cardGraphics.fillStyle(bgColor, isOwned ? 0.95 : 0.75);
+    cardGraphics.fillStyle(bgColor, 0.95);
     cardGraphics.fillRoundedRect(-size / 2, -size / 2, size, size, 12);
-    
-    // Рамка: капитаны — янтарь (отличимо от редкости и BP)
+
     const frameBorder = isCaptainUnit ? captainFrame.border : rarityColor.border;
-    cardGraphics.lineStyle(isCaptainUnit ? 4 : 3, frameBorder, isOwned ? 1 : 0.65);
+    cardGraphics.lineStyle(1.5, frameBorder, isOwned ? 0.8 : 0.4);
     cardGraphics.strokeRoundedRect(-size / 2, -size / 2, size, size, 12);
-    
+
     container.add(cardGraphics);
+
+    const glow = this.add.graphics();
+    glow.lineStyle(5, rarityColor.glow, 0.25);
+    glow.strokeRoundedRect(-size / 2, -size / 2, size, size, 12);
+    container.add(glow);
 
     // Изображение юнита (всегда показываем, но затемняем если не открыт)
     const bestTextureKey = getRealUnitTextureKey(this, unit);
@@ -817,6 +832,8 @@ export class CollectionScene extends Phaser.Scene {
     if (!textureKeyToUse && unit.id && this.textures.exists(unit.id)) {
       textureKeyToUse = unit.id;
     }
+
+    let floatedHero: Phaser.GameObjects.Image | undefined;
 
     const addUnitImage = (keyToUse: string) => {
       try {
@@ -829,6 +846,7 @@ export class CollectionScene extends Phaser.Scene {
         unitImage.setDisplaySize(imageSize, imageSize);
         unitImage.setAlpha(isOwned ? 1 : 0.55); // Более читаемо в залоченном состоянии
         container.add(unitImage);
+        floatedHero = unitImage;
         return true;
       } catch (error) {
         console.error(`[CollectionScene] Error creating unit image for "${keyToUse}":`, error);
@@ -848,119 +866,126 @@ export class CollectionScene extends Phaser.Scene {
       }
     }
 
-    // Затемнение для неоткрытых (отдельный Graphics, чтобы быть поверх изображения)
+    if (floatedHero) {
+      this.tweens.add({
+        targets: floatedHero,
+        y: '-=2',
+        duration: 1600,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+
+    // Затемнение для неоткрытых — только затемнение; бейджи идут после имени (слой и читаемость)
     if (!isOwned) {
       const darkOverlay = this.add.graphics();
       darkOverlay.fillStyle(0x000000, 0.35);
       darkOverlay.fillRoundedRect(-size / 2, -size / 2, size, size, 12);
       container.add(darkOverlay);
+    }
 
-      // ✅ НОВОЕ: Обработка премиум юнитов
+    const nameBar = this.add.graphics();
+    nameBar.fillStyle(0x000000, 0.65);
+    nameBar.fillRoundedRect(-size / 2, size / 2 - 30, size, 30, 10);
+    container.add(nameBar);
+
+    const nameText = this.add.text(0, size / 2 - 15, getDisplayName(unit), {
+      fontSize: '12px',
+      fontFamily: getFonts().tech,
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
+      wordWrap: { width: size - 10 },
+      align: 'center',
+    }).setOrigin(0.5);
+    container.add(nameText);
+
+    // Бейджи прогресса / цены — поверх имени, но выше плашки имени по Y
+    if (!isOwned) {
+      const badgeY = size / 2 - 52;
+
       if (unit.isPremium) {
-        // Премиум юнит - показываем значок и цену в кристаллах
         const premiumBadge = this.add.graphics();
-        premiumBadge.fillStyle(0x0e1423, 0.95);
-        premiumBadge.fillRoundedRect(-38, size / 2 - 18, 76, 20, 9);
-        premiumBadge.lineStyle(2, 0xf59e0b, 1); // Золотая рамка
-        premiumBadge.strokeRoundedRect(-38, size / 2 - 18, 76, 20, 9);
+        premiumBadge.fillStyle(0x111827, 0.9);
+        premiumBadge.fillRoundedRect(-38, badgeY, 76, 20, 9);
+        premiumBadge.lineStyle(2, 0xf59e0b, 0.6);
+        premiumBadge.strokeRoundedRect(-38, badgeY, 76, 20, 9);
         container.add(premiumBadge);
 
         const premiumPrice = unit.premiumPrice || 1000;
-        // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
-        const premiumText = createText(this, Math.round(0), Math.round(size / 2 - 7), `💎 ${premiumPrice}`, {
-          size: 'sm',
-          font: 'primary',
-          color: '#fbbf24',
-          stroke: true,
-        }).setOrigin(0.5);
-        container.add(premiumText);
+        container.add(
+          createText(this, Math.round(0), Math.round(badgeY + 10), `💎 ${premiumPrice}`, {
+            size: 'sm',
+            font: 'primary',
+            color: '#fbbf24',
+            stroke: true,
+          }).setOrigin(0.5),
+        );
       } else if (unit.isBattlePass) {
-        // Battle Pass юнит - показываем тир или "ПОЛУЧЕНО"
-        if (!isOwned) {
-          const tierBadge = this.add.graphics();
-          tierBadge.fillStyle(0x1e1b4b, 0.95);
-          tierBadge.fillRoundedRect(-38, size / 2 - 20, 76, 22, 9);
-          tierBadge.lineStyle(2, 0xa855f7, 1);
-          tierBadge.strokeRoundedRect(-38, size / 2 - 20, 76, 22, 9);
-          container.add(tierBadge);
-          
-          // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
-          const tierText = createText(this, Math.round(0), Math.round(size / 2 - 9), `🎫 Tier ${unit.battlePassTier}`, {
+        const tierBadge = this.add.graphics();
+        tierBadge.fillStyle(0x111827, 0.9);
+        tierBadge.fillRoundedRect(-38, badgeY - 1, 76, 22, 9);
+        tierBadge.lineStyle(2, 0xa855f7, 0.65);
+        tierBadge.strokeRoundedRect(-38, badgeY - 1, 76, 22, 9);
+        container.add(tierBadge);
+
+        container.add(
+          createText(this, Math.round(0), Math.round(badgeY + 10), `🎫 Tier ${unit.battlePassTier}`, {
             size: 'xs',
             font: 'primary',
             color: '#c4b5fd',
             stroke: true,
-          }).setOrigin(0.5);
-          container.add(tierText);
-        } else {
-          const ownedBadge = this.add.graphics();
-          ownedBadge.fillStyle(0x0e1423, 0.95);
-          ownedBadge.fillRoundedRect(-38, size / 2 - 18, 76, 20, 9);
-          ownedBadge.lineStyle(2, 0xffd700, 1);
-          ownedBadge.strokeRoundedRect(-38, size / 2 - 18, 76, 20, 9);
-          container.add(ownedBadge);
-          
-          // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
-          const ownedText = createText(this, Math.round(0), Math.round(size / 2 - 7), '⭐ ПОЛУЧЕНО', {
-            size: 'xs',
-            font: 'primary',
-            color: '#ffd700',
-            stroke: true,
-          }).setOrigin(0.5);
-          container.add(ownedText);
-        }
+          }).setOrigin(0.5),
+        );
       } else {
-        // Обычный юнит - показываем прогресс фрагментов
         const currentFragments = playerData.getUnitFragments(unit.id);
         const requiredFragments = unit.fragmentsRequired;
+        const fragReady = currentFragments >= requiredFragments;
 
         const badge = this.add.graphics();
-        badge.fillStyle(0x0e1423, 0.95);
-        badge.fillRoundedRect(-38, size / 2 - 18, 76, 20, 9);
-        badge.lineStyle(2, currentFragments >= requiredFragments ? 0x22c55e : 0xf97316, 1);
-        badge.strokeRoundedRect(-38, size / 2 - 18, 76, 20, 9);
+        badge.fillStyle(0x111827, 0.9);
+        badge.fillRoundedRect(-38, badgeY, 76, 20, 9);
+        badge.lineStyle(2, fragReady ? 0x22c55e : 0xf59e0b, fragReady ? 0.55 : 0.6);
+        badge.strokeRoundedRect(-38, badgeY, 76, 20, 9);
         container.add(badge);
 
-        // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
-        const fragmentText = createText(this, Math.round(0), Math.round(size / 2 - 7), `${currentFragments}/${requiredFragments}`, {
-          size: 'sm',
-          font: 'primary',
-          color: currentFragments >= requiredFragments ? '#22c55e' : '#fbbf24',
-          stroke: true,
-        }).setOrigin(0.5);
-        container.add(fragmentText);
+        container.add(
+          createText(this, Math.round(0), Math.round(badgeY + 10), `${currentFragments}/${requiredFragments}`, {
+            size: 'sm',
+            font: 'primary',
+            color: fragReady ? '#86efac' : '#fbbf24',
+            stroke: true,
+          }).setOrigin(0.5),
+        );
       }
     }
 
-    // ✅ BATTLE PASS EXCLUSIVE - специальная рамка и бейдж
     if (unit.isBattlePass) {
-      // Специальная рамка для BP юнитов
       const bpBorder = this.add.graphics();
-      
+
       if (isOwned) {
-        // Золотая рамка для полученных
         bpBorder.lineStyle(3, 0xffd700, 1);
       } else {
-        // Фиолетовая рамка для недоступных
         bpBorder.lineStyle(3, 0xa855f7, 0.8);
       }
       bpBorder.strokeRoundedRect(-size / 2 - 2, -size / 2 - 2, size + 4, size + 4, 14);
       container.add(bpBorder);
-      
-      // Бейдж "BP" в углу
+
       const bpBadgeBg = this.add.graphics();
       bpBadgeBg.fillStyle(isOwned ? 0xffd700 : 0xa855f7, 1);
       bpBadgeBg.fillRoundedRect(size / 2 - 28, -size / 2 - 2, 30, 18, { tl: 0, tr: 12, bl: 8, br: 0 } as any);
       container.add(bpBadgeBg);
-      
-      // ✅ ИСПРАВЛЕНО: Используем TextFactory для чётких шрифтов
-      const bpBadgeText = createText(this, Math.round(size / 2 - 13), Math.round(-size / 2 + 7), 'BP', {
-        size: 'xs',
-        font: 'primary',
-        color: isOwned ? '#000000' : '#ffffff',
-        stroke: true,
-      }).setOrigin(0.5);
-      container.add(bpBadgeText);
+
+      container.add(
+        createText(this, Math.round(size / 2 - 13), Math.round(-size / 2 + 7), 'BP', {
+          size: 'xs',
+          font: 'primary',
+          color: isOwned ? '#000000' : '#ffffff',
+          stroke: true,
+        }).setOrigin(0.5),
+      );
     } else if (unit.isCaptain) {
       const capBg = this.add.graphics();
       capBg.fillStyle(0x451a03, 0.96);
@@ -968,72 +993,31 @@ export class CollectionScene extends Phaser.Scene {
       capBg.lineStyle(2, 0xfbbf24, 1);
       capBg.strokeRoundedRect(-size / 2 + 4, -size / 2 + 4, 62, 17, 5);
       container.add(capBg);
-      const capLabel = createText(this, Math.round(-size / 2 + 35), Math.round(-size / 2 + 12), 'КАПИТАН', {
-        size: 'xs',
-        font: 'primary',
-        color: '#fef3c7',
-        stroke: true,
-      }).setOrigin(0.5);
-      container.add(capLabel);
+      container.add(
+        createText(this, Math.round(-size / 2 + 35), Math.round(-size / 2 + 12), 'КАПИТАН', {
+          size: 'xs',
+          font: 'primary',
+          color: '#fef3c7',
+          stroke: true,
+        }).setOrigin(0.5),
+      );
     }
-
-    // Индикатор редкости (треугольник в углу) - добавляем в cardGraphics
-    cardGraphics.fillStyle(rarityColor.border, isOwned ? 1 : 0.4);
-    cardGraphics.fillTriangle(
-      size / 2 - 18, -size / 2,
-      size / 2, -size / 2,
-      size / 2, -size / 2 + 18
-    );
-
-    // Название юнита под карточкой (с чёткой тенью)
-    const nameText = this.add.text(0, size / 2 + 18, getDisplayName(unit), {
-      fontSize: '11px',
-      color: isOwned ? '#ffffff' : '#888888',
-      fontStyle: 'bold',
-      fontFamily: getFonts().tech,
-      wordWrap: { width: size + 10 },
-      align: 'center',
-      stroke: '#000000',
-      strokeThickness: 3,
-    }).setOrigin(0.5, 0);
-    container.add(nameText);
-
-    const ud = mergeUnitDisplay(unit);
-    let blurbLine = (ud.description || '').replace(/\s+/g, ' ').trim();
-    if (!blurbLine) blurbLine = (ud.passive?.description || '').replace(/\s+/g, ' ').trim();
-    if (!blurbLine) blurbLine = (ud.title || '').trim();
-    if (blurbLine.length > 60) blurbLine = blurbLine.slice(0, 58) + '…';
-
-    const blurbText = this.add.text(0, size / 2 + 22 + nameText.height, blurbLine, {
-      fontSize: '9px',
-      fontFamily: getFonts().primary,
-      color: isOwned ? '#a8b9cf' : '#5c6570',
-      wordWrap: { width: size + 28 },
-      align: 'center',
-      lineSpacing: 2,
-      stroke: '#000000',
-      strokeThickness: 2,
-    }).setOrigin(0.5, 0);
-    container.add(blurbText);
-
-    // Интерактивность (два тапа: первый - подсветка, второй - открыть)
-    const touchExtraY = 36 + nameText.height + blurbText.height;
-    const hitArea = this.add.rectangle(0, touchExtraY * 0.45, size + 10, size + touchExtraY, 0, 0)
-      .setInteractive({ useHandCursor: true });
-    container.add(hitArea);
 
     const isHighlighted = this.highlightedCard === unit.id;
 
-    // Подсветка цветом фракции если выделена (создаем отдельно, так как она динамическая)
     const highlightGlow = this.add.graphics();
     if (isHighlighted) {
       const faction = FACTIONS[unit.factionId];
-      highlightGlow.lineStyle(4, faction.color, 0.8);
+      highlightGlow.lineStyle(3, faction.color, 0.8);
       highlightGlow.strokeRoundedRect(-size / 2 - 2, -size / 2 - 2, size + 4, size + 4, 12);
     }
     container.add(highlightGlow);
     (container as any).__highlightGlow = highlightGlow;
-    (container as any).__cardGraphics = cardGraphics; // Сохраняем ссылку для возможных обновлений
+    (container as any).__cardGraphics = cardGraphics;
+
+    const hitArea = this.add.rectangle(0, 0, size + 14, size + 14, 0, 0)
+      .setInteractive({ useHandCursor: true });
+    container.add(hitArea);
 
     hitArea.on('pointerover', () => {
       this.tweens.add({ 
@@ -1075,8 +1059,15 @@ export class CollectionScene extends Phaser.Scene {
         this.highlightedCard = unit.id;
         const faction = FACTIONS[unit.factionId];
         highlightGlow.clear();
-        highlightGlow.lineStyle(4, faction.color, 0.8);
+        highlightGlow.lineStyle(3, faction.color, 0.8);
         highlightGlow.strokeRoundedRect(-size / 2 - 2, -size / 2 - 2, size + 4, size + 4, 12);
+
+        this.tweens.add({
+          targets: container,
+          scale: 1.05,
+          duration: 120,
+          ease: 'Back.easeOut',
+        });
       } else {
         // Второй тап - открыть модалку
         hapticImpact('medium');
@@ -1195,7 +1186,7 @@ export class CollectionScene extends Phaser.Scene {
     const footerReserve = modalHeight < 520 ? 120 : Phaser.Math.Clamp(Math.round(modalHeight * 0.27), 136, 172);
     const footerTop = modalTop + modalHeight - footerReserve;
     const minScrollRegion = modalHeight < 540 ? 52 : 76;
-    const titleFontPx = modalHeight < 520 ? '18px' : '22px';
+    const titleFontPx = modalHeight < 520 ? '20px' : '26px';
 
     const headerPadTop = 40;
     const gapAfterImage = 14;
@@ -1205,7 +1196,7 @@ export class CollectionScene extends Phaser.Scene {
     const overhead =
       headerPadTop + gapAfterImage + rarityBlock + titleMaxGuess + sepLead + 4;
     let imageSize = Math.floor(footerTop - modalTop - minScrollRegion - overhead);
-    imageSize = Phaser.Math.Clamp(imageSize, 84, 200);
+    imageSize = Phaser.Math.Clamp(imageSize, 84, 240);
 
     let yOffset = modalTop + headerPadTop;
 
@@ -1220,6 +1211,12 @@ export class CollectionScene extends Phaser.Scene {
       unitImage.setDisplaySize(imageSize, imageSize);
       unitImage.setAlpha(1); // Всегда полный цвет в модалке
       this.modalContainer.add(unitImage);
+
+      const heroGlow = this.add.graphics();
+      heroGlow.lineStyle(10, rarityColor.glow, 0.15);
+      heroGlow.strokeCircle(0, yOffset + imageSize / 2, imageSize / 1.8);
+      this.modalContainer.add(heroGlow);
+
       imageAdded = true;
     }
 
