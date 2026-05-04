@@ -73,40 +73,51 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     const vignette = scene.add.graphics();
     vignette.fillGradientStyle(0x030712, 0x020617, 0x020617, 0x010409, 0.94, 0.94, 0.94, 0.97);
     vignette.fillRect(0, 0, width, height);
-    vignette.fillStyle(0x000000, 0.35);
-    vignette.fillCircle(width / 2, height * 0.42, Math.max(width, height) * 0.85);
     this.add(vignette);
 
     const dim = scene.add.rectangle(width / 2, height / 2, width + 80, height + 80, 0x020617, 0.42);
-    dim.setInteractive();
-    dim.on('pointerdown', () => this.close());
     this.add(dim);
 
     const cx = width / 2;
-    /** Большой радиус: почти до краёв по узкой стороне */
-    const radius = Math.min(width * 0.46, height * 0.37, 220 * s);
-    const cy = height * 0.42;
-
     const topSafe = tgApp.getTopInset();
+    const headerRowY = Math.max(28 * s, topSafe + 18 * s);
+
+    const radius = Math.min(width * 0.44, height * 0.32, 200 * s);
+    const cy = Phaser.Math.Clamp(headerRowY + 42 * s + radius + 24 * s, height * 0.38, height * 0.55);
+
+    const closeHeader = scene.add
+      .text(14 * s, headerRowY, '✕  Закрыть', {
+        fontFamily: fonts.tech,
+        fontSize: `${Math.round(14 * s)}px`,
+        color: hexToString(colors.uiAccent),
+        fontStyle: 'bold',
+      })
+      .setOrigin(0, 0.5)
+      .setInteractive({ useHandCursor: true });
+    closeHeader.on('pointerdown', () => {
+      AudioManager.getInstance().playUIClick();
+      this.close();
+    });
+    this.add(closeHeader);
 
     const title = scene.add
-      .text(cx, Math.max(40 * s, topSafe + 28 * s), '✦ КОЛЕСО УДАЧИ ✦', {
+      .text(cx, headerRowY, '✦ КОЛЕСО УДАЧИ ✦', {
         fontFamily: fonts.tech,
-        fontSize: `${Math.round(19 * s)}px`,
+        fontSize: `${Math.round(18 * s)}px`,
         color: '#ffffff',
         fontStyle: 'bold',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5, 0.5);
     this.add(title);
 
     this.hintText = scene.add
       .text(
         cx,
-        title.y + 26 * s,
-        'Бесплатно раз в 12 ч • цвет сектора показывает редкость приза',
+        headerRowY + 26 * s,
+        'Бесплатно раз в 12 ч • цвет сектора = редкость приза',
         {
           fontFamily: fonts.primary,
-          fontSize: `${11 * s}px`,
+          fontSize: `${10 * s}px`,
           color: hexToString(colors.uiAccent),
           align: 'center',
           wordWrap: { width: width - 36 },
@@ -118,14 +129,11 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     this.wheelRoot = scene.add.container(cx, cy);
 
     const glow = scene.add.graphics();
-    for (let ring = 4; ring >= 0; ring--) {
-      const r = radius * (1.08 + ring * 0.038);
-      const alpha = 0.028 + ring * 0.02;
-      glow.lineStyle(12 - ring * 2, colors.uiAccent, alpha);
+    for (let ring = 1; ring >= 0; ring--) {
+      const r = radius * (1.05 + ring * 0.055);
+      glow.lineStyle(8 - ring * 3, colors.uiAccent, 0.06 + ring * 0.04);
       glow.strokeCircle(0, 0, r);
     }
-    glow.fillStyle(0x6366f1, 0.04);
-    glow.fillCircle(0, 0, radius * 1.22);
     this.wheelRoot.add(glow);
 
     /** Полноразмерный PNG обода часто даёт «плоское оранжевое пятно» — обод рисуем поверх секторов отдельно. */
@@ -149,18 +157,17 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       sliceGfx.fillStyle(i % 2 === 0 ? cA : cB, 1);
       sliceGfx.slice(0, 0, outerR, a0, a1, true);
       sliceGfx.fillPath();
-      sliceGfx.lineStyle(1.25, 0xffffff, tier === 'legendary' ? 0.14 : 0.06);
-      sliceGfx.slice(0, 0, outerR * 0.985, a0 + 0.02, a1 - 0.02, true);
-      sliceGfx.strokePath();
-      sliceGfx.lineStyle(2.2, TIER_EDGE[tier], tier === 'legendary' ? 1 : 0.82);
+      sliceGfx.lineStyle(2, TIER_EDGE[tier], tier === 'legendary' ? 1 : 0.78);
       sliceGfx.slice(0, 0, outerR, a0, a1, true);
       sliceGfx.strokePath();
     }
 
-    sliceGfx.lineStyle(5, 0xfbbf24, 0.55);
+    sliceGfx.lineStyle(4, 0xfbbf24, 0.5);
     sliceGfx.strokeCircle(0, 0, outerR);
-    sliceGfx.lineStyle(2, 0x1e293b, 0.9);
-    sliceGfx.strokeCircle(0, 0, outerR - 3);
+    sliceGfx.lineStyle(6, 0x1e293b, 1);
+    sliceGfx.strokeCircle(0, 0, radius * 0.985);
+    sliceGfx.lineStyle(2, 0xfbbf24, 0.35);
+    sliceGfx.strokeCircle(0, 0, radius * 0.965);
 
     const hubHoleR = radius * 0.2;
     sliceGfx.fillStyle(0x060b14, 1);
@@ -169,15 +176,6 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     sliceGfx.strokeCircle(0, 0, hubHoleR);
 
     this.wheelRoot.add(sliceGfx);
-
-    const chrome = scene.add.graphics();
-    chrome.lineStyle(7, 0x1e293b, 1);
-    chrome.strokeCircle(0, 0, radius * 0.99);
-    chrome.lineStyle(3, 0xfbbf24, 0.45);
-    chrome.strokeCircle(0, 0, radius * 0.972);
-    chrome.lineStyle(2, 0xffffff, 0.22);
-    chrome.strokeCircle(0, 0, radius * 0.956);
-    this.wheelRoot.add(chrome);
 
     const labelR = radius * 0.685;
     const fs = Math.max(9, Math.round(10 * s));
@@ -241,28 +239,6 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       this.add(pointer);
     }
 
-    const closeBtn = scene.add.container(width - 28 * s, 42 * s);
-    const closeBg = scene.add.graphics();
-    closeBg.fillStyle(0x050816, 0.92);
-    closeBg.fillCircle(0, 0, 22 * s);
-    closeBg.lineStyle(2, colors.uiAccent, 0.65);
-    closeBg.strokeCircle(0, 0, 22 * s);
-    closeBtn.add(closeBg);
-    closeBtn.add(
-      scene.add
-        .text(0, 0, '✕', {
-          fontSize: `${18 * s}px`,
-          fontFamily: fonts.tech,
-          color: hexToString(colors.uiAccent),
-          fontStyle: 'bold',
-        })
-        .setOrigin(0.5)
-    );
-    closeBtn.setSize(44 * s, 44 * s);
-    closeBtn.setInteractive({ useHandCursor: true });
-    closeBtn.on('pointerdown', () => this.close());
-    this.add(closeBtn);
-
     const btnW = Math.min(width - 48 * s, 340 * s);
     const btnH = 50 * s;
     const btnY = Math.min(height - Math.max(56 * s, tgApp.getBottomInset() + 32 * s), cy + radius + 62 * s);
@@ -299,7 +275,7 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     if (luckyWheelManager.canSpin()) {
       this.spinBtnLabel.setText('КРУТИТЬ');
       this.spinBtnLabel.setAlpha(1);
-      this.hintText.setText('Бесплатно раз в 12 ч • цвет сектора показывает редкость приза');
+      this.hintText.setText('Бесплатно раз в 12 ч • цвет сектора = редкость приза');
     } else {
       const left = luckyWheelManager.getMsUntilNextSpin();
       this.spinBtnLabel.setText(`Через ${formatCooldown(left)}`);
@@ -330,7 +306,7 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     this.scene.tweens.add({
       targets: this.wheelRoot,
       rotation: targetRotation,
-      duration: 3800,
+      duration: 2600,
       ease: 'Cubic.out',
       onComplete: () => {
         this.spinning = false;

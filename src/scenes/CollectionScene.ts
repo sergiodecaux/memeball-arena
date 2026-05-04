@@ -998,8 +998,27 @@ export class CollectionScene extends Phaser.Scene {
     }).setOrigin(0.5, 0);
     container.add(nameText);
 
+    const ud = mergeUnitDisplay(unit);
+    let blurbLine = (ud.description || '').replace(/\s+/g, ' ').trim();
+    if (!blurbLine) blurbLine = (ud.passive?.description || '').replace(/\s+/g, ' ').trim();
+    if (!blurbLine) blurbLine = (ud.title || '').trim();
+    if (blurbLine.length > 60) blurbLine = blurbLine.slice(0, 58) + '…';
+
+    const blurbText = this.add.text(0, size / 2 + 22 + nameText.height, blurbLine, {
+      fontSize: '9px',
+      fontFamily: getFonts().primary,
+      color: isOwned ? '#a8b9cf' : '#5c6570',
+      wordWrap: { width: size + 28 },
+      align: 'center',
+      lineSpacing: 2,
+      stroke: '#000000',
+      strokeThickness: 2,
+    }).setOrigin(0.5, 0);
+    container.add(blurbText);
+
     // Интерактивность (два тапа: первый - подсветка, второй - открыть)
-    const hitArea = this.add.rectangle(0, 0, size, size, 0, 0)
+    const touchExtraY = 36 + nameText.height + blurbText.height;
+    const hitArea = this.add.rectangle(0, touchExtraY * 0.45, size + 10, size + touchExtraY, 0, 0)
       .setInteractive({ useHandCursor: true });
     container.add(hitArea);
 
@@ -1154,13 +1173,31 @@ export class CollectionScene extends Phaser.Scene {
 
     const modalBottom = modalHeight / 2;
     const modalTop = -modalBottom;
+
+    const topClose = this.add
+      .text(-modalWidth / 2 + 10, modalTop + 12, '✕  Закрыть', {
+        fontFamily: getFonts().tech,
+        fontSize: '14px',
+        color: '#93c5fd',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0, 0)
+      .setDepth(220)
+      .setInteractive({ useHandCursor: true });
+    topClose.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      preventNativeEvent(pointer);
+      AudioManager.getInstance().playUIClick();
+      this.closeModal(overlay);
+    });
+    this.modalContainer.add(topClose);
+
     // На коротких экранах уменьшаем резерв футера, иначе шапка заходит в зону кнопок и текст скрывается под ними
     const footerReserve = modalHeight < 520 ? 120 : Phaser.Math.Clamp(Math.round(modalHeight * 0.27), 136, 172);
     const footerTop = modalTop + modalHeight - footerReserve;
     const minScrollRegion = modalHeight < 540 ? 52 : 76;
     const titleFontPx = modalHeight < 520 ? '18px' : '22px';
 
-    const headerPadTop = 22;
+    const headerPadTop = 40;
     const gapAfterImage = 14;
     const rarityBlock = 38;
     const titleMaxGuess = modalHeight < 520 ? 58 : 78;
@@ -1282,6 +1319,52 @@ export class CollectionScene extends Phaser.Scene {
 
     yOffset += sepLead;
 
+    const rawDescPreview = (u.description ?? '').trim();
+    const passiveSnippetPrev = (u.passive?.description ?? '').trim();
+    const signatureSnippetPrev = (u.specialAbility ?? '').trim();
+    const titleFlavorPrev = (u.title ?? '').trim();
+    const loreBodyPreview =
+      rawDescPreview ||
+      [
+        passiveSnippetPrev && passiveSnippetPrev !== rawDescPreview ? passiveSnippetPrev : '',
+        signatureSnippetPrev,
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+        .trim() ||
+      [titleFlavorPrev, passiveSnippetPrev].filter(Boolean).join('\n\n').trim() ||
+      'Описание скоро будет добавлено. Ниже — характеристики и способности.';
+
+    const descSectionTitle = this.add.text(0, yOffset, `📖 ${COLLECTION_RU.ui.description}`, {
+      fontSize: '14px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      fontFamily: getFonts().tech,
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5);
+    this.modalContainer.add(descSectionTitle);
+    yOffset += 22;
+
+    const fixedDesc = this.add.text(0, yOffset, loreBodyPreview, {
+      fontSize: '13px',
+      color: '#e8e4f0',
+      wordWrap: { width: modalWidth - 44 },
+      align: 'center',
+      lineSpacing: 5,
+      stroke: '#0f172a',
+      strokeThickness: 3,
+      fontFamily: getFonts().primary,
+    }).setOrigin(0.5, 0);
+    this.modalContainer.add(fixedDesc);
+    yOffset += fixedDesc.height + 14;
+
+    const sepBeforeScroll = this.add.graphics();
+    sepBeforeScroll.lineStyle(2, rarityColor.border, 0.35);
+    sepBeforeScroll.lineBetween(-modalWidth / 2 + 28, yOffset, modalWidth / 2 - 28, yOffset);
+    this.modalContainer.add(sepBeforeScroll);
+    yOffset += sepLead;
+
     let scrollRegionTop = yOffset;
     if (scrollRegionTop > footerTop - minScrollRegion) {
       scrollRegionTop = footerTop - minScrollRegion;
@@ -1290,8 +1373,6 @@ export class CollectionScene extends Phaser.Scene {
     scrollRegionHeight = Math.max(minScrollRegion, scrollRegionHeight);
 
     const scrollRoot = this.add.container(0, scrollRegionTop).setDepth(12);
-    /** Pivot сверху-слева (в типах Container часто без setOrigin — метод есть в рантайме). */
-    (scrollRoot as unknown as { setOrigin(x: number, y: number): void }).setOrigin(0, 0);
     this.modalContainer.add(scrollRoot);
 
     let ly = 0;
@@ -1441,52 +1522,6 @@ export class CollectionScene extends Phaser.Scene {
       ly += abilityText.height + 15;
     }
 
-    const separator3 = this.add.graphics();
-    separator3.lineStyle(2, rarityColor.border, 0.3);
-    separator3.lineBetween(-modalWidth / 2 + 30, ly, modalWidth / 2 - 30, ly);
-    scrollRoot.add(separator3);
-
-    ly += 15;
-
-    const rawDesc = (u.description ?? '').trim();
-    const passiveSnippet = (u.passive?.description ?? '').trim();
-    const signatureSnippet = (u.specialAbility ?? '').trim();
-    const titleFlavor = (u.title ?? '').trim();
-    const loreBody =
-      rawDesc ||
-      [passiveSnippet && passiveSnippet !== rawDesc ? passiveSnippet : '', signatureSnippet]
-        .filter(Boolean)
-        .join('\n\n')
-        .trim() ||
-      [titleFlavor, passiveSnippet].filter(Boolean).join('\n\n').trim() ||
-      'Краткое описание появится позже. Смотрите блок характеристик и способности выше.';
-
-    const descTitle = this.add.text(0, ly, `📖 ${COLLECTION_RU.ui.description}`, {
-      fontSize: '14px',
-      color: '#ffffff',
-      fontStyle: 'bold',
-      fontFamily: getFonts().tech,
-      stroke: '#000000',
-      strokeThickness: 3,
-    }).setOrigin(0.5);
-    scrollRoot.add(descTitle);
-
-    ly += 20;
-
-    const descText = this.add.text(0, ly, loreBody, {
-      fontSize: '13px',
-      color: '#e8e4f0',
-      wordWrap: { width: modalWidth - 70 },
-      align: 'center',
-      lineSpacing: 5,
-      stroke: '#0f172a',
-      strokeThickness: 3,
-      fontFamily: getFonts().primary,
-    }).setOrigin(0.5, 0);
-    scrollRoot.add(descText);
-
-    ly += descText.height + 18;
-
     let progress = 0;
     if (!isOwned && !isPremium) {
       const currentFragments = playerData.getUnitFragments(unit.id);
@@ -1578,6 +1613,9 @@ export class CollectionScene extends Phaser.Scene {
       scrollContentHeight = scrollContentHeightBase + hint.height + 12;
     }
 
+    /** Контейнер с origin по центру ограничений: верх контента = scrollRegionTop при scrollOff=0 */
+    scrollRoot.setY(scrollRegionTop + scrollContentHeight / 2);
+
     const scrollMaskG = this.add.graphics().setDepth(11);
     scrollMaskG.fillStyle(0xffffff, 1);
     scrollMaskG.fillRect(-modalWidth / 2 + 10, scrollRegionTop, modalWidth - 20, scrollRegionHeight);
@@ -1589,7 +1627,7 @@ export class CollectionScene extends Phaser.Scene {
     const maxScroll = Math.max(0, scrollContentHeight - scrollRegionHeight);
     const syncScroll = () => {
       scrollOff = Phaser.Math.Clamp(scrollOff, 0, maxScroll);
-      scrollRoot.setY(scrollRegionTop - scrollOff);
+      scrollRoot.setY(scrollRegionTop + scrollContentHeight / 2 - scrollOff);
     };
     syncScroll();
 
@@ -1745,6 +1783,7 @@ export class CollectionScene extends Phaser.Scene {
     if (isPremium && !canAffordPremium) {
       closeCenterY += 22;
     }
+    closeCenterY = Math.min(closeCenterY, modalBottom - 36);
 
     const closeBtn = this.createModalCloseButtonAt(closeCenterY, () => {
       if (this.modalContainer) {
