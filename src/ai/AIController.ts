@@ -3,7 +3,7 @@
 import Phaser from 'phaser';
 import { Ball } from '../entities/Ball';
 import { AIDifficulty, PlayerNumber, normalizeGameAIDifficulty, AIDifficultyInput } from '../types';
-import { FIELD, GOAL, FactionId } from '../constants/gameConstants';
+import { FIELD, GOAL, FactionId, LASSO_CONFIG } from '../constants/gameConstants';
 import {
   AIMatchContext,
   getContextDifficultyModifier,
@@ -24,7 +24,7 @@ interface ShotCandidate {
   unit: AIUnit;
   target: { x: number; y: number };
   score: number;
-  type: 'goal' | 'pass' | 'defend' | 'clear' | 'pressure';
+  type: 'goal' | 'pass' | 'defend' | 'clear' | 'pressure' | 'lasso';
   force: { x: number; y: number };
   description: string;
 }
@@ -169,8 +169,16 @@ export class AIController {
   private profileCardMods: ReturnType<typeof getProfileCardModifiers>;
   private profileNoise: ReturnType<typeof getProfilePlaystyleNoise>;
 
-  private moveCompleteCallback?: () => void;
+  private moveCompleteCallback?: (skipDirectorShot?: boolean) => void;
   private thinkingTimer?: Phaser.Time.TimerEvent;
+
+  /** Запуск сценария лассо (трикстер); при успехе ход уже завершён через handleLassoReleased → onShot(capId). */
+  private tricksterLassoRunner?: (
+    unit: AIUnit,
+    aimX: number,
+    aimY: number,
+    onFinished: (usedLasso: boolean) => void,
+  ) => boolean;
 
   /** Ограничение выбора фишки (цепочка SUPER Xerxa и др.) */
   private captainShotGate?: (unit: AIUnit) => boolean;
@@ -414,8 +422,21 @@ export class AIController {
     this.onCardUsed = callback;
   }
 
-  onMoveComplete(callback: () => void): void {
+  onMoveComplete(callback: (skipDirectorShot?: boolean) => void): void {
     this.moveCompleteCallback = callback;
+  }
+
+  setTricksterLassoRunner(
+    fn:
+      | ((
+          unit: AIUnit,
+          aimX: number,
+          aimY: number,
+          onFinished: (usedLasso: boolean) => void,
+        ) => boolean)
+      | undefined,
+  ): void {
+    this.tricksterLassoRunner = fn;
   }
 
   // === УПРАВЛЕНИЕ СЧЁТОМ ===
@@ -714,6 +735,11 @@ export class AIController {
         candidates.push(goal);
       }
 
+      const lassoShot = this.evaluateTricksterLassoShot(unit);
+      if (lassoShot) {
+        candidates.push(lassoShot);
+      }
+
       const defend = this.evaluateDefenseShot(unit);
       if (defend) {
         if (danger > 0.7) {
@@ -825,6 +851,36 @@ export class AIController {
       type: 'goal',
       force,
       description: `Goal by ${unit.getCapClass()} angle:${normAngle.toFixed(0)}° dist:${distToBall.toFixed(0)}`,
+    };
+  }
+
+  /** Лассо-трикстер к воротам игрока, только если мяч в кольце захвата и базовый голевой ход валиден. */
+  private evaluateTricksterLassoShot(unit: AIUnit): ShotCandidate | null {
+    if (unit.getCapClass() !== 'trickster') return null;
+    if (!this.settings.useClassAbilities || !this.tricksterLassoRunner) return null;
+
+    const baseGoal = this.evaluateGoalShot(unit);
+    if (!baseGoal) return null;
+
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    const minDist = unit.getRadius() * LASSO_CONFIG.MIN_DISTANCE_RADII;
+    if (distToBall < minDist || distToBall > LASSO_CONFIG.MAX_CAPTURE_DISTANCE) return null;
+
+    const jitter = (1 - this.settings.accuracy) * 52;
+    const target = {
+      x: baseGoal.target.x + (Math.random() - 0.5) * jitter,
+      y: baseGoal.target.y + (Math.random() - 0.5) * jitter * 0.35,
+    };
+
+    return {
+      unit,
+      target,
+      score: baseGoal.score + 32,
+      type: 'lasso',
+      force: { x: 0, y: 0 },
+      description: `Trickster lasso → goal dist:${distToBall.toFixed(0)}`,
     };
   }
 
@@ -1076,28 +1132,68 @@ export class AIController {
       this.finishMove(); // Reset flags so GameScene can retry
       return;
     }
-    
+
+    if (candidate.type === 'lasso') {
+      this.executeTricksterLasso(candidate);
+      return;
+    }
+
     const { unit, force } = candidate;
-    
+
     this.scene.matter.body.applyForce(
       unit.body,
       unit.body.position,
       force
     );
-    
+
     if (typeof (unit as any).playHitEffect === 'function') {
       (unit as any).playHitEffect();
     }
-    
+
     AudioManager.getInstance().playSFX('sfx_kick');
-    
+
     this.finishMove();
   }
 
-  private finishMove(): void {
+  private executeTricksterLasso(candidate: ShotCandidate): void {
+    const runner = this.tricksterLassoRunner;
+    if (!runner) {
+      const fb = this.evaluateGoalShot(candidate.unit);
+      if (fb) this.executeShot(fb);
+      else this.finishMove();
+      return;
+    }
+
+    const finishOrFallback = (usedLasso: boolean) => {
+      if (usedLasso) {
+        this.finishMove({ skipDirectorShot: true });
+        return;
+      }
+      const fb = this.evaluateGoalShot(candidate.unit);
+      if (fb) {
+        this.executeShot(fb);
+        return;
+      }
+      console.warn('[AI] Lasso failed and no fallback goal for trickster');
+      this.finishMove();
+    };
+
+    const started = runner(
+      candidate.unit,
+      candidate.target.x,
+      candidate.target.y,
+      finishOrFallback,
+    );
+
+    if (!started) {
+      finishOrFallback(false);
+    }
+  }
+
+  private finishMove(opts?: { skipDirectorShot?: boolean }): void {
     this.isThinking = false;
     this.lastMoveTime = Date.now();
-    this.moveCompleteCallback?.();
+    this.moveCompleteCallback?.(opts?.skipDirectorShot === true);
   }
 
   // ⭐ NEW: Получить доступные карты AI
@@ -1118,6 +1214,7 @@ export class AIController {
   destroy(): void {
     this.stop();
     this.moveCompleteCallback = undefined;
+    this.tricksterLassoRunner = undefined;
     this.onCardUsed = undefined;
     this.availableCards = [];
   }

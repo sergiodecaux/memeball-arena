@@ -83,7 +83,7 @@ export class LassoController {
     return true;
   }
 
-  public activate(cap: GameUnit): boolean {
+  public activate(cap: GameUnit, opts?: { programmaticOnly?: boolean }): boolean {
     if (!this.canActivate(cap)) return false;
 
     const ball = this.getBall();
@@ -106,12 +106,56 @@ export class LassoController {
 
     this.ropeGraphics.setVisible(true);
 
-    this.attachFieldInput();
+    if (!opts?.programmaticOnly) {
+      this.attachFieldInput();
+    }
 
     console.log(
       `[LassoController] Activated. Dist: ${this.captureDistance.toFixed(0)}px, ` +
         `Angle: ${((this.swingAngle * 180) / Math.PI).toFixed(1)}°`,
     );
+    return true;
+  }
+
+  /**
+   * Полное действие лассо для ИИ: захват → короткий прицел → бросок.
+   * Без pointer-событий (programmaticOnly), чтобы игрок не прерывал фазу касанием.
+   */
+  public runAISequence(
+    cap: GameUnit,
+    aimWorldX: number,
+    aimWorldY: number,
+    onComplete: (result: { ok: boolean; released: boolean }) => void,
+  ): boolean {
+    if (!this.activate(cap, { programmaticOnly: true })) {
+      onComplete({ ok: false, released: false });
+      return false;
+    }
+
+    const capGuard = cap;
+    const afterCapture = LASSO_CONFIG.CAPTURE_DURATION_MS + Phaser.Math.Between(40, 130);
+
+    this.scene.time.delayedCall(afterCapture, () => {
+      if (!this.attachedCap || this.attachedCap !== capGuard || this.phase !== 'AIMING') {
+        if (this.phase !== 'IDLE') this.cancel();
+        onComplete({ ok: false, released: false });
+        return;
+      }
+
+      this.applyControlTowardWorld(aimWorldX, aimWorldY);
+
+      const aimHold = Phaser.Math.Between(60, 190);
+      this.scene.time.delayedCall(aimHold, () => {
+        if (this.phase !== 'AIMING' || !this.attachedCap) {
+          if (this.phase !== 'IDLE') this.cancel();
+          onComplete({ ok: false, released: false });
+          return;
+        }
+        this.release();
+        onComplete({ ok: true, released: true });
+      });
+    });
+
     return true;
   }
 
@@ -208,8 +252,12 @@ export class LassoController {
 
     if (this.activePointerId !== -1 && pointer.id !== this.activePointerId) return;
 
-    const worldX = pointer.worldX;
-    const worldY = pointer.worldY;
+    this.applyControlTowardWorld(pointer.worldX, pointer.worldY);
+  };
+
+  /** Прицеливание к точке мира с ограничением CONTROL_ZONE (общее для игрока и ИИ). */
+  private applyControlTowardWorld(worldX: number, worldY: number): void {
+    if (!this.attachedCap) return;
 
     const capX = this.attachedCap.x;
     const capY = this.attachedCap.y;
@@ -236,7 +284,7 @@ export class LassoController {
       this.scene.matter.body.setPosition(ball.body, { x: this.orbitX, y: this.orbitY });
       ball.sprite.setPosition(this.orbitX, this.orbitY);
     }
-  };
+  }
 
   private onFieldPointerUp = (pointer: Phaser.Input.Pointer): void => {
     if (this.phase !== 'AIMING') return;

@@ -1053,13 +1053,25 @@ export class GameScene extends Phaser.Scene {
 
     this.player2AbilityManager?.alignAIDeckFromHand(this.aiController.getHandCardIds());
 
-    this.aiController.onMoveComplete(() => {
+    this.aiController.onMoveComplete((skipDirectorShot?: boolean) => {
       this.aiTurnScheduled = false;
-      this.matchDirector.onShot('ai_unit');
+      if (!skipDirectorShot) {
+        this.matchDirector.onShot('ai_unit');
+      }
     });
 
     this.syncAIFormationPositions('match-start');
     this.lastSyncedAIFormationId = this.aiController.getCurrentFormation().id;
+  }
+
+  /** После createUI: LassoController создаётся позже setupAIController. */
+  private wireAITricksterLasso(): void {
+    if (!this.aiController || !this.lassoController) return;
+    this.aiController.setTricksterLassoRunner((unit, aimX, aimY, onFinished) =>
+      this.lassoController!.runAISequence(unit as GameUnit, aimX, aimY, (result) => {
+        onFinished(result.ok && result.released);
+      }),
+    );
   }
 
   private createManagers(): void {
@@ -1473,6 +1485,8 @@ export class GameScene extends Phaser.Scene {
     this.lassoButton = new LassoButton(this, {
       lassoController: this.lassoController,
     });
+
+    this.wireAITricksterLasso();
 
     this.createCardPanel();
 

@@ -474,7 +474,8 @@ export const ABILITY_CONFIG = {
 export const LASSO_CONFIG = {
   COOLDOWN_MS: 30000,
   MIN_DISTANCE_RADII: 3.0,
-  MAX_CAPTURE_DISTANCE: 400,
+  /** Внешняя граница захвата (−35% к прежним 400 px). */
+  MAX_CAPTURE_DISTANCE: 260,
   MIN_THROW_FORCE: 0.010,
   MAX_THROW_FORCE: 0.042,
   ORBIT_RADIUS: 65,
