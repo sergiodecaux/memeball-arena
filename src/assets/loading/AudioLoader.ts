@@ -157,6 +157,8 @@ export function loadAudioBoot(scene: Phaser.Scene): void {
   // ✅ FIX: Используем абсолютные пути для файлов из public/
   // Only minimal UI click sound
   scene.load.audio('sfx_click', getAudioPath('sfx/ui_click.mp3'));
+  /** Короткий «тик» для колеса удачи и т.п. (тот же файл, что ui_click). */
+  scene.load.audio('sfx_tick', getAudioPath('sfx/ui_click.mp3'));
   scene.load.audio('ui_click', [
     getAudioPath('ui_click.ogg'),
     getAudioPath('ui_click.mp3')

@@ -53,6 +53,22 @@ const TIER_TITLE_HEX: Record<LuckyWheelRewardTier, string> = {
   legendary: '#fef08a',
 };
 
+function getSliceRewardVisual(row: LuckyWheelReward): { icon: string; amount: string } {
+  if (row.coins != null && row.coins > 0) {
+    return { icon: '🪙', amount: String(row.coins) };
+  }
+  if (row.crystals != null && row.crystals > 0) {
+    return { icon: '💎', amount: String(row.crystals) };
+  }
+  if (row.bpXp != null && row.bpXp > 0) {
+    return { icon: '⚡', amount: String(row.bpXp) };
+  }
+  if (row.fragments != null && row.fragments > 0) {
+    return { icon: '🧩', amount: String(row.fragments) };
+  }
+  return { icon: '✦', amount: row.label.slice(0, 8) };
+}
+
 /**
  * Колесо удачи — крупное колесо по центру экрана, минимум «коробки», акцент как в магазине.
  */
@@ -177,35 +193,96 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
 
     this.wheelRoot.add(sliceGfx);
 
-    const labelR = radius * 0.685;
-    const fs = Math.max(9, Math.round(10 * s));
+    const hasLegendarySlice = LUCKY_WHEEL_REWARDS.some((r) => r.tier === 'legendary');
+    if (hasLegendarySlice) {
+      const legGlow = scene.add.graphics();
+      legGlow.lineStyle(6, 0xfef08a, 0.5);
+      legGlow.strokeCircle(0, 0, outerR * 0.97);
+      this.wheelRoot.add(legGlow);
+      scene.tweens.add({
+        targets: legGlow,
+        alpha: { from: 0.3, to: 0.8 },
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+      });
+    }
+
     for (let i = 0; i < n; i++) {
       const mid = -Math.PI / 2 + (i + 0.5) * slice;
-      const tx = Math.cos(mid) * labelR;
-      const ty = Math.sin(mid) * labelR;
+      const rewardRadius = outerR * 0.6;
+      const rx = Math.cos(mid) * rewardRadius;
+      const ry = Math.sin(mid) * rewardRadius;
       const row = LUCKY_WHEEL_REWARDS[i];
-      const tierTag =
-        row.tier === 'legendary' ? '★ ' : row.tier === 'epic' ? '⚡ ' : row.tier === 'rare' ? '✦ ' : '';
-      const raw = row.label;
-      const short = raw.length > 14 ? raw.slice(0, 12) + '…' : raw;
-      const label = scene.add
-        .text(tx, ty, `${tierTag}${short}`, {
-          fontFamily: fonts.tech,
-          fontSize: `${fs}px`,
-          color: TIER_LABEL_HEX[row.tier],
-          align: 'center',
+      const { icon, amount } = getSliceRewardVisual(row);
+
+      const iconTxt = scene.add
+        .text(rx, ry - 12 * s, icon, {
+          fontSize: `${Math.round(22 * s)}px`,
           fontStyle: 'bold',
-          stroke: '#020617',
-          strokeThickness: Math.max(2, Math.round(2.2 * s)),
         })
-        .setOrigin(0.5)
-        .setRotation(mid + Math.PI / 2);
-      this.wheelRoot.add(label);
+        .setOrigin(0.5);
+      this.wheelRoot.add(iconTxt);
+
+      this.wheelRoot.add(
+        scene.add
+          .text(rx, ry + 8 * s, amount, {
+            fontSize: `${Math.round(16 * s)}px`,
+            fontStyle: 'bold',
+            color: TIER_LABEL_HEX[row.tier],
+            stroke: '#020617',
+            strokeThickness: Math.max(2, Math.round(3 * s)),
+          })
+          .setOrigin(0.5),
+      );
     }
 
     const hubR = Math.round(21 * s);
-    const hubGlow = scene.add.circle(0, 0, hubR + 10 * s, colors.uiAccent, 0.25);
-    this.wheelRoot.add(hubGlow);
+    const hubGlowGfx = scene.add.graphics();
+    hubGlowGfx.fillStyle(colors.uiAccent, 0.42);
+    hubGlowGfx.fillCircle(0, 0, hubR + 14 * s);
+    hubGlowGfx.lineStyle(8, colors.uiAccent, 0.2);
+    hubGlowGfx.strokeCircle(0, 0, hubR + 16 * s);
+    this.wheelRoot.add(hubGlowGfx);
+    scene.tweens.add({
+      targets: hubGlowGfx,
+      scaleX: { from: 1, to: 1.1 },
+      scaleY: { from: 1, to: 1.1 },
+      duration: 1200,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    const hubMetal = scene.add.graphics();
+    hubMetal.lineStyle(5, 0xf8fafc, 0.55);
+    hubMetal.strokeCircle(0, 0, hubR + 5 * s);
+    hubMetal.lineStyle(3, 0x475569, 0.95);
+    hubMetal.strokeCircle(0, 0, hubR + 2 * s);
+    hubMetal.lineStyle(2, 0x1e293b, 1);
+    hubMetal.strokeCircle(0, 0, hubR - 1 * s);
+    this.wheelRoot.add(hubMetal);
+
+    const hubShine = scene.add.graphics();
+    hubShine.fillStyle(0xffffff, 0.28);
+    hubShine.fillCircle(-hubR * 0.34, -hubR * 0.34, Math.max(6, hubR * 0.42));
+    hubShine.setBlendMode(Phaser.BlendModes.ADD);
+    this.wheelRoot.add(hubShine);
+    scene.tweens.add({
+      targets: hubShine,
+      alpha: { from: 0.1, to: 0.42 },
+      duration: 950,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    scene.tweens.add({
+      targets: hubShine,
+      angle: 360,
+      duration: 9000,
+      repeat: -1,
+      ease: 'Linear',
+    });
 
     const centerKey = 'ui_lucky_wheel_center';
     if (scene.textures.exists(centerKey)) {
@@ -221,7 +298,7 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
             color: '#1c1917',
             fontStyle: 'bold',
           })
-          .setOrigin(0.5)
+          .setOrigin(0.5),
       );
     }
 
@@ -303,17 +380,39 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     const spins = 6 + Math.floor(Math.random() * 3);
     const targetRotation = spins * Math.PI * 2 + (-Math.PI / 2 - centerAngle);
 
+    const tickEvent = this.scene.time.addEvent({
+      delay: 80,
+      loop: true,
+      callback: () => {
+        AudioManager.getInstance().playSFX('sfx_tick', { volume: 0.2 });
+      },
+    });
+
     this.scene.tweens.add({
       targets: this.wheelRoot,
       rotation: targetRotation,
       duration: 2600,
       ease: 'Cubic.out',
       onComplete: () => {
-        this.spinning = false;
+        tickEvent.remove(false);
+
         const twopi = Math.PI * 2;
         this.wheelRoot.rotation = ((this.wheelRoot.rotation % twopi) + twopi) % twopi;
-        this.showResult(result.reward);
-        this.refreshButtonState();
+
+        this.scene.cameras.main.shake(180, 0.004);
+
+        this.wheelRoot.setScale(1.05);
+        this.scene.tweens.add({
+          targets: this.wheelRoot,
+          scale: 1,
+          duration: 250,
+          ease: 'Back.easeOut',
+          onComplete: () => {
+            this.spinning = false;
+            this.showResult(result.reward);
+            this.refreshButtonState();
+          },
+        });
       },
     });
   }
@@ -350,11 +449,14 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     const panel = this.scene.add.graphics();
     panel.fillGradientStyle(0x111827, 0x0b1220, 0x080f18, 0x111827, 1, 1, 1, 1);
     panel.fillRoundedRect(-w / 2, -h / 2, w, h, 22 * s);
-    panel.lineStyle(tier === 'legendary' ? 5 : 4, accent, 1);
+    panel.lineStyle(tier === 'legendary' ? 6 : 5, accent, 1);
     panel.strokeRoundedRect(-w / 2, -h / 2, w, h, 22 * s);
-    panel.lineStyle(2, colors.uiAccent, tier === 'epic' || tier === 'legendary' ? 0.45 : 0.22);
+    panel.lineStyle(3, colors.uiAccent, tier === 'epic' || tier === 'legendary' ? 0.45 : 0.22);
     panel.strokeRoundedRect(-w / 2 + 5, -h / 2 + 5, w - 10, h - 10, 18 * s);
-    modal.add(panel);
+
+    const panelPulseRoot = this.scene.add.container(0, 0);
+    panelPulseRoot.add(panel);
+    modal.add(panelPulseRoot);
 
     modal.add(
       this.scene.add
@@ -382,7 +484,7 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       this.scene.add
         .text(0, 4 * s, body, {
           fontFamily: fonts.primary,
-          fontSize: `${16 * s}px`,
+          fontSize: `${18 * s}px`,
           color: '#f8fafc',
           align: 'center',
           fontStyle: 'bold',
@@ -410,6 +512,18 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     this.scene.time.delayedCall(tier === 'legendary' ? 5400 : 4400, close);
 
     this.scene.add.existing(modal);
+
+    if (tier === 'legendary') {
+      this.scene.tweens.add({
+        targets: panelPulseRoot,
+        scaleX: { from: 1, to: 1.03 },
+        scaleY: { from: 1, to: 1.03 },
+        duration: 600,
+        yoyo: true,
+        repeat: 3,
+        ease: 'Sine.easeInOut',
+      });
+    }
 
     if (tier === 'legendary' || tier === 'epic') {
       this.scene.tweens.add({
