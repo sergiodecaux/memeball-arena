@@ -1136,10 +1136,12 @@ export class CollectionScene extends Phaser.Scene {
     modalShadow.setBlendMode(Phaser.BlendModes.MULTIPLY);
     this.modalContainer.add(modalShadow);
 
-    // Фон модалки
+    // Фон модалки (градиент + лёгкая внутренняя подсветка)
     const modalBg = this.add.graphics();
-    modalBg.fillStyle(0x16161f, 1);
+    modalBg.fillGradientStyle(0x1e1432, 0x12101c, 0x0c0a12, 0x181028, 1, 1, 1, 1);
     modalBg.fillRoundedRect(-modalWidth / 2, -modalHeight / 2, modalWidth, modalHeight, 20);
+    modalBg.lineStyle(2, 0x2e1060, 0.65);
+    modalBg.strokeRoundedRect(-modalWidth / 2 + 1, -modalHeight / 2 + 1, modalWidth - 2, modalHeight - 2, 19);
     modalBg.lineStyle(3, rarityColor.border, 1);
     modalBg.strokeRoundedRect(-modalWidth / 2, -modalHeight / 2, modalWidth, modalHeight, 20);
     this.modalContainer.add(modalBg);
@@ -1258,6 +1260,20 @@ export class CollectionScene extends Phaser.Scene {
 
     yOffset += Math.max(28, Math.ceil(titleText.height) + 8);
 
+    const subtitleRaw = (u.title ?? '').trim();
+    if (subtitleRaw.length > 0) {
+      const subtitle = this.add.text(0, yOffset, subtitleRaw, {
+        fontFamily: getFonts().primary,
+        fontSize: modalHeight < 520 ? '12px' : '13px',
+        color: '#c4b5fd',
+        fontStyle: 'italic',
+        wordWrap: { width: modalWidth - 52 },
+        align: 'center',
+      }).setOrigin(0.5);
+      this.modalContainer.add(subtitle);
+      yOffset += Math.ceil(subtitle.height) + 10;
+    }
+
     // Разделительная линия
     const separator1 = this.add.graphics();
     separator1.lineStyle(2, rarityColor.border, 0.3);
@@ -1274,6 +1290,8 @@ export class CollectionScene extends Phaser.Scene {
     scrollRegionHeight = Math.max(minScrollRegion, scrollRegionHeight);
 
     const scrollRoot = this.add.container(0, scrollRegionTop).setDepth(12);
+    /** Pivot сверху-слева (в типах Container часто без setOrigin — метод есть в рантайме). */
+    (scrollRoot as unknown as { setOrigin(x: number, y: number): void }).setOrigin(0, 0);
     this.modalContainer.add(scrollRoot);
 
     let ly = 0;
@@ -1433,12 +1451,14 @@ export class CollectionScene extends Phaser.Scene {
     const rawDesc = (u.description ?? '').trim();
     const passiveSnippet = (u.passive?.description ?? '').trim();
     const signatureSnippet = (u.specialAbility ?? '').trim();
+    const titleFlavor = (u.title ?? '').trim();
     const loreBody =
       rawDesc ||
       [passiveSnippet && passiveSnippet !== rawDesc ? passiveSnippet : '', signatureSnippet]
         .filter(Boolean)
         .join('\n\n')
         .trim() ||
+      [titleFlavor, passiveSnippet].filter(Boolean).join('\n\n').trim() ||
       'Краткое описание появится позже. Смотрите блок характеристик и способности выше.';
 
     const descTitle = this.add.text(0, ly, `📖 ${COLLECTION_RU.ui.description}`, {
@@ -1454,13 +1474,13 @@ export class CollectionScene extends Phaser.Scene {
     ly += 20;
 
     const descText = this.add.text(0, ly, loreBody, {
-      fontSize: '12px',
-      color: '#d4d4d8',
+      fontSize: '13px',
+      color: '#e8e4f0',
       wordWrap: { width: modalWidth - 70 },
       align: 'center',
-      lineSpacing: 4,
-      stroke: '#000000',
-      strokeThickness: 2,
+      lineSpacing: 5,
+      stroke: '#0f172a',
+      strokeThickness: 3,
       fontFamily: getFonts().primary,
     }).setOrigin(0.5, 0);
     scrollRoot.add(descText);
@@ -1544,7 +1564,19 @@ export class CollectionScene extends Phaser.Scene {
       ly += 28;
     }
 
-    const scrollContentHeight = ly;
+    const scrollContentHeightBase = ly;
+    let scrollContentHeight = scrollContentHeightBase;
+    if (scrollContentHeightBase > scrollRegionHeight + 8) {
+      const hint = this.add
+        .text(0, scrollContentHeightBase + 6, '▼ свайп / колесо ▼', {
+          fontSize: '10px',
+          fontFamily: getFonts().tech,
+          color: '#64748b',
+        })
+        .setOrigin(0.5);
+      scrollRoot.add(hint);
+      scrollContentHeight = scrollContentHeightBase + hint.height + 12;
+    }
 
     const scrollMaskG = this.add.graphics().setDepth(11);
     scrollMaskG.fillStyle(0xffffff, 1);

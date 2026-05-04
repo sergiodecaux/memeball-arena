@@ -19,10 +19,10 @@ function formatCooldown(ms: number): string {
 }
 
 const TIER_SLICE_PAIR: Record<LuckyWheelRewardTier, readonly [number, number]> = {
-  common: [0x1e293b, 0x334155],
-  rare: [0x3730a3, 0x4338ca],
-  epic: [0x86198f, 0xa21caf],
-  legendary: [0xb45309, 0xd97706],
+  common: [0x243548, 0x1a2332],
+  rare: [0x4f46e5, 0x3730a3],
+  epic: [0xb02686, 0x701a75],
+  legendary: [0x9333ea, 0x581c87],
 };
 
 const TIER_EDGE: Record<LuckyWheelRewardTier, number> = {
@@ -40,9 +40,9 @@ const TIER_TITLE: Record<LuckyWheelRewardTier, string> = {
 };
 
 const TIER_LABEL_HEX: Record<LuckyWheelRewardTier, string> = {
-  common: '#e2e8f0',
-  rare: '#c7d2fe',
-  epic: '#fae8ff',
+  common: '#f1f5f9',
+  rare: '#eef2ff',
+  epic: '#fdf4ff',
   legendary: '#fef9c3',
 };
 
@@ -77,9 +77,9 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     vignette.fillCircle(width / 2, height * 0.42, Math.max(width, height) * 0.85);
     this.add(vignette);
 
-    const dim = scene.add.rectangle(width / 2, height / 2, width + 80, height + 80, 0x020617, 0.35);
+    const dim = scene.add.rectangle(width / 2, height / 2, width + 80, height + 80, 0x020617, 0.42);
     dim.setInteractive();
-    dim.once('pointerdown', () => {});
+    dim.on('pointerdown', () => this.close());
     this.add(dim);
 
     const cx = width / 2;
@@ -103,7 +103,7 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       .text(
         cx,
         title.y + 26 * s,
-        'Бесплатно раз в 12 ч • сектор по редкости от серого к золоту',
+        'Бесплатно раз в 12 ч • цвет сектора показывает редкость приза',
         {
           fontFamily: fonts.primary,
           fontSize: `${11 * s}px`,
@@ -119,24 +119,27 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
 
     const glow = scene.add.graphics();
     for (let ring = 4; ring >= 0; ring--) {
-      const r = radius * (1.06 + ring * 0.045);
-      const alpha = 0.035 + ring * 0.022;
-      glow.lineStyle(14 - ring * 2, colors.uiAccent, alpha);
+      const r = radius * (1.08 + ring * 0.038);
+      const alpha = 0.028 + ring * 0.02;
+      glow.lineStyle(12 - ring * 2, colors.uiAccent, alpha);
       glow.strokeCircle(0, 0, r);
     }
-    glow.fillStyle(0xfbbf24, 0.06);
-    glow.fillCircle(0, 0, radius * 1.28);
+    glow.fillStyle(0x6366f1, 0.04);
+    glow.fillCircle(0, 0, radius * 1.22);
     this.wheelRoot.add(glow);
 
-    const rimKey = 'ui_lucky_wheel_rim';
-    if (scene.textures.exists(rimKey)) {
-      const rimSize = (radius + 26 * s) * 2;
-      this.wheelRoot.add(scene.add.image(0, 0, rimKey).setDisplaySize(rimSize, rimSize));
-    }
+    /** Полноразмерный PNG обода часто даёт «плоское оранжевое пятно» — обод рисуем поверх секторов отдельно. */
+    const backPlate = scene.add.graphics();
+    backPlate.fillStyle(0x020617, 1);
+    backPlate.fillCircle(0, 0, radius * 0.985);
+    backPlate.lineStyle(5, 0x0f172a, 0.95);
+    backPlate.strokeCircle(0, 0, radius * 0.98);
+    this.wheelRoot.add(backPlate);
 
     const sliceGfx = scene.add.graphics();
     const n = LUCKY_WHEEL_REWARDS.length;
     const slice = (Math.PI * 2) / n;
+    const outerR = radius * 0.93;
 
     for (let i = 0; i < n; i++) {
       const tier = LUCKY_WHEEL_REWARDS[i].tier;
@@ -144,19 +147,40 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       const a0 = -Math.PI / 2 + i * slice;
       const a1 = a0 + slice;
       sliceGfx.fillStyle(i % 2 === 0 ? cA : cB, 1);
-      sliceGfx.slice(0, 0, radius * 0.94, a0, a1, true);
+      sliceGfx.slice(0, 0, outerR, a0, a1, true);
       sliceGfx.fillPath();
-      sliceGfx.lineStyle(2.5, TIER_EDGE[tier], tier === 'legendary' ? 1 : 0.88);
-      sliceGfx.slice(0, 0, radius * 0.94, a0, a1, true);
+      sliceGfx.lineStyle(1.25, 0xffffff, tier === 'legendary' ? 0.14 : 0.06);
+      sliceGfx.slice(0, 0, outerR * 0.985, a0 + 0.02, a1 - 0.02, true);
+      sliceGfx.strokePath();
+      sliceGfx.lineStyle(2.2, TIER_EDGE[tier], tier === 'legendary' ? 1 : 0.82);
+      sliceGfx.slice(0, 0, outerR, a0, a1, true);
       sliceGfx.strokePath();
     }
 
-    sliceGfx.lineStyle(4, 0xfef08a, 0.92);
-    sliceGfx.strokeCircle(0, 0, radius * 0.94);
+    sliceGfx.lineStyle(5, 0xfbbf24, 0.55);
+    sliceGfx.strokeCircle(0, 0, outerR);
+    sliceGfx.lineStyle(2, 0x1e293b, 0.9);
+    sliceGfx.strokeCircle(0, 0, outerR - 3);
+
+    const hubHoleR = radius * 0.2;
+    sliceGfx.fillStyle(0x060b14, 1);
+    sliceGfx.fillCircle(0, 0, hubHoleR);
+    sliceGfx.lineStyle(2, 0x475569, 0.85);
+    sliceGfx.strokeCircle(0, 0, hubHoleR);
+
     this.wheelRoot.add(sliceGfx);
 
-    const labelR = radius * 0.62;
-    const fs = Math.max(10, Math.round(10.5 * s));
+    const chrome = scene.add.graphics();
+    chrome.lineStyle(7, 0x1e293b, 1);
+    chrome.strokeCircle(0, 0, radius * 0.99);
+    chrome.lineStyle(3, 0xfbbf24, 0.45);
+    chrome.strokeCircle(0, 0, radius * 0.972);
+    chrome.lineStyle(2, 0xffffff, 0.22);
+    chrome.strokeCircle(0, 0, radius * 0.956);
+    this.wheelRoot.add(chrome);
+
+    const labelR = radius * 0.685;
+    const fs = Math.max(9, Math.round(10 * s));
     for (let i = 0; i < n; i++) {
       const mid = -Math.PI / 2 + (i + 0.5) * slice;
       const tx = Math.cos(mid) * labelR;
@@ -165,7 +189,7 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       const tierTag =
         row.tier === 'legendary' ? '★ ' : row.tier === 'epic' ? '⚡ ' : row.tier === 'rare' ? '✦ ' : '';
       const raw = row.label;
-      const short = raw.length > 15 ? raw.slice(0, 13) + '…' : raw;
+      const short = raw.length > 14 ? raw.slice(0, 12) + '…' : raw;
       const label = scene.add
         .text(tx, ty, `${tierTag}${short}`, {
           fontFamily: fonts.tech,
@@ -173,15 +197,15 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
           color: TIER_LABEL_HEX[row.tier],
           align: 'center',
           fontStyle: 'bold',
-          stroke: '#030712',
-          strokeThickness: Math.max(3, Math.round(3 * s)),
+          stroke: '#020617',
+          strokeThickness: Math.max(2, Math.round(2.2 * s)),
         })
         .setOrigin(0.5)
         .setRotation(mid + Math.PI / 2);
       this.wheelRoot.add(label);
     }
 
-    const hubR = Math.round(22 * s);
+    const hubR = Math.round(21 * s);
     const hubGlow = scene.add.circle(0, 0, hubR + 10 * s, colors.uiAccent, 0.25);
     this.wheelRoot.add(hubGlow);
 
@@ -253,8 +277,10 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
       .text(cx, btnY, 'КРУТИТЬ', {
         fontFamily: fonts.tech,
         fontSize: `${16 * s}px`,
-        color: '#000000',
+        color: '#f8fafc',
         fontStyle: 'bold',
+        stroke: '#0f172a',
+        strokeThickness: Math.max(3, Math.round(3 * s)),
       })
       .setOrigin(0.5);
     this.add(this.spinBtnLabel);
@@ -273,7 +299,7 @@ export class LuckyWheelOverlay extends Phaser.GameObjects.Container {
     if (luckyWheelManager.canSpin()) {
       this.spinBtnLabel.setText('КРУТИТЬ');
       this.spinBtnLabel.setAlpha(1);
-      this.hintText.setText('Бесплатно раз в 12 ч • сектор по редкости от серого к золоту');
+      this.hintText.setText('Бесплатно раз в 12 ч • цвет сектора показывает редкость приза');
     } else {
       const left = luckyWheelManager.getMsUntilNextSpin();
       this.spinBtnLabel.setText(`Через ${formatCooldown(left)}`);
