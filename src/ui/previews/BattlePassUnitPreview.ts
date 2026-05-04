@@ -4,6 +4,7 @@
 import Phaser from 'phaser';
 import { getFonts } from '../../config/themes';
 import { getDisplayName } from '../../data/UnitsRepository';
+import { mergeUnitDisplay } from '../../data/unitDisplayOverrides';
 import { getRealUnitTextureKey } from '../../utils/TextureHelpers';
 
 const RARITY_COLORS: Record<string, number> = {
@@ -39,7 +40,18 @@ export class BattlePassUnitPreview {
     this.container.setDepth(1000);
     
     const cardW = Math.min(width - 40, 320) * s;
-    const cardH = 480 * s;
+    const merged = mergeUnitDisplay(this.unit);
+    const loreRaw = (merged.description ?? '').trim();
+    const loreFallback = [
+      (merged.passive?.description ?? '').trim(),
+      (merged.specialAbility ?? '').trim(),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    const loreBodyFull = loreRaw || loreFallback;
+    const loreBody =
+      loreBodyFull.length > 420 ? `${loreBodyFull.slice(0, 417).trim()}…` : loreBodyFull;
+    const cardH = (loreBody ? 540 : 460) * s;
     
     // Фон
     const bg = this.scene.add.graphics();
@@ -121,9 +133,25 @@ export class BattlePassUnitPreview {
     this.container.add(this.scene.add.text(0, nameY + 28 * s, this.unit.title, {
       fontSize: `${14 * s}px`, fontFamily: fonts.primary, color: '#94a3b8',
     }).setOrigin(0.5));
-    
+
+    let cursorY = nameY + 28 * s + 22 * s;
+    if (loreBody) {
+      const descText = this.scene.add
+        .text(0, cursorY, loreBody, {
+          fontSize: `${10 * s}px`,
+          fontFamily: fonts.primary,
+          color: '#cbd5e1',
+          wordWrap: { width: cardW - 36 },
+          align: 'center',
+          lineSpacing: 4,
+        })
+        .setOrigin(0.5, 0);
+      this.container.add(descText);
+      cursorY += descText.height + 14 * s;
+    }
+
     // Инфо о получении
-    const infoY = cardH / 2 - 100 * s;
+    const infoY = Math.min(cursorY + 18 * s, cardH / 2 - 72 * s);
     const infoBg = this.scene.add.graphics();
     infoBg.fillStyle(0x1e293b, 1);
     infoBg.fillRoundedRect(-cardW / 2 + 20, infoY - 20, cardW - 40, 50, 12);
@@ -140,8 +168,8 @@ export class BattlePassUnitPreview {
       fontSize: `${11 * s}px`, fontFamily: fonts.primary, color: isPremium ? '#ffd700' : '#38bdf8',
     }).setOrigin(0.5));
     
-    // Кнопка
-    const btnY = cardH / 2 - 35 * s;
+    // Кнопка — ниже блока tier, без налезания на длинное описание
+    const btnY = Math.min(cardH / 2 - 28 * s, infoY + 62 * s);
     const btnW = cardW - 60;
     const btnH = 44 * s;
     

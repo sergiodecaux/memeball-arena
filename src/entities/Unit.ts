@@ -12,6 +12,7 @@ import {
   ABILITY_CONFIG,
   UnitStatus,
   FIELD,
+  TANK_ZONE_BONUS,
 } from '../constants/gameConstants';
 import { PlayerNumber, CapUpgrades } from '../types';
 import { playerData } from '../data/PlayerData';
@@ -1633,7 +1634,12 @@ export class Unit {
 
   private limitSpeed(): void {
     const speed = this.getSpeed();
-    const maxSpeed = Unit.MAX_SPEED[this.capClass];
+    let maxSpeed = Unit.MAX_SPEED[this.capClass];
+
+    if (this.capClass === 'tank' && this.isOnOwnHalf()) {
+      maxSpeed *= TANK_ZONE_BONUS.SPEED_MULTIPLIER_OWN_HALF;
+    }
+
     if (speed > maxSpeed) {
       const ratio = maxSpeed / speed;
       this.scene.matter.body.setVelocity(this.body, {
@@ -1641,6 +1647,15 @@ export class Unit {
         y: this.body.velocity.y * ratio,
       });
     }
+  }
+
+  /**
+   * Своя половина: игрок 1 — ниже центра поля (y > center), игрок 2 — выше (y < center).
+   */
+  public isOnOwnHalf(): boolean {
+    const centerY = FIELD.HEIGHT / 2;
+    const y = this.body.position.y;
+    return this.owner === 1 ? y > centerY : y < centerY;
   }
 
   getSpeed(): number {
@@ -1706,7 +1721,15 @@ export class Unit {
   }
 
   calculateShotForce(dragDistance: number, direction: Phaser.Math.Vector2): Phaser.Math.Vector2 {
-    const force = Math.min(dragDistance * this.stats.forceMultiplier, this.stats.maxForce);
+    let forceMultiplier = this.stats.forceMultiplier;
+    let maxForce = this.stats.maxForce;
+
+    if (this.capClass === 'tank' && this.isOnOwnHalf()) {
+      forceMultiplier *= TANK_ZONE_BONUS.POWER_MULTIPLIER_OWN_HALF;
+      maxForce *= TANK_ZONE_BONUS.POWER_MULTIPLIER_OWN_HALF;
+    }
+
+    const force = Math.min(dragDistance * forceMultiplier, maxForce);
     return new Phaser.Math.Vector2(-direction.x * force, -direction.y * force);
   }
 

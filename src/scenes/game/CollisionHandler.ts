@@ -4,7 +4,7 @@
 
 import Phaser from 'phaser';
 import { FieldBounds } from '../../types';
-import { FACTIONS, FactionId, BALL, BALL_SPIN, FIELD, GOAL } from '../../constants/gameConstants';
+import { FACTIONS, FactionId, BALL, BALL_SPIN, FIELD, GOAL, SNIPER_PUSH, CapClass } from '../../constants/gameConstants';
 import { Ball } from '../../entities/Ball';
 import { AudioManager } from '../../managers/AudioManager';
 import { FieldRenderer } from '../../renderers/FieldRenderer';
@@ -302,6 +302,33 @@ export class CollisionHandler {
     const impactForce = impactSpeed * (unit.body.mass || 1) * 0.5;
 
     const shooter = this.callbacks.getLastShootingCap();
+
+    if (
+      shooter?.getCapClass?.() === 'sniper' &&
+      unit.owner !== shooter.owner &&
+      impactSpeed > 0.8
+    ) {
+      const targetClass = unit.getCapClass?.() ?? ('balanced' as CapClass);
+      const pushables = SNIPER_PUSH.PUSHABLE_CLASSES as readonly CapClass[];
+
+      if (pushables.includes(targetClass)) {
+        const sp = impactSpeed || 1;
+        const nx = relVelX / sp;
+        const ny = relVelY / sp;
+        const pushImpulse = sp * SNIPER_PUSH.PUSH_FORCE_MULTIPLIER * 0.14;
+        unit.applyForce?.(nx * pushImpulse, ny * pushImpulse);
+
+        if (SNIPER_PUSH.GOAL_PENETRATION_ENABLED && this.isNearGoalY(unit.body.position.y)) {
+          const bv = ballBody.velocity;
+          const preserve = SNIPER_PUSH.BALL_PENETRATION_SPEED;
+          this.scene.matter.body.setVelocity(ballBody, { x: bv.x * preserve, y: bv.y * preserve });
+        }
+      } else if (targetClass === 'tank' && SNIPER_PUSH.TANK_REFLECTS) {
+        const bv = ballBody.velocity;
+        const b = SNIPER_PUSH.TANK_REFLECT_BOOST;
+        this.scene.matter.body.setVelocity(ballBody, { x: bv.x * b, y: bv.y * b });
+      }
+    }
 
     if (ball instanceof Ball && ball.shouldIonStunFromShot() && shooter && unit.owner !== shooter.owner && unit instanceof Unit) {
       unit.applyStun(1);
@@ -1280,6 +1307,17 @@ export class CollisionHandler {
         }
       });
     }
+  }
+
+  /** Зона у ворот (верх/низ поля) для пробития защитника снайпером */
+  private isNearGoalY(y: number): boolean {
+    const fb = this.config.fieldBounds;
+    const scaleY = fb.height / FIELD.HEIGHT;
+    const threshold = SNIPER_PUSH.GOAL_ZONE_THRESHOLD * scaleY;
+    const depth = GOAL.DEPTH * (fb.width / FIELD.WIDTH);
+    const nearTop = y < fb.top + depth + threshold;
+    const nearBottom = y > fb.bottom - depth - threshold;
+    return nearTop || nearBottom;
   }
 
   // ============================================================

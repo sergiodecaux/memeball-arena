@@ -1336,7 +1336,9 @@ export class CollectionScene extends Phaser.Scene {
 
     ly += 8;
 
-    if (u.passive?.description && u.passive.name) {
+    const passiveNameOk = (u.passive?.name ?? '').trim().length > 0;
+    const passiveDescOk = (u.passive?.description ?? '').trim().length > 0;
+    if (passiveDescOk || passiveNameOk) {
       const sepPassive = this.add.graphics();
       sepPassive.lineStyle(2, rarityColor.border, 0.3);
       sepPassive.lineBetween(-modalWidth / 2 + 30, ly, modalWidth / 2 - 30, ly);
@@ -1354,7 +1356,9 @@ export class CollectionScene extends Phaser.Scene {
       scrollRoot.add(passiveTitle);
       ly += 20;
 
-      const passiveName = this.add.text(0, ly, u.passive.name, {
+      const displayPassiveName =
+        (u.passive!.name ?? '').trim() || COLLECTION_RU.ui.passiveFallback;
+      const passiveName = this.add.text(0, ly, displayPassiveName, {
         fontSize: '13px',
         color: '#fbbf24',
         fontStyle: 'bold',
@@ -1367,18 +1371,22 @@ export class CollectionScene extends Phaser.Scene {
       scrollRoot.add(passiveName);
       ly += passiveName.height + 6;
 
-      const passiveDesc = this.add.text(0, ly, u.passive.description, {
-        fontSize: '11px',
-        color: '#d4d4d8',
-        wordWrap: { width: modalWidth - 56 },
-        align: 'center',
-        lineSpacing: 4,
-        stroke: '#000000',
-        strokeThickness: 2,
-        fontFamily: getFonts().tech,
-      }).setOrigin(0.5, 0);
-      scrollRoot.add(passiveDesc);
-      ly += passiveDesc.height + 14;
+      if (passiveDescOk) {
+        const passiveDesc = this.add.text(0, ly, u.passive!.description!, {
+          fontSize: '11px',
+          color: '#d4d4d8',
+          wordWrap: { width: modalWidth - 56 },
+          align: 'center',
+          lineSpacing: 4,
+          stroke: '#000000',
+          strokeThickness: 2,
+          fontFamily: getFonts().tech,
+        }).setOrigin(0.5, 0);
+        scrollRoot.add(passiveDesc);
+        ly += passiveDesc.height + 14;
+      } else {
+        ly += 6;
+      }
     }
 
     if (u.specialAbility) {
@@ -1422,6 +1430,17 @@ export class CollectionScene extends Phaser.Scene {
 
     ly += 15;
 
+    const rawDesc = (u.description ?? '').trim();
+    const passiveSnippet = (u.passive?.description ?? '').trim();
+    const signatureSnippet = (u.specialAbility ?? '').trim();
+    const loreBody =
+      rawDesc ||
+      [passiveSnippet && passiveSnippet !== rawDesc ? passiveSnippet : '', signatureSnippet]
+        .filter(Boolean)
+        .join('\n\n')
+        .trim() ||
+      'Краткое описание появится позже. Смотрите блок характеристик и способности выше.';
+
     const descTitle = this.add.text(0, ly, `📖 ${COLLECTION_RU.ui.description}`, {
       fontSize: '14px',
       color: '#ffffff',
@@ -1434,12 +1453,12 @@ export class CollectionScene extends Phaser.Scene {
 
     ly += 20;
 
-    const descText = this.add.text(0, ly, u.description, {
-      fontSize: '11px',
-      color: '#aaaaaa',
+    const descText = this.add.text(0, ly, loreBody, {
+      fontSize: '12px',
+      color: '#d4d4d8',
       wordWrap: { width: modalWidth - 70 },
       align: 'center',
-      lineSpacing: 3,
+      lineSpacing: 4,
       stroke: '#000000',
       strokeThickness: 2,
       fontFamily: getFonts().primary,

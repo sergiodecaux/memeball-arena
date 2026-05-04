@@ -55,6 +55,7 @@ export const COLLECTION_RU = {
   ui: {
     ability: 'СПОСОБНОСТЬ',
     passive: 'ПАССИВКА',
+    passiveFallback: 'Особый эффект',
     signature: 'ФИРМЕННЫЙ ПРИЁМ',
     description: 'ОПИСАНИЕ',
     fragments: 'ФРАГМЕНТЫ',

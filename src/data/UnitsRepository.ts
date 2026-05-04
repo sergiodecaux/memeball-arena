@@ -1907,9 +1907,9 @@ export const UNITS_REPOSITORY: UnitData[] = [
     accuracy: 0.75,
     passive: {
       type: 'none',
-      name: '',
-      description: '',
-      params: {}
+      name: 'Стабильность',
+      description: 'Надёжный танк без особых эффектов на поле.',
+      params: {},
     },
   },
   {
@@ -2493,6 +2493,8 @@ export const UNITS_REPOSITORY: UnitData[] = [
     secondaryColor: 0x2563eb,
     fragmentsRequired: 99,
     isCaptain: true,
+    isPremium: true,
+    premiumPrice: 2000,
     nameRu: 'Хронос «Судья времени»',
     accuracy: 0.94,
     passive: {

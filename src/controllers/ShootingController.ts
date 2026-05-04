@@ -1,7 +1,15 @@
 // 🎯 SCI-FI TACTICAL CONTROLLER WITH ABILITY SUPPORT
 
 import Phaser from 'phaser';
-import { SHOOTING, CapClass, FACTIONS, FactionId, ABILITY_CONFIG, MAX_ACCURACY_SPREAD } from '../constants/gameConstants';
+import {
+  SHOOTING,
+  CapClass,
+  FACTIONS,
+  FactionId,
+  ABILITY_CONFIG,
+  MAX_ACCURACY_SPREAD,
+  TANK_ZONE_BONUS,
+} from '../constants/gameConstants';
 import { Cap } from '../entities/Cap';
 import { Unit } from '../entities/Unit';
 import { PlayerNumber } from '../types';
@@ -1060,7 +1068,11 @@ export class ShootingController {
     if (this.passiveManager) {
       accuracy += this.passiveManager.getAccuracyModifier(unit.getUnitId());
     }
-    
+
+    if (unit.getCapClass() === 'tank' && unit.isOnOwnHalf()) {
+      accuracy += TANK_ZONE_BONUS.ACCURACY_PENALTY_OWN_HALF;
+    }
+
     // Clamp accuracy
     accuracy = Phaser.Math.Clamp(accuracy, 0.5, 1.0);
 

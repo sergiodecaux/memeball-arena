@@ -640,3 +640,21 @@ export const WALL_PHYSICS = {
   ESCAPE_SAFETY_MARGIN: 0,             // ✅ 2: Set to 0 - boundary correction should be positional clamping only
   ESCAPE_VELOCITY_DAMPING: 1.0,        // ✅ 2: Set to 1.0 - no velocity damping in boundary correction
 } as const;
+
+// ========== TANK ZONE MECHANICS ==========
+export const TANK_ZONE_BONUS = {
+  SPEED_MULTIPLIER_OWN_HALF: 2.0,
+  POWER_MULTIPLIER_OWN_HALF: 1.5,
+  ACCURACY_PENALTY_OWN_HALF: -0.15,
+} as const;
+
+// ========== SNIPER PUSH MECHANICS ==========
+export const SNIPER_PUSH = {
+  PUSH_FORCE_MULTIPLIER: 0.6,
+  PUSHABLE_CLASSES: ['balanced', 'sniper', 'trickster'] as const satisfies readonly CapClass[],
+  TANK_REFLECTS: true,
+  GOAL_PENETRATION_ENABLED: true,
+  GOAL_ZONE_THRESHOLD: 100,
+  BALL_PENETRATION_SPEED: 0.72,
+  TANK_REFLECT_BOOST: 1.15,
+} as const;
