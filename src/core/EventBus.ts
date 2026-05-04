@@ -129,6 +129,11 @@ export enum GameEvents {
   
   // === HAPTIC ===
   HAPTIC_FEEDBACK = 'haptic:feedback',
+
+  // === LASSO (TRICKSTER) ===
+  LASSO_ACTIVATED = 'lasso:activated',
+  LASSO_RELEASED = 'lasso:released',
+  LASSO_CANCELLED = 'lasso:cancelled',
   
   // === PVP NETWORK ===
   PVP_CONNECTED = 'pvp:connected',
@@ -650,6 +655,10 @@ export interface EventPayloadMap {
   [GameEvents.REWARD_CLAIMED]: RewardClaimedPayload;
   
   [GameEvents.HAPTIC_FEEDBACK]: HapticFeedbackPayload;
+
+  [GameEvents.LASSO_ACTIVATED]: { unitId: string };
+  [GameEvents.LASSO_RELEASED]: { unitId: string };
+  [GameEvents.LASSO_CANCELLED]: Record<string, never>;
   
   // PVP Network
   [GameEvents.PVP_CONNECTED]: Record<string, never>;

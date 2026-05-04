@@ -470,6 +470,24 @@ export const ABILITY_CONFIG = {
   SWARM_TOXIN_BLOCKED_BY_SHIELD: true,
 } as const;
 
+// ========== LASSO (TRICKSTER ABILITY) ==========
+export const LASSO_CONFIG = {
+  COOLDOWN_MS: 30000,
+  MIN_DISTANCE_RADII: 3.0,
+  MAX_CAPTURE_DISTANCE: 400,
+  MIN_THROW_FORCE: 0.012,
+  MAX_THROW_FORCE: 0.045,
+  PULL_SPEED: 6,
+  SWING_SPEED: 0.04,
+  MAX_SWING_ANGULAR: 0.12,
+  ORBIT_RADIUS: 70,
+  ROPE_COLOR: 0xffdd44,
+  ROPE_THICKNESS: 2.5,
+  ROPE_ALPHA: 0.85,
+  CAPTURE_DURATION_MS: 300,
+  MAX_HOLD_MS: 3000,
+} as const;
+
 // ========== СИСТЕМА ТОЧНОСТИ ==========
 
 /** Базовая точность по классам */

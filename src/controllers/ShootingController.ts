@@ -132,6 +132,8 @@ export class ShootingController {
   private captainShotForceScale: ((cap: ShootableUnit) => number) | null = null;
   private captainSelectionFilter: ((cap: ShootableUnit) => boolean) | null = null;
 
+  private isLassoActiveCheck: () => boolean = () => false;
+
   private pendingShot: { cap: ShootableUnit; localIndex: number; hitOffset: number } | null = null;
   private hasFiredThisTurn = false;
 
@@ -762,6 +764,11 @@ export class ShootingController {
   public setCaptainSelectionFilter(fn: ((cap: ShootableUnit) => boolean) | null): void {
     this.captainSelectionFilter = fn;
   }
+
+  public setLassoActiveCheck(fn: (() => boolean) | null): void {
+    this.isLassoActiveCheck = fn ?? (() => false);
+  }
+
   setEnabled(enabled: boolean): void { this.isEnabled = enabled; if (!enabled) { this.clearAimingState(); this.deselectCap(); } else { this.hasFiredThisTurn = false; } }
   registerCap(cap: ShootableUnit, localIndex: number): void { this.registeredCaps.set(cap, localIndex); cap.sprite.setInteractive({ useHandCursor: true }); }
   getCapIndex(cap: ShootableUnit): number { return this.registeredCaps.get(cap) ?? -1; }
@@ -786,6 +793,7 @@ export class ShootingController {
   // === POINTER DOWN ===
   private onPointerDown(pointer: Phaser.Input.Pointer, gameObjects: any[]): void {
     if (!this.isEnabled || this.hasFiredThisTurn) return;
+    if (this.isLassoActiveCheck()) return;
 
     this.pointerDownTime = Date.now();
     this.pointerDownPos = new Phaser.Math.Vector2(pointer.x, pointer.y);
@@ -932,6 +940,7 @@ export class ShootingController {
   // === POINTER MOVE ===
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
     if (!this.isEnabled || !this.isAiming || !this.selectedCap || !this.dragStartPos) return;
+    if (this.isLassoActiveCheck()) return;
     this.updateVisuals(pointer.x, pointer.y);
     
     const dx = pointer.x - this.dragStartPos.x;
@@ -944,6 +953,7 @@ export class ShootingController {
   // === POINTER UP ===
   private onPointerUp(pointer: Phaser.Input.Pointer): void {
       if (!this.isEnabled || !this.isAiming || !this.selectedCap || !this.dragStartPos) return;
+      if (this.isLassoActiveCheck()) return;
 
       const dx = pointer.x - this.dragStartPos.x;
       const dy = pointer.y - this.dragStartPos.y;
@@ -974,6 +984,8 @@ export class ShootingController {
   }
 
   private executeShot(cap: ShootableUnit, force: Phaser.Math.Vector2): void {
+      if (this.isLassoActiveCheck()) return;
+
       let modifiedForce = force.clone();
       
       // ✅ ПАССИВКИ: Модификация силы удара

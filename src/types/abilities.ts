@@ -168,3 +168,15 @@ export type ChargeGainReason =
   | 'ball_hit_enemy'
   | 'card_used'
   | 'accumulated';
+
+// ========== LASSO ==========
+
+export type LassoPhase = 'IDLE' | 'CAPTURING' | 'SWINGING' | 'RELEASED';
+
+export interface LassoAbilityState {
+  phase: LassoPhase;
+  cooldownRemaining: number;
+  canActivate: boolean;
+  captureDistance: number;
+  swingAngle: number;
+}

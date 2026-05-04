@@ -54,6 +54,8 @@ import { SessionPersistence } from '../utils/SessionPersistence';
 import { InGameSettings } from '../ui/game/InGameSettings';
 import { MatchIntroOverlay } from '../ui/game/MatchIntroOverlay';
 import { AbilityButton } from '../ui/game/AbilityButton';
+import { LassoButton } from '../ui/game/LassoButton';
+import { LassoController } from './game/LassoController';
 import { TutorialOverlay } from '../ui/game/TutorialOverlay';
 import { LeagueManager } from '../managers/LeagueManager';
 import { LeagueTier } from '../types/league';
@@ -133,6 +135,8 @@ export class GameScene extends Phaser.Scene {
   private inGameSettings?: InGameSettings;
   private matchIntroOverlay?: MatchIntroOverlay;
   private abilityButton!: AbilityButton;
+  private lassoController: LassoController | null = null;
+  private lassoButton: LassoButton | null = null;
   private tutorialOverlay!: TutorialOverlay;
   private devOverlay?: import('../ui/DevStabilityOverlay').DevStabilityOverlay;
   
@@ -1462,6 +1466,14 @@ export class GameScene extends Phaser.Scene {
     });
     this.abilityButton.hide();
 
+    this.lassoController = new LassoController(this, () => this.ball, (capId) =>
+      this.handleLassoReleased(capId),
+    );
+    this.shootingController.setLassoActiveCheck(() => this.lassoController?.isActive() ?? false);
+    this.lassoButton = new LassoButton(this, {
+      lassoController: this.lassoController,
+    });
+
     this.createCardPanel();
 
     const isFirstTutorialMatch = this.isCampaignMode &&
@@ -2362,6 +2374,8 @@ export class GameScene extends Phaser.Scene {
     this.shootingController.setEnabled(false);
     this.isAbilityInputActive = false;
 
+    this.lassoController?.cancel();
+
     // вњ… РќРћР’РћР•: РЎРѕС…СЂР°РЅСЏРµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РјР°С‚С‡Р° РїРѕСЃР»Рµ РіРѕР»Р°
     this.saveMatchProgress();
 
@@ -2684,6 +2698,10 @@ export class GameScene extends Phaser.Scene {
   private onTurnChange(data: { player: PlayerNumber; turnNumber: number }): void {
     const { player } = data;
 
+    this.lassoController?.cancel();
+    this.lassoButton?.setCurrentCap(null);
+    this.lassoButton?.hide();
+
     this.captainMatchSystem?.onTurnOwnerChanged(player);
     
     // Cleanup previous state
@@ -2699,7 +2717,12 @@ export class GameScene extends Phaser.Scene {
     this.isAbilityInputActive = false;
 
     this.updateCapsAuraState();
-    this.updateHUD();
+
+    const hudScore = this.matchDirector.getScore();
+    const hudPhase = this.matchDirector.getPhase();
+    const hudCurrentPlayer = this.matchDirector.getCurrentPlayer();
+    this.gameHUD.updateScore(hudScore.player1, hudScore.player2);
+    this.gameHUD.updateTurn(hudCurrentPlayer, hudPhase, this.isAIEnabled);
     
     // вњ… РќРћР’РћР•: РЎРѕС…СЂР°РЅСЏРµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РјР°С‚С‡Р° РїРѕСЃР»Рµ СЃРјРµРЅС‹ С…РѕРґР°
     this.saveMatchProgress();
@@ -2759,7 +2782,13 @@ export class GameScene extends Phaser.Scene {
       console.log('[GameScene] Cap selection ignored - ability input active');
       return;
     }
-    
+
+    if (this.lassoController?.isActive()) {
+      if (!cap || cap.id !== this.selectedCapId) {
+        this.lassoController.cancel();
+      }
+    }
+
     this.selectedCapId = cap?.id;
     this.updateCapsAuraState();
 
@@ -2768,6 +2797,45 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.abilityButton.setCurrentUnit(null);
     }
+
+    const myOwner = this.getMyOwner();
+    const myTurn = this.matchDirector.getCurrentPlayer() === myOwner;
+    const showLasso =
+      !this.isRealtimePvP &&
+      myTurn &&
+      !!cap &&
+      cap.owner === myOwner &&
+      typeof cap.getCapClass === 'function' &&
+      cap.getCapClass() === 'trickster';
+
+    if (showLasso) {
+      this.lassoButton?.setCurrentCap(cap as GameUnit);
+      this.lassoButton?.show(160, this.scale.height - 100);
+    } else {
+      this.lassoButton?.setCurrentCap(null);
+      this.lassoButton?.hide();
+    }
+  }
+
+  private handleLassoReleased(capId: string | null): void {
+    if (!capId) return;
+    const cap = this.caps.find((c) => c.id === capId);
+    if (!cap) return;
+
+    if (this.abilityManager.isActivating()) {
+      this.abilityManager.cancelActivation();
+    }
+    this.abilityButton.hide();
+    this.cardPanel?.setVisible(false);
+    this.abilityManager.forceClearTargetingUI();
+    this.hideCardInfo();
+
+    this.shootingController.setEnabled(false);
+    this.isAbilityInputActive = false;
+
+    this.lastShootingCap = cap as Unit;
+    this.abilityManager.setLastActiveUnit(this.lastShootingCap);
+    this.matchDirector.onShot(capId);
   }
 
   private onShoot(data: ShootEventData): void {
@@ -2899,12 +2967,12 @@ export class GameScene extends Phaser.Scene {
     }
     
     this.vfxManager?.update();
-  }
 
-  private updateHUD(): void {
+    this.lassoController?.update(delta);
+    this.lassoButton?.refresh();
+
     const score = this.matchDirector.getScore();
     const currentPlayer = this.matchDirector.getCurrentPlayer();
-    const phase = this.matchDirector.getPhase();
 
     this.gameHUD.updateScore(score.player1, score.player2);
     this.gameHUD.updateTurn(currentPlayer, phase, this.isAIEnabled);
@@ -2930,6 +2998,7 @@ export class GameScene extends Phaser.Scene {
 
   private resetPositions(): void {
     // вњ… B. Clear targeting UI after reset
+    this.lassoController?.cancel();
     this.abilityManager?.forceClearTargetingUI();
     this.player2AbilityManager?.forceClearTargetingUI();
     this.hideCardInfo();
@@ -3187,6 +3256,8 @@ export class GameScene extends Phaser.Scene {
     AudioManager.getInstance().playSFX('sfx_whistle');
     console.log('[GameScene] Starting match director...');
     this.matchDirector.startMatch();
+
+    this.lassoController?.resetCooldown();
     
     // вњ… РРЎРџР РђР’Р›Р•РќРћ: РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РјР°С‚С‡ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ Р·Р°РїСѓСЃС‚РёР»СЃСЏ
     const phase = this.matchDirector.getPhase();
@@ -3850,6 +3921,7 @@ export class GameScene extends Phaser.Scene {
       const { width, height } = this.cameras.main;
       this.cardPanel.setPosition(width / 2, height - 80);
     }
+    this.lassoButton?.reposition(160, this.scale.height - 100);
     // РћР±РЅРѕРІР»СЏРµРј РїРѕР·РёС†РёСЋ РєРЅРѕРїРєРё РїР°СѓР·С‹ РїСЂРё СЂРµСЃР°Р№Р·Рµ
     this.gameHUD?.updateLayout();
   }
@@ -3938,6 +4010,10 @@ export class GameScene extends Phaser.Scene {
     this.abilityManager?.destroy();
     this.player2AbilityManager?.destroy();
     this.abilityButton?.destroy();
+    this.lassoController?.destroy();
+    this.lassoButton?.destroy();
+    this.lassoController = null;
+    this.lassoButton = null;
     this.vfxManager?.destroy();
     this.passiveManager?.destroy();
     this.captainMatchSystem?.destroy();
