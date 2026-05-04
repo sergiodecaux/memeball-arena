@@ -2,7 +2,7 @@
 // вњ… РР—РњР•РќР•РќРћ: РСЃРїСЂР°РІР»РµРЅ Р±Р°Рі СЃ С‚Р°Р№РјРµСЂРѕРј - РґРѕР±Р°РІР»РµРЅРѕ РїРѕР»Рµ matchDuration, РёСЃРїСЂР°РІР»РµРЅ getState()
 
 import Phaser from 'phaser';
-import { GAME, GOAL, FactionId } from '../constants/gameConstants';
+import { GAME, GOAL, FactionId, LASSO_CONFIG } from '../constants/gameConstants';
 import { isCaptainUnitId } from '../constants/captains';
 import { FieldBounds, PlayerNumber, AIDifficulty } from '../types';
 import { Unit } from '../entities/Unit';
@@ -3921,7 +3921,13 @@ export class GameScene extends Phaser.Scene {
       const { width, height } = this.cameras.main;
       this.cardPanel.setPosition(width / 2, height - 80);
     }
-    this.lassoButton?.reposition(160, this.scale.height - 100);
+    const lassoX = this.scale.width - LASSO_CONFIG.BUTTON_SIZE / 2 - 10;
+    const lassoY =
+      this.scale.height -
+      this.CARD_PANEL_Y_OFFSET -
+      this.CARD_SLOT_HEIGHT / 2 -
+      8;
+    this.lassoButton?.reposition(lassoX, lassoY);
     // РћР±РЅРѕРІР»СЏРµРј РїРѕР·РёС†РёСЋ РєРЅРѕРїРєРё РїР°СѓР·С‹ РїСЂРё СЂРµСЃР°Р№Р·Рµ
     this.gameHUD?.updateLayout();
   }

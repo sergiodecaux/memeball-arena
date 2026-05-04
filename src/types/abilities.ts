@@ -171,7 +171,7 @@ export type ChargeGainReason =
 
 // ========== LASSO ==========
 
-export type LassoPhase = 'IDLE' | 'CAPTURING' | 'SWINGING' | 'RELEASED';
+export type LassoPhase = 'IDLE' | 'CAPTURING' | 'AIMING' | 'RELEASED';
 
 export interface LassoAbilityState {
   phase: LassoPhase;
