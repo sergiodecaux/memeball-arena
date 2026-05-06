@@ -156,6 +156,10 @@ export class GameScene extends Phaser.Scene {
   private readonly CARD_SLOT_HEIGHT = 105; // Пропорции 600:900 = 2:3
   private readonly CARD_SPACING = 12;
   private readonly CARD_PANEL_Y_OFFSET = 90; // Отступ от нижнего края экрана
+  /** Компактная панель SUPER капитана (правый нижний угол, ниже ряда карт) */
+  private readonly CAPTAIN_SUPER_PANEL_W = 100;
+  private readonly CAPTAIN_SUPER_PANEL_H = 46;
+  private readonly CAPTAIN_SUPER_BOTTOM_MARGIN = 16;
   private readonly LONG_PRESS_DELAY = 400; // Миллисекунды для долгого нажатия
   private readonly ENLARGED_CARD_SCALE = 0.85; // Увеличенная карта занимает 85% высоты экрана
 
@@ -885,11 +889,11 @@ export class GameScene extends Phaser.Scene {
     if (this.isRealtimePvP) return;
 
     const { width, height } = this.cameras.main;
-    const margin = Math.max(14, Math.round(width * 0.032));
-    const panelW = 132;
-    const panelH = 112;
+    const margin = Math.max(10, Math.round(width * 0.024));
+    const panelW = this.CAPTAIN_SUPER_PANEL_W;
+    const panelH = this.CAPTAIN_SUPER_PANEL_H;
     const cx = width - margin - panelW / 2;
-    const cy = height - this.CARD_PANEL_Y_OFFSET + 10 - panelH / 2;
+    const cy = height - this.CAPTAIN_SUPER_BOTTOM_MARGIN - panelH / 2;
     const panel = this.add.container(cx, cy).setDepth(151).setScrollFactor(0);
 
     const hw = panelW / 2;
@@ -897,22 +901,24 @@ export class GameScene extends Phaser.Scene {
 
     const bg = this.add.graphics();
     bg.fillStyle(0x0f172a, 0.94);
-    bg.fillRoundedRect(-hw, -hh, panelW, panelH, 16);
+    bg.fillRoundedRect(-hw, -hh, panelW, panelH, 12);
     bg.lineStyle(2, 0x475569, 0.9);
-    bg.strokeRoundedRect(-hw, -hh, panelW, panelH, 16);
+    bg.strokeRoundedRect(-hw, -hh, panelW, panelH, 12);
     panel.add(bg);
 
     const energyBg = this.add.graphics();
     energyBg.fillStyle(0x1e293b, 1);
-    energyBg.fillRoundedRect(-hw + 8, -hh + 14, panelW - 16, 12, 6);
+    energyBg.fillRoundedRect(-hw + 6, -hh + 8, panelW - 12, 8, 4);
     panel.add(energyBg);
 
     const energyFill = this.add.graphics();
     panel.add(energyFill);
     this.captainSuperEnergyGfx = energyFill;
 
+    const btnH = 22;
+    const btnY = hh - 6 - btnH / 2;
     const btnZone = this.add
-      .rectangle(0, hh - 28, panelW - 16, 46, 0x334155, 1)
+      .rectangle(0, btnY, panelW - 12, btnH, 0x334155, 1)
       .setStrokeStyle(2, 0x64748b, 0.9)
       .setInteractive({ useHandCursor: true });
     btnZone.on('pointerdown', () => {
@@ -923,8 +929,8 @@ export class GameScene extends Phaser.Scene {
     panel.add(btnZone);
     panel.add(
       this.add
-        .text(0, hh - 28, 'SUPER', {
-          fontSize: '15px',
+        .text(0, btnY, 'SUPER', {
+          fontSize: '12px',
           color: '#f8fafc',
           fontStyle: 'bold',
         })
@@ -933,8 +939,8 @@ export class GameScene extends Phaser.Scene {
 
     panel.add(
       this.add
-        .text(0, -hh + 8, 'CAPTAIN', {
-          fontSize: '11px',
+        .text(0, -hh + 5, 'CAPTAIN', {
+          fontSize: '9px',
           color: '#94a3b8',
         })
         .setOrigin(0.5)
@@ -947,15 +953,17 @@ export class GameScene extends Phaser.Scene {
     if (!this.captainMatchSystem || !this.captainSuperEnergyGfx) return;
     const frac = this.captainMatchSystem.getHumanEnergyFraction();
     const ready = this.captainMatchSystem.canHumanActivateUlt();
-    const panelW = 132;
-    const barW = panelW - 16;
-    const barLeft = -(panelW / 2) + 8;
-    const barTop = -(112 / 2) + 14;
+    const panelW = this.CAPTAIN_SUPER_PANEL_W;
+    const panelH = this.CAPTAIN_SUPER_PANEL_H;
+    const barW = panelW - 12;
+    const barLeft = -(panelW / 2) + 6;
+    const barTop = -(panelH / 2) + 8;
+    const barH = 8;
 
     this.captainSuperEnergyGfx.clear();
     this.captainSuperEnergyGfx.fillStyle(ready ? 0xf59e0b : 0x3b82f6, 1);
     if (frac > 0) {
-      this.captainSuperEnergyGfx.fillRoundedRect(barLeft, barTop, barW * frac, 12, 6);
+      this.captainSuperEnergyGfx.fillRoundedRect(barLeft, barTop, barW * frac, barH, 4);
     }
     if (ready !== this.captainSuperLastReady) {
       this.captainSuperLastReady = ready;
@@ -3933,8 +3941,8 @@ export class GameScene extends Phaser.Scene {
 
   private handleResize(): void {
     this.cameras.main.centerOn(this.fieldBounds.centerX, this.fieldBounds.centerY);
+    const { width, height } = this.cameras.main;
     if (this.cardPanel) {
-      const { width, height } = this.cameras.main;
       this.cardPanel.setPosition(width / 2, height - 80);
     }
     const lassoX = this.scale.width - LASSO_CONFIG.BUTTON_SIZE / 2 - 10;
@@ -3944,6 +3952,12 @@ export class GameScene extends Phaser.Scene {
       this.CARD_SLOT_HEIGHT / 2 -
       8;
     this.lassoButton?.reposition(lassoX, lassoY);
+    if (this.captainSuperPanel) {
+      const margin = Math.max(10, Math.round(width * 0.024));
+      const cx = width - margin - this.CAPTAIN_SUPER_PANEL_W / 2;
+      const cy = height - this.CAPTAIN_SUPER_BOTTOM_MARGIN - this.CAPTAIN_SUPER_PANEL_H / 2;
+      this.captainSuperPanel.setPosition(cx, cy);
+    }
     // РћР±РЅРѕРІР»СЏРµРј РїРѕР·РёС†РёСЋ РєРЅРѕРїРєРё РїР°СѓР·С‹ РїСЂРё СЂРµСЃР°Р№Р·Рµ
     this.gameHUD?.updateLayout();
   }
