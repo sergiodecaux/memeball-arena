@@ -514,6 +514,18 @@ export class AbilityButton {
 
   public setCurrentUnit(unit: Unit | null): void {
     this.currentUnit = unit;
+
+    if (unit && this.isCaptainUnit(unit)) {
+      this.show();
+    } else {
+      this.hide();
+    }
+
+    this.updateVisuals();
+  }
+
+  private isCaptainUnit(unit: Unit): boolean {
+    return Boolean(getUnitById(unit.getUnitId())?.isCaptain);
   }
 
   private startPulseAnimation(): void {
@@ -591,13 +603,13 @@ export class AbilityButton {
   }
 
   /**
-   * Ульта капитана через AbilityManager (CaptainMatchSystem).
+   * Ульта капитана: applyCard + явный runtime id в unitIds (lastActiveUnit до выстрела часто другой).
    */
   private activateCaptainAbility(): boolean {
     if (!this.currentUnit) return false;
 
     const meta = getUnitById(this.currentUnit.getUnitId());
-    if (!meta?.id) return false;
+    if (!meta?.id || !meta.isCaptain) return false;
 
     console.log(`[AbilityButton] Activating captain ability for: ${meta.id}`);
 

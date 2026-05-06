@@ -2816,13 +2816,17 @@ export class GameScene extends Phaser.Scene {
     this.selectedCapId = cap?.id;
     this.updateCapsAuraState();
 
+    const myOwner = this.getMyOwner();
+
     if (cap && cap instanceof Unit) {
+      if (cap.owner === myOwner) {
+        this.abilityManager.setLastActiveUnit(cap as GameUnit);
+      }
       this.abilityButton.setCurrentUnit(cap);
     } else {
       this.abilityButton.setCurrentUnit(null);
     }
 
-    const myOwner = this.getMyOwner();
     const myTurn = this.matchDirector.getCurrentPlayer() === myOwner;
     const showLasso =
       !this.isRealtimePvP &&

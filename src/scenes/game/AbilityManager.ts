@@ -631,6 +631,31 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     return undefined;
   }
 
+  /**
+   * Капитанская ульта из UI: lastActiveUnit часто ещё «прошлый стрелок» до выстрела.
+   * Берём явный runtime id из AbilityButton (unitIds[0]), иначе lastActiveUnit.
+   */
+  private resolveCaptainActivatingUnit(
+    captainCatalogId: string,
+    data: { unitIds?: string[] },
+  ): Unit | undefined {
+    const tryUnit = (u: GameUnit | undefined): Unit | undefined => {
+      if (!u || !(u instanceof Unit)) return undefined;
+      if (u.owner !== this.playerId) return undefined;
+      if (u.getUnitId() !== captainCatalogId) return undefined;
+      if (!getUnitById(u.getUnitId())?.isCaptain) return undefined;
+      return u;
+    };
+
+    const explicitId = data.unitIds?.[0];
+    if (explicitId) {
+      const fromExplicit = tryUnit(this.resolveCapByUnitRef(explicitId));
+      if (fromExplicit) return fromExplicit;
+    }
+
+    return tryUnit(this.getLastActiveUnit());
+  }
+
   public applyCard(cardId: string, data: { position?: { x: number; y: number } | null; unitIds?: string[]; }): boolean {
     if (cardId.startsWith('captain_')) {
       return this.applyCaptainAbility(cardId, data);
@@ -708,32 +733,19 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   /**
-   * Ультимейт капитана: камера + zoom, делегирование в CaptainMatchSystem, VFX.
+   * Ультимейт капитана: без манипуляций камерой (они ломали кадр после ульты).
+   * Игровая логика — CaptainMatchSystem.tryBeginUltFromUi(); Unit.activateAbility для капитанов не используем.
    */
   private applyCaptainAbility(
     captainId: string,
     data: { position?: { x: number; y: number } | null; unitIds?: string[] },
   ): boolean {
-    const activeUnit = this.getLastActiveUnit();
+    const activeUnit = this.resolveCaptainActivatingUnit(captainId, data);
 
-    if (!activeUnit || !(activeUnit instanceof Unit)) {
-      console.warn(`[AbilityManager] Captain ability requires active unit`);
-      return false;
-    }
-
-    if (activeUnit.owner !== this.playerId) {
-      console.warn(`[AbilityManager] Captain ability wrong owner`);
-      return false;
-    }
-
-    const catalog = getUnitById(activeUnit.getUnitId());
-    if (!catalog?.isCaptain) {
-      console.warn(`[AbilityManager] Unit ${activeUnit.getUnitId()} is not a captain`);
-      return false;
-    }
-
-    if (captainId !== activeUnit.getUnitId()) {
-      console.warn(`[AbilityManager] Captain card ${captainId} mismatches active ${activeUnit.getUnitId()}`);
+    if (!activeUnit) {
+      console.warn(
+        `[AbilityManager] Captain ability: нет подходящего юнита для ${captainId} (проверьте выбор капитана / unitIds)`,
+      );
       return false;
     }
 
@@ -749,25 +761,6 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     if (!ultStarted) {
       console.warn(`[AbilityManager] Captain ability failed: ${captainId}`);
       return false;
-    }
-
-    const cam = this.scene.cameras?.main;
-    if (cam) {
-      this.scene.tweens.add({
-        targets: cam,
-        zoom: 1.18,
-        duration: 300,
-        ease: 'Cubic.easeOut',
-      });
-      this.scene.time.delayedCall(2000, () => {
-        if (!cam?.scene) return;
-        this.scene.tweens.add({
-          targets: cam,
-          zoom: 1.0,
-          duration: 500,
-          ease: 'Sine.easeInOut',
-        });
-      });
     }
 
     if (this.vfxManager) {
