@@ -50,6 +50,7 @@ export enum GameEvents {
   ABILITY_ACTIVATION_STARTED = 'ability:activation_started',
   ABILITY_ACTIVATION_CANCELLED = 'ability:activation_cancelled',
   ABILITY_ACTIVATED = 'ability:activated',
+  EXTRA_TURN_GRANTED = 'captain:extra_turn_granted',
   ABILITY_TARGET_SELECTED = 'ability:target_selected',
   ABILITY_EFFECT_EXPIRED = 'ability:effect_expired',
   
@@ -581,6 +582,7 @@ export interface EventPayloadMap {
   [GameEvents.ABILITY_ACTIVATION_STARTED]: AbilityActivationStartedPayload;
   [GameEvents.ABILITY_ACTIVATION_CANCELLED]: { playerId: PlayerNumber };
   [GameEvents.ABILITY_ACTIVATED]: AbilityActivatedPayload;
+  [GameEvents.EXTRA_TURN_GRANTED]: { unitId: string; powerMultiplier: number };
   [GameEvents.ABILITY_TARGET_SELECTED]: AbilityTargetSelectedPayload;
   [GameEvents.ABILITY_EFFECT_EXPIRED]: AbilityEffectExpiredPayload;
   

@@ -59,6 +59,8 @@ export interface AbilityManagerConfig {
   canCaptainUltReady?: () => boolean;
   /** Запуск режима ульты капитана (CaptainMatchSystem) */
   tryBeginCaptainUlt?: () => boolean;
+  /** Списать энергию SUPER без режима таргета */
+  trySpendCaptainUltEnergy?: () => boolean;
 }
 
 export interface CardSlot {
@@ -93,6 +95,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   private vfxManager?: VFXManager;
   private canCaptainUltReady?: () => boolean;
   private tryBeginCaptainUlt?: () => boolean;
+  private trySpendCaptainUltEnergy?: () => boolean;
 
   // === КАРТОЧНАЯ СИСТЕМА ===
   private deck: CardSlot[] = [];
@@ -146,6 +149,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     this.vfxManager = config.vfxManager;
     this.canCaptainUltReady = config.canCaptainUltReady;
     this.tryBeginCaptainUlt = config.tryBeginCaptainUlt;
+    this.trySpendCaptainUltEnergy = config.trySpendCaptainUltEnergy;
 
     this.initializeDeck();
     this.setupCollisionListeners();
@@ -733,8 +737,7 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   /**
-   * Ультимейт капитана: без манипуляций камерой (они ломали кадр после ульты).
-   * Игровая логика — CaptainMatchSystem.tryBeginUltFromUi(); Unit.activateAbility для капитанов не используем.
+   * Ультимейт капитана: без камеры и без unit.activateAbility.
    */
   private applyCaptainAbility(
     captainId: string,
@@ -743,39 +746,249 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     const activeUnit = this.resolveCaptainActivatingUnit(captainId, data);
 
     if (!activeUnit) {
-      console.warn(
-        `[AbilityManager] Captain ability: нет подходящего юнита для ${captainId} (проверьте выбор капитана / unitIds)`,
-      );
+      console.warn(`[AbilityManager] Captain ability: нет подходящего юнита для ${captainId}`);
       return false;
     }
 
-    if (!this.tryBeginCaptainUlt) {
-      console.warn(`[AbilityManager] Captain ult hook not configured for P${this.playerId}`);
-      return false;
+    const enemyTargetId = data.unitIds?.find((id) => {
+      const u = this.resolveCapByUnitRef(id);
+      return u instanceof Unit && u.owner !== this.playerId;
+    });
+
+    const chronosNeedsPick = captainId === 'captain_chronos' && !enemyTargetId;
+
+    if (!chronosNeedsPick) {
+      if (!(this.trySpendCaptainUltEnergy?.() ?? false)) {
+        console.warn(`[AbilityManager] Captain SUPER: энергия недоступна (${captainId})`);
+        return false;
+      }
     }
 
     console.log(`[AbilityManager] Activating captain ability: ${captainId}`);
 
-    const ultStarted = this.tryBeginCaptainUlt();
-
-    if (!ultStarted) {
-      console.warn(`[AbilityManager] Captain ability failed: ${captainId}`);
-      return false;
-    }
-
     if (this.vfxManager) {
-      this.vfxManager.playCaptainAbilityEffect(captainId, activeUnit.x, activeUnit.y, activeUnit.factionId);
+      this.vfxManager.playCaptainAbilityEffect(
+        captainId,
+        activeUnit.x,
+        activeUnit.y,
+        activeUnit.factionId,
+      );
     }
+
     try {
       eventBus.dispatch(GameEvents.HAPTIC_FEEDBACK, { type: 'heavy' });
     } catch {}
+
+    let success = false;
+
+    if (captainId === 'captain_chronos') {
+      if (enemyTargetId) {
+        success = this.applyStasisSphere([enemyTargetId]);
+      } else {
+        if (!this.tryBeginCaptainUlt) {
+          console.warn('[AbilityManager] Chronos requires target pick — hook missing');
+          return false;
+        }
+        success = this.tryBeginCaptainUlt();
+      }
+    } else {
+      switch (captainId) {
+        case 'captain_urok':
+          success = this.applyTectonicRift(activeUnit);
+          break;
+        case 'captain_ethelgard':
+          success = this.applyCollapse(activeUnit);
+          break;
+        case 'captain_xerxa':
+          success = this.applySwarmCall(activeUnit);
+          break;
+        default:
+          console.warn(`[AbilityManager] Unknown captain ability: ${captainId}`);
+          return false;
+      }
+    }
+
+    if (success) {
+      console.log(`[AbilityManager] Captain ability executed: ${captainId}`);
+      try {
+        eventBus.dispatch(GameEvents.ABILITY_ACTIVATED, {
+          playerId: this.playerId,
+          abilityType: captainId,
+        });
+      } catch {}
+    }
+
+    return success;
+  }
+
+  /** Тектонический разлом (Урок): отбрасывает врагов в радиусе. */
+  private applyTectonicRift(captain: GameUnit): boolean {
+    const radius = 120;
+    const force = 0.08;
+
+    const caps = this.getCaps();
+    let affectedCount = 0;
+
+    caps.forEach((cap) => {
+      if (cap.owner === captain.owner) return;
+
+      const dist = Phaser.Math.Distance.Between(captain.x, captain.y, cap.x, cap.y);
+
+      if (dist < radius) {
+        const angle = Math.atan2(cap.y - captain.y, cap.x - captain.x);
+
+        this.scene.matter.body.applyForce(cap.body, cap.body.position, {
+          x: Math.cos(angle) * force,
+          y: Math.sin(angle) * force,
+        });
+
+        affectedCount++;
+
+        if (this.vfxManager) {
+          this.vfxManager.playShieldHitEffect(cap.x, cap.y, 0, FACTIONS.magma.color);
+        }
+      }
+    });
+
+    console.log(`[AbilityManager] Tectonic Rift affected ${affectedCount} enemies`);
+    return true;
+  }
+
+  /** Сфера стазиса (Хронос): стан цели на 2 хода. */
+  private applyStasisSphere(unitIds: string[]): boolean {
+    const targetId = unitIds[0];
+    const target = this.resolveCapByUnitRef(targetId);
+
+    if (!target || !(target instanceof Unit)) {
+      console.warn('[AbilityManager] Stasis Sphere: target not found');
+      return false;
+    }
+
+    if (target.owner === this.playerId) {
+      console.warn('[AbilityManager] Stasis Sphere: нужна вражеская цель');
+      return false;
+    }
+
+    target.applyStun(2);
+
+    const freezeEffect = this.scene.add.circle(target.x, target.y, 40, 0x00ffff, 0.3);
+    freezeEffect.setDepth(100);
+    freezeEffect.setStrokeStyle(3, 0x00ffff, 0.8);
+
+    this.scene.tweens.add({
+      targets: freezeEffect,
+      alpha: 0,
+      scale: 1.5,
+      duration: 500,
+      yoyo: true,
+      repeat: 3,
+      onComplete: () => freezeEffect.destroy(),
+    });
+
+    console.log(`[AbilityManager] Stasis Sphere frozen: ${targetId}`);
+    return true;
+  }
+
+  /** Коллапс (Этельгард): притяжение к капитану несколько секунд. */
+  private applyCollapse(captain: GameUnit): boolean {
+    const radius = 150;
+    const pullForce = 0.003;
+    const duration = 2000;
+
+    const singularity = this.scene.add.circle(captain.x, captain.y, radius, 0xa855f7, 0.2);
+    singularity.setDepth(50);
+    singularity.setStrokeStyle(4, 0xa855f7, 0.8);
+
+    this.scene.tweens.add({
+      targets: singularity,
+      scale: 0.5,
+      alpha: 0.4,
+      duration,
+      yoyo: true,
+      onComplete: () => singularity.destroy(),
+    });
+
+    const pullHandler = () => {
+      const caps = this.getCaps();
+      const ball = this.getBall();
+
+      caps.forEach((cap) => {
+        const dist = Phaser.Math.Distance.Between(captain.x, captain.y, cap.x, cap.y);
+        if (dist < radius && dist > 10) {
+          const angle = Math.atan2(captain.y - cap.y, captain.x - cap.x);
+          const force = pullForce * (1 - dist / radius);
+
+          this.scene.matter.body.applyForce(cap.body, cap.body.position, {
+            x: Math.cos(angle) * force,
+            y: Math.sin(angle) * force,
+          });
+        }
+      });
+
+      if (ball?.body) {
+        const ballDist = Phaser.Math.Distance.Between(captain.x, captain.y, ball.x, ball.y);
+        if (ballDist < radius && ballDist > 10) {
+          const angle = Math.atan2(captain.y - ball.y, captain.x - ball.x);
+          const force = pullForce * (1 - ballDist / radius);
+
+          this.scene.matter.body.applyForce(ball.body, ball.body.position, {
+            x: Math.cos(angle) * force,
+            y: Math.sin(angle) * force,
+          });
+        }
+      }
+    };
+
+    this.scene.events.on('update', pullHandler);
+
+    this.scene.time.delayedCall(duration, () => {
+      this.scene.events.off('update', pullHandler);
+    });
+
+    console.log(`[AbilityManager] Collapse activated for ${duration}ms`);
+    return true;
+  }
+
+  /** Зов роя (Ксеркса): помечает союзное насекомое для бонусного хода (событие для матча). */
+  private applySwarmCall(captain: GameUnit): boolean {
+    const caps = this.getCaps();
+
+    const allyInsects = caps.filter(
+      (cap) =>
+        cap.owner === captain.owner &&
+        cap.id !== captain.id &&
+        cap instanceof Unit &&
+        cap.factionId === 'insect',
+    );
+
+    if (allyInsects.length === 0) {
+      console.warn('[AbilityManager] Swarm Call: no ally insects found');
+      return false;
+    }
+
+    const chosen = Phaser.Utils.Array.GetRandom(allyInsects);
+
+    const glow = this.scene.add.circle(chosen.x, chosen.y, 50, 0x4ade80, 0.5);
+    glow.setDepth(100);
+    glow.setBlendMode(Phaser.BlendModes.ADD);
+
+    this.scene.tweens.add({
+      targets: glow,
+      scale: 2,
+      alpha: 0,
+      duration: 800,
+      onComplete: () => glow.destroy(),
+    });
+
+    console.log(`[AbilityManager] Swarm Call: extra turn hint for ${chosen.id}`);
+
     try {
-      eventBus.dispatch(GameEvents.ABILITY_ACTIVATED, {
-        playerId: this.playerId,
-        abilityType: captainId,
+      eventBus.dispatch(GameEvents.EXTRA_TURN_GRANTED, {
+        unitId: chosen.id,
+        powerMultiplier: 0.5,
       });
     } catch {}
-    console.log(`[AbilityManager] Captain ability activated successfully: ${captainId}`);
+
     return true;
   }
 

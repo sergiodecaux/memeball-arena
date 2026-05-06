@@ -106,8 +106,17 @@ export class CaptainMatchSystem {
       !this.deps.isPvP &&
       this.energyByOwner[o] >= CAPTAIN_MAX_ENERGY &&
       this.findCaptain(o) !== undefined &&
-      this.ultMode === 'idle'
+      this.ultMode === 'idle' &&
+      this.xerxaPhase === 'off'
     );
+  }
+
+  /** Только списать энергию SUPER (мгновенная ульта через AbilityManager без режима таргета). */
+  tryConsumeHumanCaptainUltEnergy(): boolean {
+    if (!this.canHumanActivateUlt()) return false;
+    const o = this.deps.getHumanOwner();
+    this.energyByOwner[o] = 0;
+    return true;
   }
 
   tryBeginUltFromUi(): boolean {
@@ -119,8 +128,6 @@ export class CaptainMatchSystem {
     this.energyByOwner[owner] = 0;
 
     const uid = captain.getUnitId();
-
-    this.scenePauseBriefFocus(captain);
 
     if (uid === 'captain_urok') {
       this.urokCaptain = captain;
@@ -154,7 +161,7 @@ export class CaptainMatchSystem {
   }
 
   isUltTargeting(): boolean {
-    return this.ultMode !== 'idle';
+    return this.ultMode !== 'idle' || this.xerxaPhase !== 'off';
   }
 
   resolveTurnAdvanceAfterStop(lastShooterUnitRuntimeId?: string): 'switch' | 'same_player' {
@@ -549,14 +556,6 @@ export class CaptainMatchSystem {
         y: (dy / dist) * k * body.mass,
       });
     }
-  }
-
-  private scenePauseBriefFocus(captain: Unit): void {
-    const cam = this.deps.scene.cameras.main;
-    cam.pan(captain.body.position.x, captain.body.position.y, 450, 'Power2');
-    this.deps.scene.time.delayedCall(500, () => {
-      cam.stopFollow();
-    });
   }
 
   private applyXerxaSelectionGate(owner: PlayerNumber): void {

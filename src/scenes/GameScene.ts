@@ -1371,6 +1371,7 @@ export class GameScene extends Phaser.Scene {
       vfxManager: this.vfxManager,
       canCaptainUltReady: () => this.captainMatchSystem?.canHumanActivateUlt() ?? false,
       tryBeginCaptainUlt: () => this.captainMatchSystem?.tryBeginUltFromUi() ?? false,
+      trySpendCaptainUltEnergy: () => this.captainMatchSystem?.tryConsumeHumanCaptainUltEnergy() ?? false,
     });
 
     this.player2AbilityManager = new AbilityManager({
