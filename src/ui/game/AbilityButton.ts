@@ -9,6 +9,7 @@ import {
 } from '../../constants/gameConstants';
 import { Unit } from '../../entities/Unit';
 import { AbilityManager } from '../../scenes/game/AbilityManager';
+import { getUnitById } from '../../data/UnitsRepository';
 
 export interface AbilityButtonConfig {
   abilityManager: AbilityManager;
@@ -202,8 +203,9 @@ export class AbilityButton {
   public updateVisuals(): void {
     // 1. Проверяем Кулдаун
     const cooldown = this.abilityManager.getCooldownRemaining();
-    
-    if (cooldown > 0) {
+    const captainUltReady = this.isCaptainUltUiReady();
+
+    if (cooldown > 0 && !captainUltReady) {
       // Режим перезарядки
       this.isReady = false;
       this.stopPulseAnimation();
@@ -237,7 +239,8 @@ export class AbilityButton {
     // 2. Стандартный режим
     const charges = this.getChargesCount();
     const cards = this.getMatchCardsCount();
-    const hasCharge = charges >= 1; // В новой системе карт charge = наличие карты в руке
+    const captainUltForCharge = this.isCaptainUltUiReady();
+    const hasCharge = charges >= 1 || captainUltForCharge;
     
     this.isReady = hasCharge;
 
@@ -356,7 +359,7 @@ export class AbilityButton {
 
     // Если кулдаун активен — трясем кнопку
     const cooldown = this.abilityManager.getCooldownRemaining();
-    if (cooldown > 0) {
+    if (cooldown > 0 && !this.isCaptainUltUiReady()) {
       this.playNoChargeFeedback();
       return;
     }
@@ -562,7 +565,20 @@ export class AbilityButton {
     return 0;
   }
 
+  private isCaptainUltUiReady(): boolean {
+    const u = this.currentUnit;
+    if (!u) return false;
+    const meta = getUnitById(u.getUnitId());
+    if (!meta?.isCaptain) return false;
+    return this.abilityManager.canActivateCaptainUlt();
+  }
+
   private tryStartActivation(): boolean {
+    const captainMeta = this.currentUnit ? getUnitById(this.currentUnit.getUnitId()) : undefined;
+    if (captainMeta?.isCaptain && this.isCaptainUltUiReady()) {
+      return this.activateCaptainAbility();
+    }
+
     if (typeof this.abilityManager.startCardActivation === 'function') {
       // Ищем первую неиспользованную карту
       const deck = this.abilityManager.getDeck();
@@ -572,6 +588,23 @@ export class AbilityButton {
       }
     }
     return false;
+  }
+
+  /**
+   * Ульта капитана через AbilityManager (CaptainMatchSystem).
+   */
+  private activateCaptainAbility(): boolean {
+    if (!this.currentUnit) return false;
+
+    const meta = getUnitById(this.currentUnit.getUnitId());
+    if (!meta?.id) return false;
+
+    console.log(`[AbilityButton] Activating captain ability for: ${meta.id}`);
+
+    return this.abilityManager.applyCard(meta.id, {
+      position: null,
+      unitIds: [this.currentUnit.id],
+    });
   }
 
   public destroy(): void {

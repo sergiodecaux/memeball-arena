@@ -26,6 +26,7 @@ import {
   CardTargetType,
   getCardsByFaction,
 } from '../../data/CardsCatalog';
+import { getUnitById } from '../../data/UnitsRepository';
 import { VFXManager } from '../../managers/VFXManager';
 import { PassiveManager } from '../../systems/PassiveManager';
 
@@ -54,6 +55,10 @@ export interface AbilityManagerConfig {
   playerFaction: FactionId;
   playerId: PlayerNumber;
   vfxManager?: VFXManager;
+  /** UI капитана: энергия полная и можно начать SUPER */
+  canCaptainUltReady?: () => boolean;
+  /** Запуск режима ульты капитана (CaptainMatchSystem) */
+  tryBeginCaptainUlt?: () => boolean;
 }
 
 export interface CardSlot {
@@ -86,6 +91,8 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   private factionId: FactionId;
   private playerId: PlayerNumber;
   private vfxManager?: VFXManager;
+  private canCaptainUltReady?: () => boolean;
+  private tryBeginCaptainUlt?: () => boolean;
 
   // === КАРТОЧНАЯ СИСТЕМА ===
   private deck: CardSlot[] = [];
@@ -137,6 +144,8 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     this.factionId = config.playerFaction;
     this.playerId = config.playerId;
     this.vfxManager = config.vfxManager;
+    this.canCaptainUltReady = config.canCaptainUltReady;
+    this.tryBeginCaptainUlt = config.tryBeginCaptainUlt;
 
     this.initializeDeck();
     this.setupCollisionListeners();
@@ -623,6 +632,10 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
   }
 
   public applyCard(cardId: string, data: { position?: { x: number; y: number } | null; unitIds?: string[]; }): boolean {
+    if (cardId.startsWith('captain_')) {
+      return this.applyCaptainAbility(cardId, data);
+    }
+
     const card = getCard(cardId);
     if (!card) {
       console.warn(`[AbilityManager] Card not found: ${cardId}`);
@@ -686,6 +699,91 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       } catch {}
       return false;
     }
+  }
+
+  /** SUPER капитана (энергия + локальный матч) — для AbilityButton */
+  public canActivateCaptainUlt(): boolean {
+    if (this.playerId !== 1) return false;
+    return this.canCaptainUltReady?.() ?? false;
+  }
+
+  /**
+   * Ультимейт капитана: камера + zoom, делегирование в CaptainMatchSystem, VFX.
+   */
+  private applyCaptainAbility(
+    captainId: string,
+    data: { position?: { x: number; y: number } | null; unitIds?: string[] },
+  ): boolean {
+    const activeUnit = this.getLastActiveUnit();
+
+    if (!activeUnit || !(activeUnit instanceof Unit)) {
+      console.warn(`[AbilityManager] Captain ability requires active unit`);
+      return false;
+    }
+
+    if (activeUnit.owner !== this.playerId) {
+      console.warn(`[AbilityManager] Captain ability wrong owner`);
+      return false;
+    }
+
+    const catalog = getUnitById(activeUnit.getUnitId());
+    if (!catalog?.isCaptain) {
+      console.warn(`[AbilityManager] Unit ${activeUnit.getUnitId()} is not a captain`);
+      return false;
+    }
+
+    if (captainId !== activeUnit.getUnitId()) {
+      console.warn(`[AbilityManager] Captain card ${captainId} mismatches active ${activeUnit.getUnitId()}`);
+      return false;
+    }
+
+    if (!this.tryBeginCaptainUlt) {
+      console.warn(`[AbilityManager] Captain ult hook not configured for P${this.playerId}`);
+      return false;
+    }
+
+    console.log(`[AbilityManager] Activating captain ability: ${captainId}`);
+
+    const ultStarted = this.tryBeginCaptainUlt();
+
+    if (!ultStarted) {
+      console.warn(`[AbilityManager] Captain ability failed: ${captainId}`);
+      return false;
+    }
+
+    const cam = this.scene.cameras?.main;
+    if (cam) {
+      this.scene.tweens.add({
+        targets: cam,
+        zoom: 1.18,
+        duration: 300,
+        ease: 'Cubic.easeOut',
+      });
+      this.scene.time.delayedCall(2000, () => {
+        if (!cam?.scene) return;
+        this.scene.tweens.add({
+          targets: cam,
+          zoom: 1.0,
+          duration: 500,
+          ease: 'Sine.easeInOut',
+        });
+      });
+    }
+
+    if (this.vfxManager) {
+      this.vfxManager.playCaptainAbilityEffect(captainId, activeUnit.x, activeUnit.y, activeUnit.factionId);
+    }
+    try {
+      eventBus.dispatch(GameEvents.HAPTIC_FEEDBACK, { type: 'heavy' });
+    } catch {}
+    try {
+      eventBus.dispatch(GameEvents.ABILITY_ACTIVATED, {
+        playerId: this.playerId,
+        abilityType: captainId,
+      });
+    } catch {}
+    console.log(`[AbilityManager] Captain ability activated successfully: ${captainId}`);
+    return true;
   }
 
   /**

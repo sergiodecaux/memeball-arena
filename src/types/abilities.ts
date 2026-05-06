@@ -5,7 +5,16 @@ import { FactionId } from '../constants/gameConstants';
 
 // ========== ТИПЫ СПОСОБНОСТЕЙ ==========
 
-export type AbilityType = 'lava_placement' | 'energy_shield' | 'phase_swap' | 'neurotoxin';
+export type AbilityType =
+  | 'lava_placement'
+  | 'energy_shield'
+  | 'phase_swap'
+  | 'neurotoxin'
+  | 'captain_ability'
+  | 'tectonic_rift'
+  | 'stasis_sphere'
+  | 'collapse'
+  | 'swarm_call';
 
 export type AbilityTrigger = 'active' | 'on_stop' | 'on_hit' | 'passive';
 

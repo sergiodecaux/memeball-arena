@@ -2170,6 +2170,75 @@ export class VFXManager {
     return this.activeLavaPools;
   }
 
+  /**
+   * Визуальный акцент при активации ульты капитана (вспышка + ударные кольца).
+   */
+  public playCaptainAbilityEffect(captainId: string, x: number, y: number, factionId: FactionId): void {
+    const color = FACTIONS[factionId].color;
+
+    const flash = this.scene.add.circle(x, y, 120, color, 0.75);
+    flash.setDepth(1000);
+    flash.setBlendMode(Phaser.BlendModes.ADD);
+
+    this.scene.tweens.add({
+      targets: flash,
+      scaleX: 3.2,
+      scaleY: 3.2,
+      alpha: 0,
+      duration: 780,
+      ease: 'Cubic.easeOut',
+      onComplete: () => flash.destroy(),
+    });
+
+    const wave1 = this.scene.add.circle(x, y, 56, color, 0);
+    wave1.setDepth(999);
+    wave1.setStrokeStyle(6, color, 1);
+
+    this.scene.tweens.add({
+      targets: wave1,
+      scaleX: 5.5,
+      scaleY: 5.5,
+      alpha: 0,
+      duration: 950,
+      ease: 'Cubic.easeOut',
+      onComplete: () => wave1.destroy(),
+    });
+
+    this.scene.time.delayedCall(180, () => {
+      const wave2 = this.scene.add.circle(x, y, 48, color, 0);
+      wave2.setDepth(999);
+      wave2.setStrokeStyle(4, color, 0.85);
+
+      this.scene.tweens.add({
+        targets: wave2,
+        scaleX: 4.8,
+        scaleY: 4.8,
+        alpha: 0,
+        duration: 820,
+        ease: 'Cubic.easeOut',
+        onComplete: () => wave2.destroy(),
+      });
+    });
+
+    if (this.scene.textures.exists('particle')) {
+      const particles = this.scene.add.particles(x, y, 'particle', {
+        speed: { min: 80, max: 260 },
+        scale: { start: 1.2, end: 0 },
+        alpha: { start: 0.95, end: 0 },
+        tint: color,
+        lifespan: 900,
+        quantity: 24,
+        blendMode: Phaser.BlendModes.ADD,
+      });
+      particles.setDepth(998);
+      this.scene.time.delayedCall(1000, () => particles.destroy());
+    }
+
+    if (import.meta.env.DEV) {
+      console.log(`[VFXManager] Captain ability effect: ${captainId}`);
+    }
+  }
+
   // ============================================================
   // CLEANUP
   // ============================================================
