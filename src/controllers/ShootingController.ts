@@ -140,6 +140,9 @@ export class ShootingController {
   private captainShotForceScale: ((cap: ShootableUnit) => number) | null = null;
   private captainSelectionFilter: ((cap: ShootableUnit) => boolean) | null = null;
 
+  /** Экранные координаты (pointer.x/y): если HUD попал под палец — не трогаем стрельбу/выбор фишки */
+  private shootingPointerScreenBlock?: (screenX: number, screenY: number) => boolean;
+
   private isLassoActiveCheck: () => boolean = () => false;
 
   private pendingShot: { cap: ShootableUnit; localIndex: number; hitOffset: number } | null = null;
@@ -773,6 +776,13 @@ export class ShootingController {
     this.captainSelectionFilter = fn;
   }
 
+  /** Блокирует обработку pointerdown стрельбы при клике по UI (SUPER, карты и т.п.) */
+  public setShootingPointerScreenBlock(
+    fn: ((screenX: number, screenY: number) => boolean) | undefined,
+  ): void {
+    this.shootingPointerScreenBlock = fn;
+  }
+
   public setLassoActiveCheck(fn: (() => boolean) | null): void {
     this.isLassoActiveCheck = fn ?? (() => false);
   }
@@ -802,11 +812,12 @@ export class ShootingController {
   private onPointerDown(pointer: Phaser.Input.Pointer, gameObjects: any[]): void {
     if (!this.isEnabled || this.hasFiredThisTurn) return;
     if (this.isLassoActiveCheck()) return;
+    if (this.shootingPointerScreenBlock?.(pointer.x, pointer.y)) return;
 
     this.pointerDownTime = Date.now();
     this.pointerDownPos = new Phaser.Math.Vector2(pointer.x, pointer.y);
 
-    const clickedCap = this.findClickedCap(pointer.x, pointer.y);
+    const clickedCap = this.findClickedCapWorld(pointer.worldX, pointer.worldY);
 
     // 🧬 VOID SWAP: Если выбран Void юнит и кликаем на союзника
     if (this.selectedCap && this.isVoidSwapMode() && clickedCap) {
@@ -841,7 +852,12 @@ export class ShootingController {
         if (this.selectedCap !== clickedCap) this.selectCap(clickedCap);
         this.startAiming(pointer);
     } else if (this.selectedCap && !this.isAiming) {
-        const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, this.selectedCap.body.position.x, this.selectedCap.body.position.y);
+        const dist = Phaser.Math.Distance.Between(
+          pointer.worldX,
+          pointer.worldY,
+          this.selectedCap.body.position.x,
+          this.selectedCap.body.position.y,
+        );
         if (dist < 200) {
             this.startAiming(pointer);
         } else {
@@ -875,7 +891,7 @@ export class ShootingController {
     } catch {}
   }
 
-  private findClickedCap(x: number, y: number): ShootableUnit | undefined {
+  private findClickedCapWorld(worldX: number, worldY: number): ShootableUnit | undefined {
       for (const [cap] of this.registeredCaps) {
           // Проверка владельца
           if (cap.owner !== this.currentPlayer) continue;
@@ -891,11 +907,11 @@ export class ShootingController {
             continue;
           }
           
-          // Проверка попадания в радиус
+          // Проверка попадания в радиус (мировые координаты)
           const pos = cap.body.position;
           const clickRadius = cap.getRadius ? cap.getRadius() + 20 : 50;
           
-          if (Phaser.Math.Distance.Between(x, y, pos.x, pos.y) <= clickRadius) {
+          if (Phaser.Math.Distance.Between(worldX, worldY, pos.x, pos.y) <= clickRadius) {
               return cap;
           }
       }

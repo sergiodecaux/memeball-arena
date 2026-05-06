@@ -921,9 +921,29 @@ export class GameScene extends Phaser.Scene {
       .rectangle(0, btnY, panelW - 12, btnH, 0x334155, 1)
       .setStrokeStyle(2, 0x64748b, 0.9)
       .setInteractive({ useHandCursor: true });
-    btnZone.on('pointerdown', () => {
+    btnZone.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      try {
+        pointer.event?.stopPropagation?.();
+      } catch {}
+
       if (this.captainMatchSystem?.tryBeginUltFromUi()) {
         AudioManager.getInstance().playUIClick();
+        const my = this.getMyOwner();
+        const captain = this.caps.find(
+          (c): c is Unit =>
+            c instanceof Unit && c.owner === my && isCaptainUnitId(c.getUnitId()),
+        );
+        if (captain && this.vfxManager) {
+          this.vfxManager.playCaptainAbilityEffect(
+            captain.getUnitId(),
+            captain.x,
+            captain.y,
+            captain.factionId,
+          );
+        }
+        try {
+          eventBus.dispatch(GameEvents.HAPTIC_FEEDBACK, { type: 'heavy' });
+        } catch {}
       }
     });
     panel.add(btnZone);
@@ -1499,6 +1519,7 @@ export class GameScene extends Phaser.Scene {
     this.wireAITricksterLasso();
 
     this.createCardPanel();
+    this.setupShootingControllerUiPointerBlocks();
 
     const isFirstTutorialMatch = this.isCampaignMode &&
       this.campaignLevelConfig?.id === '1-1' &&
@@ -1538,6 +1559,18 @@ export class GameScene extends Phaser.Scene {
   // ============================================================
   // вњ… РЈР›РЈР§РЁР•РќРћ: CARD PANEL UI РЎ РљРЈР›Р”РђРЈРќРћРњ
   // ============================================================
+
+  /** Клики по фиксированному HUD не должны обрабатываться как поле (деселект / прицел). */
+  private setupShootingControllerUiPointerBlocks(): void {
+    this.shootingController.setShootingPointerScreenBlock((sx, sy) => {
+      const panels: (Phaser.GameObjects.Container | undefined)[] = [this.captainSuperPanel, this.cardPanel];
+      for (const p of panels) {
+        if (!p?.visible || !p.active) continue;
+        if (p.getBounds().contains(sx, sy)) return true;
+      }
+      return false;
+    });
+  }
 
   private createCardPanel(): void {
     const { width, height } = this.cameras.main;
