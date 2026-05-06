@@ -11,6 +11,10 @@ import { Unit } from '../../entities/Unit';
 import { AbilityManager } from '../../scenes/game/AbilityManager';
 import { getUnitById } from '../../data/UnitsRepository';
 
+const devAbilityBtnLog = (...args: unknown[]) => {
+  if (import.meta.env.DEV) console.log(...args);
+};
+
 export interface AbilityButtonConfig {
   abilityManager: AbilityManager;
   factionId: FactionId;
@@ -201,39 +205,53 @@ export class AbilityButton {
 
   // Обновление состояния кнопки (включая таймер)
   public updateVisuals(): void {
-    // 1. Проверяем Кулдаун
+    const isCaptain = Boolean(this.currentUnit && this.isCaptainUnit(this.currentUnit));
+    const captainUltReady = isCaptain && this.isCaptainUltUiReady();
+
     const cooldown = this.abilityManager.getCooldownRemaining();
-    const captainUltReady = this.isCaptainUltUiReady();
 
     if (cooldown > 0 && !captainUltReady) {
-      // Режим перезарядки
       this.isReady = false;
       this.stopPulseAnimation();
-      
-      // Рисуем затемнение
+
       this.cooldownOverlay.clear();
       this.cooldownOverlay.fillStyle(0x000000, 0.7);
-      this.cooldownOverlay.fillRoundedRect(-this.WIDTH/2, -this.HEIGHT/2, this.WIDTH, this.HEIGHT, 12);
+      this.cooldownOverlay.fillRoundedRect(-this.WIDTH / 2, -this.HEIGHT / 2, this.WIDTH, this.HEIGHT, 12);
       this.cooldownOverlay.setVisible(true);
-      
+
       this.cooldownText.setText(cooldown.toString());
       this.cooldownText.setVisible(true);
-      
-      this.statusText.setText('COOLDOWN');
+
+      this.statusText.setText(isCaptain ? 'CHARGING' : 'COOLDOWN');
       this.statusText.setColor('#888888');
-      
-      // Скрываем лишнее
+
+      this.chargeBar.clear();
       this.chargeText.setVisible(false);
       this.iconText.setAlpha(0.3);
       this.drawBackground(0x333333, false);
-      
-      return; 
-    } else {
-      // Сбрасываем режим перезарядки
-      this.cooldownOverlay.setVisible(false);
-      this.cooldownText.setVisible(false);
-      this.chargeText.setVisible(true);
-      this.iconText.setAlpha(1);
+
+      return;
+    }
+
+    this.cooldownOverlay.setVisible(false);
+    this.cooldownText.setVisible(false);
+    this.chargeText.setVisible(true);
+    this.iconText.setAlpha(1);
+
+    if (captainUltReady) {
+      this.chargeBar.clear();
+      this.chargeText.setText('⚡100%');
+
+      this.statusText.setText('ULTIMATE READY');
+      this.statusText.setColor('#ffd700');
+
+      const color = FACTIONS[this.factionId].color;
+      this.drawBackground(color, false);
+      this.isReady = true;
+
+      this.cardBadge.setVisible(false);
+      this.startPulseAnimation();
+      return;
     }
 
     // 2. Стандартный режим
@@ -303,8 +321,12 @@ export class AbilityButton {
     this.abilityManager.on('ability_activated', this.onActivationEnded, this);
   }
 
+  private canInteractAbility(): boolean {
+    return this.isReady || this.isActivating || this.isCaptainUltUiReady();
+  }
+
   private onHover(): void {
-    if (!this.isReady) return;
+    if (!this.canInteractAbility()) return;
     
     const color = FACTIONS[this.factionId].color;
     
@@ -334,7 +356,7 @@ export class AbilityButton {
   }
 
   private onPress(): void {
-    if (!this.isReady && !this.isActivating) return;
+    if (!this.canInteractAbility() && !this.isActivating) return;
     
     this.scene.tweens.add({
       targets: this.container,
@@ -345,6 +367,12 @@ export class AbilityButton {
   }
 
   private onClick(): void {
+    devAbilityBtnLog('[AbilityButton] onClick', {
+      isActivating: this.isActivating,
+      isReady: this.isReady,
+      currentUnit: this.currentUnit?.id,
+    });
+
     this.scene.tweens.add({
       targets: this.container,
       scaleX: 1,
@@ -353,24 +381,40 @@ export class AbilityButton {
     });
 
     if (this.isActivating) {
+      devAbilityBtnLog('[AbilityButton] Cancel activation');
       this.abilityManager.cancelActivation();
       return;
     }
 
-    // Если кулдаун активен — трясем кнопку
-    const cooldown = this.abilityManager.getCooldownRemaining();
-    if (cooldown > 0 && !this.isCaptainUltUiReady()) {
+    const captainMeta = this.currentUnit ? getUnitById(this.currentUnit.getUnitId()) : undefined;
+    const ultReady = this.isCaptainUltUiReady();
+    const isCaptainUlt = captainMeta?.isCaptain === true && ultReady;
+
+    devAbilityBtnLog('[AbilityButton] Captain check', {
+      isCaptain: captainMeta?.isCaptain,
+      ultReady,
+      isCaptainUlt,
+    });
+
+    if (!isCaptainUlt) {
+      const cooldown = this.abilityManager.getCooldownRemaining();
+      if (cooldown > 0) {
+        devAbilityBtnLog(`[AbilityButton] Cooldown active: ${cooldown}s`);
+        this.playNoChargeFeedback();
+        return;
+      }
+    }
+
+    if (!this.isReady && !isCaptainUlt) {
+      devAbilityBtnLog('[AbilityButton] Not ready and not captain ult');
       this.playNoChargeFeedback();
       return;
     }
 
-    if (!this.isReady) {
-      this.playNoChargeFeedback();
-      return;
-    }
-
+    devAbilityBtnLog('[AbilityButton] Attempting activation...');
     const success = this.tryStartActivation();
-    
+    devAbilityBtnLog(`[AbilityButton] Activation result: ${success ? 'SUCCESS' : 'FAILED'}`);
+
     if (success) {
       this.playActivationEffect();
       try {
@@ -582,23 +626,53 @@ export class AbilityButton {
     if (!u) return false;
     const meta = getUnitById(u.getUnitId());
     if (!meta?.isCaptain) return false;
-    return this.abilityManager.canActivateCaptainUlt();
+
+    const mgr = this.abilityManager;
+    if (typeof mgr.canActivateCaptainUlt !== 'function') {
+      if (import.meta.env.DEV) {
+        console.warn('[AbilityButton] canActivateCaptainUlt missing on AbilityManager');
+      }
+      return false;
+    }
+
+    const ok = mgr.canActivateCaptainUlt();
+    devAbilityBtnLog('[AbilityButton] isCaptainUltUiReady:', ok);
+    return ok;
   }
 
   private tryStartActivation(): boolean {
     const captainMeta = this.currentUnit ? getUnitById(this.currentUnit.getUnitId()) : undefined;
-    if (captainMeta?.isCaptain && this.isCaptainUltUiReady()) {
+    const isCaptain = captainMeta?.isCaptain === true;
+
+    devAbilityBtnLog('[AbilityButton] tryStartActivation', {
+      isCaptain,
+      currentUnitId: this.currentUnit?.id,
+      captainMetaId: captainMeta?.id,
+      ultReady: this.isCaptainUltUiReady(),
+    });
+
+    if (isCaptain) {
+      if (!this.isCaptainUltUiReady()) {
+        if (import.meta.env.DEV) {
+          console.warn('[AbilityButton] Captain ultimate not ready (no energy)');
+        }
+        return false;
+      }
       return this.activateCaptainAbility();
     }
 
     if (typeof this.abilityManager.startCardActivation === 'function') {
-      // Ищем первую неиспользованную карту
       const deck = this.abilityManager.getDeck();
-      const availableSlot = deck.findIndex(s => s.cardId && !s.used);
+      const availableSlot = deck.findIndex((s) => s.cardId && !s.used);
       if (availableSlot !== -1) {
+        devAbilityBtnLog(`[AbilityButton] Starting card activation slot ${availableSlot}`);
         return this.abilityManager.startCardActivation(availableSlot);
       }
+      if (import.meta.env.DEV) {
+        console.warn('[AbilityButton] No available card slots');
+      }
     }
+
     return false;
   }
 
@@ -606,17 +680,40 @@ export class AbilityButton {
    * Ульта капитана: applyCard + явный runtime id в unitIds (lastActiveUnit до выстрела часто другой).
    */
   private activateCaptainAbility(): boolean {
-    if (!this.currentUnit) return false;
+    if (!this.currentUnit) {
+      console.error('[AbilityButton] Cannot activate captain ability — no current unit');
+      return false;
+    }
 
     const meta = getUnitById(this.currentUnit.getUnitId());
-    if (!meta?.id || !meta.isCaptain) return false;
+    if (!meta?.id || !meta.isCaptain) {
+      console.error('[AbilityButton] Cannot activate — not a captain unit', {
+        unitId: this.currentUnit.getUnitId(),
+        metaId: meta?.id,
+        isCaptain: meta?.isCaptain,
+      });
+      return false;
+    }
 
-    console.log(`[AbilityButton] Activating captain ability for: ${meta.id}`);
+    devAbilityBtnLog('[AbilityButton] Activating captain ability', {
+      catalogId: meta.id,
+      runtimeId: this.currentUnit.id,
+      name: meta.name,
+    });
 
-    return this.abilityManager.applyCard(meta.id, {
+    if (meta.id === 'captain_chronos') {
+      devAbilityBtnLog('[AbilityButton] Chronos — targeting mode');
+      const ok = this.abilityManager.beginCaptainUltTargeting();
+      devAbilityBtnLog('[AbilityButton] Chronos targeting:', ok);
+      return ok;
+    }
+
+    const success = this.abilityManager.applyCard(meta.id, {
       position: null,
       unitIds: [this.currentUnit.id],
     });
+    devAbilityBtnLog('[AbilityButton] Captain ability result:', success);
+    return success;
   }
 
   public destroy(): void {

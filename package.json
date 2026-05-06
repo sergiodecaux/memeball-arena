@@ -1,6 +1,7 @@
 {
   "name": "soccer-caps",
   "version": "0.1.0",
+  "description": "Galaxy League — браузерная игра «футбол фишками» на Phaser 3: лиги, турниры, коллекция юнитов, PvP через socket.io, Telegram Web App.",
   "type": "module",
   "scripts": {
     "dev": "vite",

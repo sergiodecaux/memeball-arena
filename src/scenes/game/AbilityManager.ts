@@ -736,6 +736,10 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     return this.canCaptainUltReady?.() ?? false;
   }
 
+  public beginCaptainUltTargeting(): boolean {
+    return this.tryBeginCaptainUlt?.() ?? false;
+  }
+
   /**
    * Ультимейт капитана: без камеры и без unit.activateAbility.
    */
@@ -743,12 +747,24 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     captainId: string,
     data: { position?: { x: number; y: number } | null; unitIds?: string[] },
   ): boolean {
+    console.log(`[AbilityManager] applyCaptainAbility called:`, {
+      captainId,
+      data,
+      playerId: this.playerId,
+    });
+
     const activeUnit = this.resolveCaptainActivatingUnit(captainId, data);
 
     if (!activeUnit) {
       console.warn(`[AbilityManager] Captain ability: нет подходящего юнита для ${captainId}`);
       return false;
     }
+
+    console.log(`[AbilityManager] Captain unit resolved:`, {
+      runtimeId: activeUnit.id,
+      catalogId: activeUnit instanceof Unit ? activeUnit.getUnitId() : 'unknown',
+      owner: activeUnit.owner,
+    });
 
     const enemyTargetId = data.unitIds?.find((id) => {
       const u = this.resolveCapByUnitRef(id);
@@ -757,8 +773,12 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
 
     const chronosNeedsPick = captainId === 'captain_chronos' && !enemyTargetId;
 
+    console.log(`[AbilityManager] Chronos needs target pick: ${chronosNeedsPick}`);
+
     if (!chronosNeedsPick) {
-      if (!(this.trySpendCaptainUltEnergy?.() ?? false)) {
+      const energySpent = this.trySpendCaptainUltEnergy?.() ?? false;
+      console.log(`[AbilityManager] Energy spent: ${energySpent}`);
+      if (!energySpent) {
         console.warn(`[AbilityManager] Captain SUPER: энергия недоступна (${captainId})`);
         return false;
       }
@@ -789,17 +809,21 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
           console.warn('[AbilityManager] Chronos requires target pick — hook missing');
           return false;
         }
+        console.log('[AbilityManager] Starting Chronos targeting mode');
         success = this.tryBeginCaptainUlt();
       }
     } else {
       switch (captainId) {
         case 'captain_urok':
+          console.log('[AbilityManager] Executing Tectonic Rift');
           success = this.applyTectonicRift(activeUnit);
           break;
         case 'captain_ethelgard':
+          console.log('[AbilityManager] Executing Collapse');
           success = this.applyCollapse(activeUnit);
           break;
         case 'captain_xerxa':
+          console.log('[AbilityManager] Executing Swarm Call');
           success = this.applySwarmCall(activeUnit);
           break;
         default:
@@ -808,8 +832,9 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
       }
     }
 
+    console.log(`[AbilityManager] Captain ability result: ${success ? 'SUCCESS' : 'FAILED'}`);
+
     if (success) {
-      console.log(`[AbilityManager] Captain ability executed: ${captainId}`);
       try {
         eventBus.dispatch(GameEvents.ABILITY_ACTIVATED, {
           playerId: this.playerId,
