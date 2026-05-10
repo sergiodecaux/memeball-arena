@@ -81,10 +81,18 @@ export class CollectionScene extends Phaser.Scene {
   private headerHeight = 60; // Простая шапка только с заголовком
   private tabsHeight = 60;
   /** Панель фильтров редкость / роль под табами фракций */
-  private filtersBarHeight = 74;
+  private filtersBarHeight = 112;
   private filterRarity: UnitRarity | 'all' = 'all';
   private filterRole: CapClass | 'all' = 'all';
-  private readonly roleSortOrder: CapClass[] = ['tank', 'sniper', 'balanced', 'trickster'];
+  private readonly roleSortOrder: CapClass[] = [
+    'tank',
+    'sniper',
+    'balanced',
+    'trickster',
+    'playmaker',
+    'maestro',
+    'enforcer',
+  ];
   private topOffset = 0;
   /** Во время preload — чтобы не было чёрного экрана под спиннером */
   private preloadBackdropObjs: Phaser.GameObjects.GameObject[] = [];
@@ -460,16 +468,23 @@ export class CollectionScene extends Phaser.Scene {
       { id: 'legendary', text: COLLECTION_RU.filters.rarityShort.legendary },
     ];
 
-    const roleDefs: ReadonlyArray<{ id: CapClass | 'all'; text: string }> = [
+    const roleDefsRow1: ReadonlyArray<{ id: CapClass | 'all'; text: string }> = [
       { id: 'all', text: COLLECTION_RU.filters.all },
       { id: 'tank', text: COLLECTION_RU.roles.tank },
       { id: 'sniper', text: COLLECTION_RU.roles.sniper },
       { id: 'balanced', text: COLLECTION_RU.roles.balanced },
+    ];
+    const roleDefsRow2: ReadonlyArray<{ id: CapClass; text: string }> = [
       { id: 'trickster', text: COLLECTION_RU.roles.trickster },
+      { id: 'playmaker', text: COLLECTION_RU.roles.playmaker },
+      { id: 'maestro', text: COLLECTION_RU.roles.maestro },
+      { id: 'enforcer', text: COLLECTION_RU.roles.enforcer },
     ];
 
     const row1Y = Math.round(10 + chipH / 2);
-    const row2Y = Math.round(10 + chipH + gap + 6 + chipH / 2);
+    const rowGap = chipH + gap + 4;
+    const row2Y = row1Y + rowGap;
+    const row3Y = row2Y + rowGap;
     const rowUsableW = this.width - padX * 2;
 
     const addChipRow = (
@@ -538,8 +553,20 @@ export class CollectionScene extends Phaser.Scene {
     );
 
     addChipRow(
-      roleDefs,
+      roleDefsRow1,
       row2Y,
+      this.filterRole,
+      (id: string) => {
+        this.filterRole = id as CapClass | 'all';
+        this.createFiltersBar();
+        this.renderUnitsGrid();
+        this.time.delayedCall(40, () => void this.loadVisibleUnitPngs());
+      },
+    );
+
+    addChipRow(
+      roleDefsRow2,
+      row3Y,
       this.filterRole,
       (id: string) => {
         this.filterRole = id as CapClass | 'all';

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Unit } from '../../entities/Unit';
 import { getUnitDisplayName } from '../../data/UnitsRepository';
+import { getFonts } from '../../config/themes';
 
 /**
  * Выбор союзника для магнитного паса (Playmaker).
@@ -19,9 +20,10 @@ export class MagneticPassOverlay {
 
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
+    const fonts = getFonts();
 
     const backdrop = this.scene.add
-      .rectangle(w / 2, h / 2, w, h, 0x000000, 0.62)
+      .rectangle(w / 2, h / 2, w, h, 0x020617, 0.72)
       .setInteractive()
       .on('pointerdown', () => {
         onCancel?.();
@@ -29,32 +31,48 @@ export class MagneticPassOverlay {
       });
     this.container.add(backdrop);
 
+    const headerH = 120;
+    const header = this.scene.add.graphics();
+    header.fillGradientStyle(0x064e3b, 0x022c22, 0x0f172a, 0x0f172a, 0.95, 0.95, 0.92, 0.92);
+    header.fillRoundedRect(18, 32, w - 36, headerH, 18);
+    header.lineStyle(2, 0x34d399, 0.85);
+    header.strokeRoundedRect(18, 32, w - 36, headerH, 18);
+    this.container.add(header);
+
     const title = this.scene.add
-      .text(w / 2, 72, 'Пас союзнику', {
-        fontSize: '22px',
-        color: '#ffffff',
-        fontFamily: 'Rajdhani, Arial',
+      .text(w / 2, 66, '⚽ Магнитный пас', {
+        fontSize: '24px',
+        color: '#ecfdf5',
+        fontFamily: fonts.tech,
+        stroke: '#022c22',
+        strokeThickness: 5,
       })
       .setOrigin(0.5);
     this.container.add(title);
 
     const sub = this.scene.add
-      .text(w / 2, 104, getUnitDisplayName(passer.getUnitId()), {
+      .text(w / 2, 104, `От: ${getUnitDisplayName(passer.getUnitId())}`, {
         fontSize: '14px',
-        color: '#cbd5e1',
-        fontFamily: 'Rajdhani, Arial',
+        color: '#a7f3d0',
+        fontFamily: fonts.primary,
       })
       .setOrigin(0.5);
     this.container.add(sub);
 
     allies.forEach((ally, index) => {
-      const y = 150 + index * 62;
+      const y = 168 + index * 64;
       const row = this.scene.add.container(w / 2, y);
 
       const bg = this.scene.add
-        .rectangle(0, 0, Math.min(320, w - 40), 52, 0x14532d, 0.95)
-        .setStrokeStyle(2, 0x34d399)
+        .rectangle(0, 0, Math.min(340, w - 36), 54, 0x14532d, 0.96)
+        .setStrokeStyle(2, 0x6ee7b7, 0.9)
         .setInteractive({ useHandCursor: true })
+        .on('pointerover', () => {
+          bg.setFillStyle(0x166534, 1);
+        })
+        .on('pointerout', () => {
+          bg.setFillStyle(0x14532d, 0.96);
+        })
         .on('pointerdown', () => {
           onPick(ally);
           this.hide();
@@ -63,8 +81,8 @@ export class MagneticPassOverlay {
       const label = this.scene.add
         .text(0, 0, getUnitDisplayName(ally.getUnitId()), {
           fontSize: '18px',
-          color: '#ffffff',
-          fontFamily: 'Orbitron, Arial',
+          color: '#f8fafc',
+          fontFamily: fonts.tech,
         })
         .setOrigin(0.5);
 
@@ -73,12 +91,12 @@ export class MagneticPassOverlay {
     });
 
     const cancelBtn = this.scene.add
-      .text(w / 2, h - 96, 'ОТМЕНА', {
+      .text(w / 2, h - 88, 'ОТМЕНА', {
         fontSize: '18px',
-        color: '#fecaca',
-        fontFamily: 'Rajdhani, Arial',
-        backgroundColor: '#7f1d1d',
-        padding: { x: 22, y: 10 },
+        color: '#fee2e2',
+        fontFamily: fonts.tech,
+        backgroundColor: '#991b1b',
+        padding: { x: 26, y: 11 },
       })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })

@@ -112,7 +112,12 @@ export class Unit {
   /** Стазис Хроноса (отдельно от обычного STUN). */
   private captainStasisActive: boolean = false;
   private abilityCooldown: number = 0;
-  
+
+  /** Классовые пассивки: магнитный пас / дриблинг (ходы). */
+  private magneticPassCooldownTurns = 0;
+  private dribblingCooldownTurns = 0;
+  private magneticDribbleActive = false;
+
   // Визуальные эффекты способностей
   private shieldGraphics?: Phaser.GameObjects.Graphics;
   private shieldSensor?: MatterJS.BodyType;
@@ -322,7 +327,11 @@ export class Unit {
     this.statusDuration = duration;
 
     this.scene.matter.body.setVelocity(this.body, { x: 0, y: 0 });
-    this.scene.matter.body.setStatic(this.body, true);
+    // Откладываем static на следующий тик — избегаем зависаний Matter при столкновении
+    this.scene.time.delayedCall(1, () => {
+      if (this.status !== UnitStatus.STUNNED || !this.body || (this.body as any).removed) return;
+      this.scene.matter.body.setStatic(this.body, true);
+    });
 
     this.createStunOverlay();
     
@@ -366,6 +375,30 @@ export class Unit {
    */
   public isStunned(): boolean {
     return this.status === UnitStatus.STUNNED;
+  }
+
+  public getMagneticPassCooldownTurns(): number {
+    return this.magneticPassCooldownTurns;
+  }
+
+  public getDribblingCooldownTurns(): number {
+    return this.dribblingCooldownTurns;
+  }
+
+  public setMagneticPassCooldownTurns(turns: number): void {
+    this.magneticPassCooldownTurns = Math.max(0, turns);
+  }
+
+  public setDribblingCooldownTurns(turns: number): void {
+    this.dribblingCooldownTurns = Math.max(0, turns);
+  }
+
+  public isMagneticDribbleActive(): boolean {
+    return this.magneticDribbleActive;
+  }
+
+  public setMagneticDribbleActive(active: boolean): void {
+    this.magneticDribbleActive = active;
   }
 
   public applyCaptainRiftSelectionBan(turns: number = 1): void {
@@ -478,6 +511,13 @@ export class Unit {
   public onTurnEnd(): void {
     if (this.abilityCooldown > 0) {
       this.abilityCooldown--;
+    }
+
+    if (this.magneticPassCooldownTurns > 0) {
+      this.magneticPassCooldownTurns--;
+    }
+    if (this.dribblingCooldownTurns > 0) {
+      this.dribblingCooldownTurns--;
     }
 
     if (this.statusDuration > 0) {

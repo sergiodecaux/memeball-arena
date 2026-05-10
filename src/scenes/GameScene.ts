@@ -2,7 +2,7 @@
 // вњ… РР—РњР•РќР•РќРћ: РСЃРїСЂР°РІР»РµРЅ Р±Р°Рі СЃ С‚Р°Р№РјРµСЂРѕРј - РґРѕР±Р°РІР»РµРЅРѕ РїРѕР»Рµ matchDuration, РёСЃРїСЂР°РІР»РµРЅ getState()
 
 import Phaser from 'phaser';
-import { GAME, GOAL, FactionId, LASSO_CONFIG } from '../constants/gameConstants';
+import { GAME, GOAL, FactionId, LASSO_CONFIG, PASSIVE_SKILL_COOLDOWN } from '../constants/gameConstants';
 import { isCaptainUnitId } from '../constants/captains';
 import { FieldBounds, PlayerNumber, AIDifficulty } from '../types';
 import { Unit } from '../entities/Unit';
@@ -57,6 +57,7 @@ import { MagneticPassOverlay } from '../ui/game/MagneticPassOverlay';
 import { AbilityButton } from '../ui/game/AbilityButton';
 import { playerData } from '../data/PlayerData';
 import { LassoButton } from '../ui/game/LassoButton';
+import { PassiveSkillButton } from '../ui/game/PassiveSkillButton';
 import { LassoController } from './game/LassoController';
 import { TutorialOverlay } from '../ui/game/TutorialOverlay';
 import { LeagueManager } from '../managers/LeagueManager';
@@ -140,6 +141,7 @@ export class GameScene extends Phaser.Scene {
   private abilityButton!: AbilityButton;
   private lassoController: LassoController | null = null;
   private lassoButton: LassoButton | null = null;
+  private passiveSkillButton: PassiveSkillButton | null = null;
   private tutorialOverlay!: TutorialOverlay;
   private devOverlay?: import('../ui/DevStabilityOverlay').DevStabilityOverlay;
   
@@ -1168,7 +1170,6 @@ export class GameScene extends Phaser.Scene {
     this.collisionHandler.setPassiveManager(this.passiveManager);
 
     this.magneticPassOverlay = new MagneticPassOverlay(this);
-    this.setupMagneticPassStartGuard();
 
     this.setupAIController();
     
@@ -1179,34 +1180,6 @@ export class GameScene extends Phaser.Scene {
     }
     
     // OLD: Removed old pvpSync initialization (using pvpHelper now)
-  }
-
-  /** Локальный матч: Playmaker открывает выбор союзника вместо мгновенного входа в прицеливание */
-  private setupMagneticPassStartGuard(): void {
-    this.shootingController.setStartAimingGuard((cap) => {
-      if (this.isRealtimePvP) return true;
-      if (!cap || !(cap instanceof Unit)) return true;
-      if (this.matchDirector.getCurrentPlayer() !== cap.owner) return true;
-
-      const passive = getUnitPassive(cap.getUnitId());
-      if (passive.type !== 'magnetic_pass') return true;
-      if (!this.shootingController.canUseMagneticPass(cap, this.ball)) return true;
-
-      const allies = this.caps.filter(
-        (u): u is Unit =>
-          u instanceof Unit &&
-          u.owner === cap.owner &&
-          u !== cap &&
-          !u.isStunned(),
-      );
-      if (allies.length === 0) return true;
-
-      this.magneticPassOverlay?.show(allies, cap, (target) => {
-        this.shootingController.activateMagneticPass(cap, this.ball, target);
-      });
-
-      return false;
-    });
   }
 
   // ============================================================
@@ -1551,6 +1524,11 @@ export class GameScene extends Phaser.Scene {
       lassoController: this.lassoController,
     });
 
+    this.passiveSkillButton = new PassiveSkillButton(this, {
+      onMagneticPass: (u) => this.handlePassiveMagneticButton(u),
+      onDribble: (u) => this.handlePassiveDribbleButton(u),
+    });
+
     this.wireAITricksterLasso();
 
     this.createCardPanel();
@@ -1598,7 +1576,11 @@ export class GameScene extends Phaser.Scene {
   /** Клики по фиксированному HUD не должны обрабатываться как поле (деселект / прицел). */
   private setupShootingControllerUiPointerBlocks(): void {
     this.shootingController.setShootingPointerScreenBlock((sx, sy) => {
-      const panels: (Phaser.GameObjects.Container | undefined)[] = [this.captainSuperPanel, this.cardPanel];
+      const panels: (Phaser.GameObjects.Container | undefined)[] = [
+        this.captainSuperPanel,
+        this.cardPanel,
+        this.passiveSkillButton?.getContainer(),
+      ];
       for (const p of panels) {
         if (!p?.visible || !p.active) continue;
         if (p.getBounds().contains(sx, sy)) return true;
@@ -2793,6 +2775,8 @@ export class GameScene extends Phaser.Scene {
     this.lassoController?.cancel();
     this.lassoButton?.setCurrentCap(null);
     this.lassoButton?.hide();
+    this.passiveSkillButton?.setCurrentCap(null);
+    this.passiveSkillButton?.hide();
 
     this.captainMatchSystem?.onTurnOwnerChanged(player);
     
@@ -2896,6 +2880,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     const myTurn = this.matchDirector.getCurrentPlayer() === myOwner;
+    const { lassoX, lassoY, passiveX, passiveY } = this.getHudSkillAnchors();
+
     const showLasso =
       !this.isRealtimePvP &&
       myTurn &&
@@ -2906,11 +2892,131 @@ export class GameScene extends Phaser.Scene {
 
     if (showLasso) {
       this.lassoButton?.setCurrentCap(cap as GameUnit);
-      this.lassoButton?.show(160, this.scale.height - 100);
+      this.lassoButton?.show(lassoX, lassoY);
     } else {
       this.lassoButton?.setCurrentCap(null);
       this.lassoButton?.hide();
     }
+
+    const passiveType =
+      cap && cap instanceof Unit ? getUnitPassive(cap.getUnitId()).type : null;
+    const showPassiveSkill =
+      !this.isRealtimePvP &&
+      myTurn &&
+      !!cap &&
+      cap instanceof Unit &&
+      cap.owner === myOwner &&
+      (passiveType === 'magnetic_pass' || passiveType === 'dribbling');
+
+    if (showPassiveSkill && cap instanceof Unit) {
+      this.passiveSkillButton?.setCurrentCap(cap);
+      this.passiveSkillButton?.show(passiveX, passiveY);
+      this.passiveSkillButton?.refresh();
+    } else {
+      this.passiveSkillButton?.setCurrentCap(null);
+      this.passiveSkillButton?.hide();
+    }
+  }
+
+  private getHudSkillAnchors(): {
+    lassoX: number;
+    lassoY: number;
+    passiveX: number;
+    passiveY: number;
+  } {
+    const lassoX = this.scale.width - LASSO_CONFIG.BUTTON_SIZE / 2 - 10;
+    const lassoY =
+      this.scale.height -
+      this.CARD_PANEL_Y_OFFSET -
+      this.CARD_SLOT_HEIGHT / 2 -
+      8;
+    const passiveX = lassoX - LASSO_CONFIG.BUTTON_SIZE - 12;
+    const passiveY = lassoY;
+    return { lassoX, lassoY, passiveX, passiveY };
+  }
+
+  private showPassiveToast(message: string): void {
+    const { width, height } = this.scale;
+    const t = this.add
+      .text(width / 2, height / 2 - 40, message, {
+        fontSize: '15px',
+        fontFamily: 'Orbitron, Arial',
+        color: '#fffef0',
+        backgroundColor: '#1e293b',
+        padding: { x: 14, y: 8 },
+      })
+      .setOrigin(0.5)
+      .setDepth(400)
+      .setScrollFactor(0);
+    this.tweens.add({
+      targets: t,
+      alpha: 0,
+      y: t.y - 36,
+      duration: 1100,
+      delay: 160,
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  private handlePassiveMagneticButton(passer: Unit): void {
+    if (this.isRealtimePvP) {
+      this.showPassiveToast('Магнитный пас недоступен в онлайн PvP');
+      return;
+    }
+    if (this.matchDirector.getCurrentPlayer() !== passer.owner) return;
+
+    if (passer.getMagneticPassCooldownTurns() > 0) {
+      this.showPassiveToast(`КД магнитного паса: ${passer.getMagneticPassCooldownTurns()} ход(а)`);
+      return;
+    }
+    if (!this.shootingController.canUseMagneticPass(passer, this.ball)) {
+      this.showPassiveToast('Подведите фишку ближе к мячу');
+      return;
+    }
+
+    const allies = this.caps.filter(
+      (u): u is Unit =>
+        u instanceof Unit &&
+        u.owner === passer.owner &&
+        u !== passer &&
+        !u.isStunned(),
+    );
+    if (allies.length === 0) {
+      this.showPassiveToast('Нет союзников для паса');
+      return;
+    }
+
+    this.magneticPassOverlay?.show(
+      allies,
+      passer,
+      (target) => {
+        this.shootingController.activateMagneticPass(passer, this.ball, target);
+        passer.setMagneticPassCooldownTurns(PASSIVE_SKILL_COOLDOWN.MAGNETIC_PASS_TURNS);
+        this.passiveSkillButton?.refresh();
+      },
+      () => this.passiveSkillButton?.refresh(),
+    );
+  }
+
+  private handlePassiveDribbleButton(unit: Unit): void {
+    if (this.isRealtimePvP) {
+      this.showPassiveToast('Дриблинг недоступен в онлайн PvP');
+      return;
+    }
+    if (this.matchDirector.getCurrentPlayer() !== unit.owner) return;
+
+    if (unit.getDribblingCooldownTurns() > 0) {
+      this.showPassiveToast(`КД дриблинга: ${unit.getDribblingCooldownTurns()} ход(а)`);
+      return;
+    }
+    if (!this.passiveManager) return;
+
+    const ok = this.passiveManager.startMagneticDribble(unit, this.ball);
+    if (!ok) {
+      this.showPassiveToast('Подойдите ближе к мячу или дождитесь КД');
+      return;
+    }
+    this.passiveSkillButton?.refresh();
   }
 
   private handleLassoReleased(capId: string | null): void {
@@ -3066,6 +3172,7 @@ export class GameScene extends Phaser.Scene {
 
     this.lassoController?.update(delta);
     this.lassoButton?.refresh();
+    this.passiveSkillButton?.refresh();
 
     const score = this.matchDirector.getScore();
     const currentPlayer = this.matchDirector.getCurrentPlayer();
@@ -4017,13 +4124,9 @@ export class GameScene extends Phaser.Scene {
     if (this.cardPanel) {
       this.cardPanel.setPosition(width / 2, height - 80);
     }
-    const lassoX = this.scale.width - LASSO_CONFIG.BUTTON_SIZE / 2 - 10;
-    const lassoY =
-      this.scale.height -
-      this.CARD_PANEL_Y_OFFSET -
-      this.CARD_SLOT_HEIGHT / 2 -
-      8;
+    const { lassoX, lassoY, passiveX, passiveY } = this.getHudSkillAnchors();
     this.lassoButton?.reposition(lassoX, lassoY);
+    this.passiveSkillButton?.reposition(passiveX, passiveY);
     if (this.captainSuperPanel) {
       const margin = Math.max(10, Math.round(width * 0.024));
       const cx = width - margin - this.CAPTAIN_SUPER_PANEL_W / 2;
@@ -4120,8 +4223,10 @@ export class GameScene extends Phaser.Scene {
     this.abilityButton?.destroy();
     this.lassoController?.destroy();
     this.lassoButton?.destroy();
+    this.passiveSkillButton?.destroy();
     this.lassoController = null;
     this.lassoButton = null;
+    this.passiveSkillButton = null;
     this.vfxManager?.destroy();
     this.passiveManager?.destroy();
     this.captainMatchSystem?.destroy();

@@ -5,7 +5,7 @@ import Phaser from 'phaser';
 import { Unit } from '../entities/Unit';
 import { Ball } from '../entities/Ball';
 import { getUnitById, getUnitPassive, getUnitPhysicsModifier } from '../data/UnitsRepository';
-import { FactionId, PLAYMAKER_PASS_RADIUS } from '../constants/gameConstants';
+import { FactionId, PLAYMAKER_PASS_RADIUS, PASSIVE_SKILL_COOLDOWN, PASSIVE_DRIBBLE_ATTACH_MAX_DIST } from '../constants/gameConstants';
 import { 
   PassiveType, 
   PassiveAbility, 
@@ -41,6 +41,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private lastStatBoostPingAt = new Map<string, number>();
   /** Playmaker: множитель силы следующего удара получателя паса (по runtime id юнита) */
   private magneticNextShotMulByReceiverRuntimeId = new Map<string, number>();
+  /** Нокаут: анти-спам по жертве (мс), чтобы не дергать Matter несколько раз подряд */
+  private knockoutVictimUntilMs = new Map<string, number>();
+  /** Дриблинг: подписки update → cleanup в destroy */
+  private dribbleFollowers = new Map<string, () => void>();
 
   /** Стабильные ссылки для корректной отписки в destroy() */
   private readonly boundOnGoalScored = this.onGoalScored.bind(this);
@@ -218,7 +222,9 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
         break;
 
       case 'dribbling':
-        modifiedForce = this.applyMaestroDribblingShot(unit, modifiedForce, passive);
+        if (!unit.isMagneticDribbleActive()) {
+          modifiedForce = this.applyMaestroDribblingShot(unit, modifiedForce, passive);
+        }
         break;
 
       case 'conditional':
@@ -451,6 +457,77 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     });
   }
 
+  /**
+   * Maestro: мягкий «липкий» дриблинг без Matter constraint — мяч следует за фишкой; по окончании — лёгкий импульс к воротам.
+   */
+  public startMagneticDribble(unit: Unit, ball: Ball): boolean {
+    const passive = this.getUnitPassive(unit.getUnitId());
+    if (passive.type !== 'dribbling') return false;
+    if (unit.getDribblingCooldownTurns() > 0) return false;
+    if (unit.isMagneticDribbleActive()) return false;
+
+    const uid = unit.id;
+    if (this.dribbleFollowers.has(uid)) return false;
+
+    const ux = unit.body.position.x;
+    const uy = unit.body.position.y;
+    const bx = ball.body.position.x;
+    const by = ball.body.position.y;
+    if (Phaser.Math.Distance.Between(ux, uy, bx, by) > PASSIVE_DRIBBLE_ATTACH_MAX_DIST) return false;
+
+    const duration = passive.params.dribbleDuration ?? 2000;
+    const endAt = this.scene.time.now + duration;
+    const matter = this.scene.matter;
+
+    unit.setMagneticDribbleActive(true);
+    unit.setDribblingCooldownTurns(PASSIVE_SKILL_COOLDOWN.DRIBBLE_TURNS);
+    this.showPassiveActivation(unit, passive.name, 0xfbbf24);
+
+    const follower = () => {
+      if (unit.isDestroyed || ball.isDestroyed || this.scene.time.now >= endAt) {
+        this.scene.events.off('update', follower);
+        this.dribbleFollowers.delete(uid);
+        unit.setMagneticDribbleActive(false);
+        this.applyDribbleReleaseImpulse(unit, ball, passive);
+        return;
+      }
+
+      const vx = unit.body.velocity.x;
+      const vy = unit.body.velocity.y;
+      const mag = Math.sqrt(vx * vx + vy * vy) || 1;
+      const nx = vx / mag;
+      const ny = vy / mag;
+      const lead = 26;
+      const tx = unit.body.position.x + nx * lead;
+      const ty = unit.body.position.y + ny * lead;
+      matter.body.setVelocity(ball.body, { x: 0, y: 0 });
+      matter.body.setAngularVelocity(ball.body, 0);
+      matter.body.setPosition(ball.body, { x: tx, y: ty });
+    };
+
+    this.dribbleFollowers.set(uid, follower);
+    this.scene.events.on('update', follower);
+    return true;
+  }
+
+  private applyDribbleReleaseImpulse(unit: Unit, ball: Ball, passive: PassiveAbility): void {
+    const matter = this.scene.matter;
+    const b = this.getFieldBounds();
+    const goalY = unit.owner === 1 ? b.bottom - 36 : b.top + 36;
+    const cx = b.centerX;
+    const ox = cx - ball.body.position.x;
+    const oy = goalY - ball.body.position.y;
+    const len = Math.sqrt(ox * ox + oy * oy) || 1;
+    const nx = ox / len;
+    const ny = oy / len;
+    const bonus = passive.params.bonusStrikePower ?? 0.3;
+    const repo = getUnitById(unit.getUnitId());
+    const pwr = repo?.stats?.power ?? 5;
+    const speed = Phaser.Math.Clamp(3 + pwr * bonus * 0.62, 2.4, 11);
+    matter.body.setVelocity(ball.body, { x: nx * speed, y: ny * speed });
+    this.showPassiveActivation(unit, 'Выход!', 0xfbbf24);
+  }
+
   // ========== ОБРАБОТКА СТОЛКНОВЕНИЙ ==========
 
   public onUnitCollision(unit: Unit, enemy: Unit, impactSpeed = 0): void {
@@ -460,12 +537,18 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       passive?.type === 'knockout' &&
       unit.owner !== enemy.owner &&
       impactSpeed > 0 &&
+      !unit.isStunned() &&
       !enemy.isStunned()
     ) {
-      const threshold = (passive.params.minSpeed ?? 280) / 100;
+      const threshold = (passive.params.minSpeed ?? 320) / 52;
       if (impactSpeed >= threshold) {
-        enemy.applyStun(passive.params.knockoutTurns ?? 1);
-        this.showPassiveActivation(unit, passive.name, 0xef4444);
+        const now = this.scene.time.now;
+        const until = this.knockoutVictimUntilMs.get(enemy.id) ?? 0;
+        if (now >= until) {
+          enemy.applyStun(passive.params.knockoutTurns ?? 1);
+          this.knockoutVictimUntilMs.set(enemy.id, now + 520);
+          this.showPassiveActivation(unit, passive.name, 0xef4444);
+        }
       }
     }
 
@@ -1268,6 +1351,9 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     eventBus.off(GameEvents.GOAL_SCORED, this.boundOnGoalScored);
     eventBus.off(GameEvents.TURN_STARTED, this.boundOnTurnStarted);
     eventBus.off(GameEvents.TURN_ENDED, this.boundOnTurnEnded);
+    this.dribbleFollowers.forEach((fn) => this.scene.events.off('update', fn));
+    this.dribbleFollowers.clear();
+    this.knockoutVictimUntilMs.clear();
     this.ballPassiveEffects.clear();
     this.units.clear();
     this.ball = null;

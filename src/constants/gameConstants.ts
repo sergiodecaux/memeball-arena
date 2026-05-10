@@ -541,6 +541,15 @@ export const LASSO_CONFIG = {
   BUTTON_SIZE: 56,
 } as const;
 
+/** Кулдауны активируемых классовых пассивок (в ходах матча). */
+export const PASSIVE_SKILL_COOLDOWN = {
+  MAGNETIC_PASS_TURNS: 3,
+  DRIBBLE_TURNS: 4,
+} as const;
+
+/** Макс. дистанция юнит↔мяч для старта дриблинга (px). */
+export const PASSIVE_DRIBBLE_ATTACH_MAX_DIST = 78;
+
 // ========== СИСТЕМА ТОЧНОСТИ ==========
 
 /** Базовая точность по классам */

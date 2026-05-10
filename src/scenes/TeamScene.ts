@@ -2728,6 +2728,12 @@ export class TeamScene extends Phaser.Scene {
         return 'Дальнобойный финшер с точными прямыми выстрелами.';
       case 'trickster':
         return 'Мастер закрученных ударов, обходящих оборону.';
+      case 'playmaker':
+        return 'Распределяет мяч и создаёт моменты для союзников.';
+      case 'maestro':
+        return 'Дриблинг и контроль мяча в движении.';
+      case 'enforcer':
+        return 'Силовая игра: выбивает соперника из борьбы при столкновениях.';
       case 'balanced':
       default:
         return 'Универсал: стабилен в атаке и защите.';

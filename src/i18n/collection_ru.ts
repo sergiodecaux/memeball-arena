@@ -38,8 +38,11 @@ export const COLLECTION_RU = {
   roles: {
     balanced: 'УНИВ.',
     tank: 'ТАНК',
-    sniper: 'СНАЙПЕР',
+    sniper: 'СНАЙП.',
     trickster: 'ТРЮКИ',
+    playmaker: 'ПАС',
+    maestro: 'ДРИБЛ',
+    enforcer: 'СИЛА',
   },
   
   // Статы

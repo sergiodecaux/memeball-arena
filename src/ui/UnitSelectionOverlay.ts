@@ -891,10 +891,13 @@ export class UnitSelectionOverlay extends Phaser.GameObjects.Container {
 
   private translateClass(unitClass: string): string {
     const map: Record<string, string> = {
-      'balanced': 'Универсал',
-      'tank': 'Танк',
-      'sniper': 'Снайпер',
-      'trickster': 'Ловкач',
+      balanced: 'Универсал',
+      tank: 'Танк',
+      sniper: 'Снайпер',
+      trickster: 'Ловкач',
+      playmaker: 'Плеймейкер',
+      maestro: 'Маэстро',
+      enforcer: 'Силач',
     };
     return map[unitClass] || unitClass;
   }
@@ -902,10 +905,13 @@ export class UnitSelectionOverlay extends Phaser.GameObjects.Container {
   private getUnitDescription(unit: UnitData): string {
     // Можно добавить кастомные описания для каждого юнита
     const classDesc: Record<string, string> = {
-      'balanced': 'Сбалансированный боец для любых позиций.',
-      'tank': 'Мощный защитник с высокой защитой.',
-      'sniper': 'Точный стрелок с высокой силой удара.',
-      'trickster': 'Быстрый и ловкий игрок.',
+      balanced: 'Сбалансированный боец для любых позиций.',
+      tank: 'Мощный защитник с высокой защитой.',
+      sniper: 'Точный стрелок с высокой силой удара.',
+      trickster: 'Быстрый и ловкий игрок.',
+      playmaker: 'Идеальные пасы и темп атаки.',
+      maestro: 'Дриблинг и обводки.',
+      enforcer: 'Силовой форвард, нокаутирует при столкновении.',
     };
     return unit.title || classDesc[unit.role] || 'Уникальный юнит с особыми характеристиками.';
   }

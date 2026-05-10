@@ -720,6 +720,7 @@ export class AIController {
     const bunkerAttackBoost = (1 + bunker * 0.62) * (1 + this.profileNoise.bunkerOffset * 0.35);
 
     for (const unit of this.aiUnits) {
+      if (unit.isStunned?.()) continue;
       if (!this.allowedByCaptainGate(unit)) continue;
       const goal = this.evaluateGoalShot(unit);
       if (goal) {
@@ -801,6 +802,9 @@ export class AIController {
       balanced: 320,
       trickster: 300,
       tank: 250,
+      playmaker: 340,
+      maestro: 310,
+      enforcer: 260,
     };
     if (distToBall > (maxHitDist[unit.getCapClass()] ?? 320)) return null;
 
