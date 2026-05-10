@@ -14,7 +14,7 @@ import { AnnouncerManager } from '../managers/AnnouncerManager';
 import { MultiplayerManager } from '../managers/MultiplayerManager';
 import { PvPIntegrationHelper } from '../managers/PvPIntegrationHelper';
 import { DEFAULT_PVP_CONFIG } from '../types/pvp';
-import { playerData } from '../data/PlayerData';
+import { getUnitPassive } from '../data/UnitsRepository';
 import { dailyTasksManager } from '../data/DailyTasks';
 import { createText } from '../utils/TextFactory';
 
@@ -53,7 +53,9 @@ import { ResultScreen } from '../ui/game/ResultScreen';
 import { SessionPersistence } from '../utils/SessionPersistence';
 import { InGameSettings } from '../ui/game/InGameSettings';
 import { MatchIntroOverlay } from '../ui/game/MatchIntroOverlay';
+import { MagneticPassOverlay } from '../ui/game/MagneticPassOverlay';
 import { AbilityButton } from '../ui/game/AbilityButton';
+import { playerData } from '../data/PlayerData';
 import { LassoButton } from '../ui/game/LassoButton';
 import { LassoController } from './game/LassoController';
 import { TutorialOverlay } from '../ui/game/TutorialOverlay';
@@ -121,6 +123,7 @@ export class GameScene extends Phaser.Scene {
   private campaignDialogue?: CampaignDialogueSystem;
   private fieldRenderer!: FieldRenderer;
   private passiveManager!: PassiveManager;
+  private magneticPassOverlay?: MagneticPassOverlay;
   private achievementManager?: any; // AchievementManager
   // OLD: private pvpSync - removed, using PvPSyncManager inside pvpHelper
   // OLD: private networkIndicator - removed
@@ -1164,6 +1167,9 @@ export class GameScene extends Phaser.Scene {
     this.player2AbilityManager?.setPassiveManager(this.passiveManager);
     this.collisionHandler.setPassiveManager(this.passiveManager);
 
+    this.magneticPassOverlay = new MagneticPassOverlay(this);
+    this.setupMagneticPassStartGuard();
+
     this.setupAIController();
     
     // Initialize CampaignDialogueSystem for campaign mode
@@ -1174,7 +1180,35 @@ export class GameScene extends Phaser.Scene {
     
     // OLD: Removed old pvpSync initialization (using pvpHelper now)
   }
-  
+
+  /** Локальный матч: Playmaker открывает выбор союзника вместо мгновенного входа в прицеливание */
+  private setupMagneticPassStartGuard(): void {
+    this.shootingController.setStartAimingGuard((cap) => {
+      if (this.isRealtimePvP) return true;
+      if (!cap || !(cap instanceof Unit)) return true;
+      if (this.matchDirector.getCurrentPlayer() !== cap.owner) return true;
+
+      const passive = getUnitPassive(cap.getUnitId());
+      if (passive.type !== 'magnetic_pass') return true;
+      if (!this.shootingController.canUseMagneticPass(cap, this.ball)) return true;
+
+      const allies = this.caps.filter(
+        (u): u is Unit =>
+          u instanceof Unit &&
+          u.owner === cap.owner &&
+          u !== cap &&
+          !u.isStunned(),
+      );
+      if (allies.length === 0) return true;
+
+      this.magneticPassOverlay?.show(allies, cap, (target) => {
+        this.shootingController.activateMagneticPass(cap, this.ball, target);
+      });
+
+      return false;
+    });
+  }
+
   // ============================================================
   // TUTORIAL SYSTEM
   // ============================================================

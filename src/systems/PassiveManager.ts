@@ -5,7 +5,7 @@ import Phaser from 'phaser';
 import { Unit } from '../entities/Unit';
 import { Ball } from '../entities/Ball';
 import { getUnitById, getUnitPassive, getUnitPhysicsModifier } from '../data/UnitsRepository';
-import { FactionId } from '../constants/gameConstants';
+import { FactionId, PLAYMAKER_PASS_RADIUS } from '../constants/gameConstants';
 import { 
   PassiveType, 
   PassiveAbility, 
@@ -39,7 +39,9 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private lastBallAuraTipAtMs = 0;
   /** Анти-спам для stat_boost-пассивок при каждом ударе */
   private lastStatBoostPingAt = new Map<string, number>();
-  
+  /** Playmaker: множитель силы следующего удара получателя паса (по runtime id юнита) */
+  private magneticNextShotMulByReceiverRuntimeId = new Map<string, number>();
+
   /** Стабильные ссылки для корректной отписки в destroy() */
   private readonly boundOnGoalScored = this.onGoalScored.bind(this);
   private readonly boundOnTurnStarted = this.onTurnStarted.bind(this);
@@ -207,22 +209,26 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     
     // Увеличиваем счётчик ударов
     unitState.shotCount++;
-    
+
     let modifiedForce = force.clone();
-    
+
     switch (passive.type) {
       case 'on_hit_ball':
         modifiedForce = this.applyOnHitBall(unit, force, passive);
         break;
-        
+
+      case 'dribbling':
+        modifiedForce = this.applyMaestroDribblingShot(unit, modifiedForce, passive);
+        break;
+
       case 'conditional':
         modifiedForce = this.applyConditionalOnHit(unit, force, passive, unitState);
         break;
-        
+
       case 'risk_reward':
         modifiedForce = this.applyRiskRewardOnHit(unit, force, passive);
         break;
-        
+
       case 'stat_boost':
         modifiedForce = this.applyStatBoostOnHit(unit, force, passive);
         break;
@@ -238,6 +244,13 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     
     // Применяем бонусы от активных баффов
     modifiedForce = this.applyActiveBuffsToForce(unitId, modifiedForce);
+
+    const magMul = this.magneticNextShotMulByReceiverRuntimeId.get(unit.id);
+    if (magMul !== undefined) {
+      modifiedForce.scale(Math.max(0.08, magMul));
+      this.magneticNextShotMulByReceiverRuntimeId.delete(unit.id);
+      this.showPassiveActivation(unit, 'Магнитный пас!', 0x44ff88);
+    }
 
     tagBallPhysics();
     
@@ -260,13 +273,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       this.setBallPassThrough(1);
       this.showPassiveActivation(unit, passive.name, 0xff5522);
     }
-    
-    // Voidbolt: 25% телепорт мяча вперёд
-    if (passive.name === 'Хаотичный выстрел' && Math.random() < (params.chance || 0.25)) {
-      this.scheduleBallTeleport(force, params.value || 50);
-      this.showPassiveActivation(unit, 'Скачок мяча!', 0x22ffff);
-    }
-    
+
     // Venom: мяч замедляет первого врага
     if (passive.name === 'Коррозийный выстрел') {
       this.setBallSlowOnHit(unit, params.value || 0.10);
@@ -377,12 +384,93 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     return modifiedForce;
   }
   
+  private applyMaestroDribblingShot(
+    unit: Unit,
+    force: Phaser.Math.Vector2,
+    passive: PassiveAbility,
+  ): Phaser.Math.Vector2 {
+    const out = force.clone();
+    const penalty = passive.params.speedPenalty ?? 0.4;
+    const b = this.getFieldBounds();
+    const cx = b.centerX;
+    const enemyGoalY = unit.owner === 1 ? b.top + 35 : b.bottom - 35;
+    const toGoal = new Phaser.Math.Vector2(cx - unit.body.position.x, enemyGoalY - unit.body.position.y).normalize();
+    const blend = 0.09 + (passive.params.value ?? 0);
+    out.x += toGoal.x * out.length() * blend;
+    out.y += toGoal.y * out.length() * blend;
+    out.scale(1 - penalty * 0.22);
+    this.showPassiveActivation(unit, passive.name, 0xfbbf24);
+    return out;
+  }
+
+  /** Playmaker: быстрая передача мяча союзнику и ослабленный «добивающий» удар получателя */
+  public executeMagneticPass(passer: Unit, receiver: Unit, ball: Ball): void {
+    const passive = this.getUnitPassive(passer.getUnitId());
+    if (passive.type !== 'magnetic_pass') return;
+
+    const maxR = passive.params.passRadius ?? PLAYMAKER_PASS_RADIUS;
+    const bx = ball.body.position.x;
+    const by = ball.body.position.y;
+    const px = passer.body.position.x;
+    const py = passer.body.position.y;
+    if (Phaser.Math.Distance.Between(px, py, bx, by) > maxR) return;
+
+    const bonus = passive.params.bonusStrikePower ?? 0.3;
+    const matter = this.scene.matter;
+
+    const pullToPasser = { x: bx, y: by };
+    this.scene.tweens.add({
+      targets: pullToPasser,
+      x: px,
+      y: py,
+      duration: 220,
+      ease: 'Quad.Out',
+      onUpdate: () => {
+        matter.body.setVelocity(ball.body, { x: 0, y: 0 });
+        matter.body.setPosition(ball.body, { x: pullToPasser.x, y: pullToPasser.y });
+      },
+      onComplete: () => {
+        const pass = { x: px, y: py };
+        this.scene.tweens.add({
+          targets: pass,
+          x: receiver.body.position.x,
+          y: receiver.body.position.y,
+          duration: 380,
+          ease: 'Sine.InOut',
+          onUpdate: () => {
+            matter.body.setVelocity(ball.body, { x: 0, y: 0 });
+            matter.body.setPosition(ball.body, { x: pass.x, y: pass.y });
+          },
+          onComplete: () => {
+            matter.body.setVelocity(ball.body, { x: 0, y: 0 });
+            this.magneticNextShotMulByReceiverRuntimeId.set(receiver.id, bonus);
+            this.showPassiveActivation(passer, passive.name, 0x34d399);
+          },
+        });
+      },
+    });
+  }
+
   // ========== ОБРАБОТКА СТОЛКНОВЕНИЙ ==========
-  
-  public onUnitCollision(unit: Unit, enemy: Unit): void {
+
+  public onUnitCollision(unit: Unit, enemy: Unit, impactSpeed = 0): void {
     const passive = this.getUnitPassive(unit.getUnitId());
+
+    if (
+      passive?.type === 'knockout' &&
+      unit.owner !== enemy.owner &&
+      impactSpeed > 0 &&
+      !enemy.isStunned()
+    ) {
+      const threshold = (passive.params.minSpeed ?? 280) / 100;
+      if (impactSpeed >= threshold) {
+        enemy.applyStun(passive.params.knockoutTurns ?? 1);
+        this.showPassiveActivation(unit, passive.name, 0xef4444);
+      }
+    }
+
     if (!passive || passive.type !== 'on_collision') return;
-    
+
     const params = passive.params;
     
     // Slow enemy

@@ -78,6 +78,9 @@ export const ROLE_ICON_KEYS = {
   tank: 'role_tank',
   sniper: 'role_sniper',
   trickster: 'role_trickster',
+  playmaker: 'role_balanced',
+  maestro: 'role_trickster',
+  enforcer: 'role_tank',
 } as const;
 
 export type RoleIconKey = keyof typeof ROLE_ICON_KEYS;

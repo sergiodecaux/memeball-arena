@@ -583,6 +583,9 @@ export function getClassColor(capClass: CapClass): number {
     case 'tank': return 0x3b82f6;
     case 'sniper': return 0xf59e0b;
     case 'trickster': return 0xa855f7;
+    case 'playmaker': return 0x10b981;
+    case 'maestro': return 0xfbbf24;
+    case 'enforcer': return 0xef4444;
     default: return 0x9ca3af;
   }
 }
@@ -593,6 +596,9 @@ export function getClassIcon(capClass: CapClass): string {
     case 'tank': return '🛡️';
     case 'sniper': return '🎯';
     case 'trickster': return '🌀';
+    case 'playmaker': return '⭐';
+    case 'maestro': return '⚡';
+    case 'enforcer': return '💥';
     default: return '❓';
   }
 }
@@ -603,6 +609,9 @@ export function getClassName(capClass: CapClass): string {
     case 'tank': return 'Tank';
     case 'sniper': return 'Sniper';
     case 'trickster': return 'Trickster';
+    case 'playmaker': return 'Playmaker';
+    case 'maestro': return 'Maestro';
+    case 'enforcer': return 'Enforcer';
     default: return 'Unknown';
   }
 }

@@ -57,7 +57,14 @@ export const BALL = {
   POST_REDIRECT_FORCE: 0.0022,
 } as const;
 
-export type CapClass = 'balanced' | 'tank' | 'sniper' | 'trickster';
+export type CapClass =
+  | 'balanced'
+  | 'tank'
+  | 'sniper'
+  | 'trickster'
+  | 'playmaker'
+  | 'maestro'
+  | 'enforcer';
 
 export interface CapClassStats {
   name: string;
@@ -134,6 +141,48 @@ export const CAP_CLASSES: Record<CapClass, CapClassStats> = {
     aimLineLength: 1.25,
     canCurve: true,
     curveStrength: 1.25,
+  },
+  playmaker: {
+    name: 'Playmaker',
+    description: 'Magnetic passes and tempo.',
+    mass: 3.0,
+    radius: 25,
+    restitution: 0.65,
+    friction: 0.03,
+    frictionAir: 0.012,
+    forceMultiplier: 0.0022,
+    maxForce: 0.26,
+    aimLineLength: 1.38,
+    canCurve: false,
+    curveStrength: 0,
+  },
+  maestro: {
+    name: 'Maestro',
+    description: 'Dribble control.',
+    mass: 3.0,
+    radius: 26,
+    restitution: 0.88,
+    friction: 0.035,
+    frictionAir: 0.014,
+    forceMultiplier: 0.0020,
+    maxForce: 0.24,
+    aimLineLength: 1.22,
+    canCurve: true,
+    curveStrength: 1.1,
+  },
+  enforcer: {
+    name: 'Enforcer',
+    description: 'Physical knockout threat.',
+    mass: 5.4,
+    radius: 32,
+    restitution: 0.35,
+    friction: 0.14,
+    frictionAir: 0.045,
+    forceMultiplier: 0.00175,
+    maxForce: 0.21,
+    aimLineLength: 0.82,
+    canCurve: false,
+    curveStrength: 0,
   },
 } as const;
 
@@ -500,7 +549,23 @@ export const BASE_ACCURACY: Record<CapClass, number> = {
   balanced: 0.92,
   trickster: 0.88,
   tank: 0.84,
+  playmaker: 0.98,
+  maestro: 0.90,
+  enforcer: 0.80,
 };
+
+/** Базовая точность по классу (алиас для документации / UI) */
+export const ACCURACY_BY_CLASS: Record<CapClass, number> = BASE_ACCURACY;
+
+/** Радиус подбора мяча для магнитного паса (Playmaker) */
+export const PLAYMAKER_PASS_RADIUS = 250;
+
+/** Дриблинг Maestro: длительность эффекта подсказки (мс), штраф скорости как доля */
+export const MAESTRO_DRIBBLE_DURATION = 2000;
+export const MAESTRO_SPEED_PENALTY = 0.4;
+
+/** Нокаут Enforcer: длительность (ходы) по умолчанию */
+export const ENFORCER_KNOCKOUT_DURATION = 1;
 
 /** Модификатор точности по фракциям */
 export const FACTION_ACCURACY_MODIFIER: Record<FactionId, number> = {
@@ -652,7 +717,7 @@ export const TANK_ZONE_BONUS = {
 // ========== SNIPER PUSH MECHANICS ==========
 export const SNIPER_PUSH = {
   PUSH_FORCE_MULTIPLIER: 0.6,
-  PUSHABLE_CLASSES: ['balanced', 'sniper', 'trickster'] as const satisfies readonly CapClass[],
+  PUSHABLE_CLASSES: ['balanced', 'sniper', 'trickster', 'playmaker', 'maestro'] as const satisfies readonly CapClass[],
   TANK_REFLECTS: true,
   GOAL_PENETRATION_ENABLED: true,
   GOAL_ZONE_THRESHOLD: 100,

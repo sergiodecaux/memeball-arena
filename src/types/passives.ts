@@ -5,7 +5,7 @@ import { FactionId } from '../constants/gameConstants';
 
 // ========== ТИПЫ ПАССИВОК ==========
 
-export type PassiveType = 
+export type PassiveType =
   | 'none'           // Нет особого эффекта (common универсальные)
   | 'stat_boost'     // Постоянный бонус к характеристике
   | 'on_hit_ball'    // При ударе по мячу
@@ -14,7 +14,10 @@ export type PassiveType =
   | 'conditional'    // При определённом условии
   | 'card_enhance'   // Усиливает карту фракции
   | 'counter'        // Контрит определённое
-  | 'risk_reward';   // Риск/награда
+  | 'risk_reward'    // Риск/награда
+  | 'magnetic_pass'  // Playmaker: магнитный пас
+  | 'dribbling'      // Maestro: усиление контроля / дриблинга
+  | 'knockout';      // Enforcer: нокаут при столкновении
 
 export type PassiveTarget = 'self' | 'ally' | 'enemy' | 'ball' | 'area';
 
@@ -57,6 +60,20 @@ export interface PassiveParams {
   cardType?: CardEnhanceType;   // Тип усиливаемой карты
   stackable?: boolean;      // Можно ли стакать эффект
   maxStacks?: number;       // Максимум стаков
+
+  /** Playmaker / Maestro / Enforcer */
+  passRadius?: number;
+  bonusStrikePower?: number;
+  dribbleDuration?: number;
+  speedPenalty?: number;
+  knockoutTurns?: number;
+  /** Порог скорости столкновения (игровые единицы Matter); сравнивается как minSpeed/100 */
+  minSpeed?: number;
+  canPhase?: boolean;
+  createPhantoms?: boolean;
+  adaptive?: boolean;
+  hiveVision?: boolean;
+  venomEffect?: boolean;
 }
 
 export interface PassiveAbility {

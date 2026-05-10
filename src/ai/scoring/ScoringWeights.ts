@@ -42,6 +42,21 @@ export const CLASS_WEIGHT_MODIFIERS: Record<CapClass, Partial<ScoringWeights>> =
     ballControl: 20,
     goalScored: 90,
   },
+  playmaker: {
+    ballControl: 25,
+    ballNearOpponentGoal: 60,
+    goalScored: 95,
+  },
+  maestro: {
+    ricochetBonus: 18,
+    ballControl: 22,
+    goalScored: 92,
+  },
+  enforcer: {
+    enemyPushed: 30,
+    defensePosition: 35,
+    goalScored: 75,
+  },
 };
 
 /**

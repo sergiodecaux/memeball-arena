@@ -249,6 +249,9 @@ export class CollectionScene extends Phaser.Scene {
             tank: '🛡️',
             sniper: '🎯',
             trickster: '✨',
+            playmaker: '⭐',
+            maestro: '⚡',
+            enforcer: '💥',
           };
           const roleIcon = roleIcons[unit.role];
           const label = createText(this, Math.round(0), Math.round(-4), roleIcon, {

@@ -132,6 +132,9 @@ export class Unit {
     tank: 19,
     sniper: 34,
     trickster: 30,
+    playmaker: 26,
+    maestro: 31,
+    enforcer: 20,
   };
 
   private static team1Counter: number = 0;
@@ -818,7 +821,7 @@ export class Unit {
     this.stats.restitution = Phaser.Math.Clamp(this.stats.restitution * f.bounce, 0.1, 0.95);
     this.stats.forceMultiplier *= f.speed;
     this.stats.maxForce *= f.speed;
-    if (f.control && this.capClass === 'trickster') {
+    if (f.control && (this.capClass === 'trickster' || this.capClass === 'maestro')) {
       this.stats.curveStrength *= f.control;
     }
   }
@@ -1053,6 +1056,9 @@ export class Unit {
       tank: { magma: 'titan', cyborg: 'mech', void: 'guardian', insect: 'brood' },
       sniper: { magma: 'scout', cyborg: 'drone', void: 'sniper', insect: 'spitter' },
       trickster: { magma: 'inferno', cyborg: 'glitch', void: 'bender', insect: 'mimic' },
+      playmaker: { magma: 'grunt', cyborg: 'soldier', void: 'initiate', insect: 'drone' },
+      maestro: { magma: 'inferno', cyborg: 'glitch', void: 'bender', insect: 'mimic' },
+      enforcer: { magma: 'titan', cyborg: 'mech', void: 'guardian', insect: 'brood' },
     };
     const className = classMap[this.capClass]?.[this.factionId] || this.capClass;
     return `${this.factionId}_${className}`;
@@ -1598,7 +1604,9 @@ export class Unit {
     return curve;
   }
   
-  canCurve(): boolean { return this.stats.canCurve && this.capClass === 'trickster'; }
+  canCurve(): boolean {
+    return this.stats.canCurve;
+  }
   
   getMass(): number {
     let mass = this.stats.mass;

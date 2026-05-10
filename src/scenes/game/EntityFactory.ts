@@ -471,7 +471,15 @@ export class EntityFactory {
    * Роли по слотам: танк, универсал, снайпер, трикстер — без одинаковых «стартовых» клонов на высоких уровнях.
    */
   private pickAIRoleSlots(teamSize: number): CapClass[] {
-    const cycle: CapClass[] = ['tank', 'balanced', 'sniper', 'trickster'];
+    const cycle: CapClass[] = [
+      'tank',
+      'balanced',
+      'sniper',
+      'trickster',
+      'playmaker',
+      'maestro',
+      'enforcer',
+    ];
     const roles: CapClass[] = [];
     for (let i = 0; i < teamSize; i++) {
       roles.push(cycle[i % cycle.length]);

@@ -439,11 +439,15 @@ export class CollisionHandler {
     const unitB = caps.find(c => c.body === bodyB);
 
     if (!unitA || !unitB) return;
-    
-    // ✅ ПАССИВКА: Обработка столкновений юнитов
+
+    const relVelX = bodyA.velocity.x - bodyB.velocity.x;
+    const relVelY = bodyA.velocity.y - bodyB.velocity.y;
+    const impactSpeed = Math.sqrt(relVelX * relVelX + relVelY * relVelY);
+
+    // ✅ ПАССИВКА: столкновения (нокаут и др.)
     if (this.passiveManager && unitA instanceof Unit && unitB instanceof Unit) {
-      this.passiveManager.onUnitCollision(unitA, unitB);
-      this.passiveManager.onUnitCollision(unitB, unitA);
+      this.passiveManager.onUnitCollision(unitA, unitB, impactSpeed);
+      this.passiveManager.onUnitCollision(unitB, unitA, impactSpeed);
     }
 
     // Кулдаун
@@ -451,10 +455,6 @@ export class CollisionHandler {
     if (this.isOnCooldown(collisionKey)) return;
     this.setCollisionCooldown(collisionKey);
 
-    // Расчёт силы
-    const relVelX = bodyA.velocity.x - bodyB.velocity.x;
-    const relVelY = bodyA.velocity.y - bodyB.velocity.y;
-    const impactSpeed = Math.sqrt(relVelX * relVelX + relVelY * relVelY);
     const impactForce = impactSpeed * 0.8;
 
     if (impactForce < 2) return; // Игнорируем слабые столкновения

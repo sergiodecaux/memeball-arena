@@ -9,11 +9,13 @@ import {
   ABILITY_CONFIG,
   MAX_ACCURACY_SPREAD,
   TANK_ZONE_BONUS,
+  PLAYMAKER_PASS_RADIUS,
 } from '../constants/gameConstants';
 import { Cap } from '../entities/Cap';
 import { Unit } from '../entities/Unit';
 import { PlayerNumber } from '../types';
-import { getUnitById, getUnitAccuracy, getUnitPhysicsModifier } from '../data/UnitsRepository';
+import { Ball } from '../entities/Ball';
+import { getUnitById, getUnitAccuracy, getUnitPhysicsModifier, getUnitPassive } from '../data/UnitsRepository';
 import { PassiveManager } from '../systems/PassiveManager';
 
 // === EXPORTED INTERFACES ===
@@ -132,6 +134,7 @@ export class ShootingController {
   
   // ✅ Passive System
   private passiveManager: PassiveManager | null = null;
+  private startAimingGuard: ((cap: ShootableUnit | null) => boolean) | null = null;
 
   private captainTrajectoryHooks: {
     getDistanceMultiplier(): number;
@@ -759,6 +762,29 @@ export class ShootingController {
     this.passiveManager = manager;
   }
 
+  public setStartAimingGuard(fn: ((cap: ShootableUnit | null) => boolean) | null): void {
+    this.startAimingGuard = fn;
+  }
+
+  /** Playmaker: мяч в радиусе магнитного паса */
+  public canUseMagneticPass(unit: ShootableUnit, ball: { body: MatterJS.BodyType }): boolean {
+    if (!isUnit(unit)) return false;
+    const passive = getUnitPassive(unit.getUnitId());
+    if (passive.type !== 'magnetic_pass') return false;
+    const pr = passive.params.passRadius ?? PLAYMAKER_PASS_RADIUS;
+    const ux = unit.body.position.x;
+    const uy = unit.body.position.y;
+    const bx = ball.body.position.x;
+    const by = ball.body.position.y;
+    return Phaser.Math.Distance.Between(ux, uy, bx, by) <= pr;
+  }
+
+  public activateMagneticPass(passer: ShootableUnit, ball: Ball, targetAlly: ShootableUnit): void {
+    if (!this.passiveManager || !isUnit(passer) || !isUnit(targetAlly)) return;
+    if (!this.canUseMagneticPass(passer, ball)) return;
+    this.passiveManager.executeMagneticPass(passer, targetAlly, ball);
+  }
+
   public setCaptainTrajectoryHooks(
     hooks: {
       getDistanceMultiplier(): number;
@@ -955,6 +981,9 @@ export class ShootingController {
   }
 
   private startAiming(pointer: Phaser.Input.Pointer): void {
+      if (this.startAimingGuard && this.startAimingGuard(this.selectedCap) === false) {
+        return;
+      }
       this.isAiming = true;
       this.dragStartPos = new Phaser.Math.Vector2(pointer.x, pointer.y);
       this.joystickGraphics.setVisible(true);
@@ -1120,7 +1149,7 @@ export class ShootingController {
 
   private calculateHitOffset(pointer: Phaser.Input.Pointer, dragVec: Phaser.Math.Vector2, dist: number): number {
     if (!this.selectedCap || !this.dragStartPos) return 0;
-    if (this.selectedCap.getCapClass() !== 'trickster') return 0;
+    if (this.selectedCap.getCapClass() !== 'trickster' && this.selectedCap.getCapClass() !== 'maestro') return 0;
     if (dist < 20) return 0;
 
     const capPos = this.selectedCap.body.position;

@@ -1058,7 +1058,10 @@ export function getRoleIcon(role: CapClass): string {
     balanced: '⚖️',
     tank: '🛡️',
     sniper: '🎯',
-    trickster: '🌀'
+    trickster: '🌀',
+    playmaker: '⭐',
+    maestro: '⚡',
+    enforcer: '💥',
   };
   return icons[role];
 }
@@ -1068,7 +1071,10 @@ export function getRoleName(role: CapClass): string {
     balanced: 'Balanced',
     tank: 'Tank',
     sniper: 'Sniper',
-    trickster: 'Trickster'
+    trickster: 'Trickster',
+    playmaker: 'Playmaker',
+    maestro: 'Maestro',
+    enforcer: 'Enforcer',
   };
   return names[role];
 }
@@ -1077,8 +1083,11 @@ export function getRoleColor(role: CapClass): number {
   const colors: Record<CapClass, number> = {
     balanced: 0x22c55e,
     tank: 0x3b82f6,
-    sniper: 0xef4444,
-    trickster: 0xa855f7
+    sniper: 0xf59e0b,
+    trickster: 0xa855f7,
+    playmaker: 0x10b981,
+    maestro: 0xfbbf24,
+    enforcer: 0xef4444,
   };
   return colors[role];
 }

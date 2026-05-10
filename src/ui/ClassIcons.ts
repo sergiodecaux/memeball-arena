@@ -400,6 +400,9 @@ export function createRoleIcon(
       tank: '🛡️',
       sniper: '🎯',
       trickster: '✨',
+      playmaker: '⭐',
+      maestro: '⚡',
+      enforcer: '💥',
     };
     const emoji = emojiIcons[capClass] || '?';
     const text = scene.add.text(0, 0, emoji, {

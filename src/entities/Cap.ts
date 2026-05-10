@@ -52,6 +52,9 @@ export class Cap {
     tank: 18,
     sniper: 30,
     trickster: 26,
+    playmaker: 25,
+    maestro: 28,
+    enforcer: 19,
   };
 
   // Счётчики для каждой команды отдельно

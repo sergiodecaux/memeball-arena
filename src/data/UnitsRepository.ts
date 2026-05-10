@@ -146,11 +146,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'magma',
     name: 'Ash Reaper',
     title: 'Ash Warrior',
-    role: 'balanced',
+    role: 'enforcer',
     rarity: 'common',
-    stats: { power: 3, defense: 4, speed: 3, technique: 3 },
-    specialAbility: 'Cinder Strike',
-    description: 'Берсерк, рождённый в углях. Не знает страха и отступления. [ПАССИВКА] Угольная ярость: При столкновении с врагом оба отлетают на равное расстояние.',
+    stats: { power: 6, defense: 3, speed: 3, technique: 2 },
+    specialAbility: 'Knockout Strike',
+    description:
+      'Берсерк магмы. Его удары выводят врагов из игры. [ПАССИВКА] Нокаут: при быстром столкновении враг оглушается на 1 ход.',
     assetKey: 'magma_ember',
     assetPath: `assets/units/magma/magma_ash_reaper.png?v=${ASSETS_VERSION}`,
     primaryColor: 0xef4444,
@@ -159,12 +160,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     isShopItem: true,
     shopPrice: 1000,
     nameRu: 'Угольный Берсерк',
-    accuracy: 0.89,
+    accuracy: 0.80,
     passive: {
-      type: 'on_collision',
-      name: 'Угольная ярость',
-      description: 'При столкновении с врагом оба отлетают на равное расстояние.',
-      params: { target: 'enemy' }
+      type: 'knockout',
+      name: 'Нокаут',
+      description: 'Столкновение с врагом на большой скорости: враг получает нокаут на 1 ход (неактивен).',
+      params: { knockoutTurns: 1, minSpeed: 300 },
     },
   },
   {
@@ -172,11 +173,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'magma',
     name: 'Inferno Dash',
     title: 'Flame Sprinter',
-    role: 'balanced',
+    role: 'maestro',
     rarity: 'rare',
-    stats: { power: 5, defense: 3, speed: 4, technique: 4 },
-    specialAbility: 'Ignition Dash',
-    description: 'Быстрый как пламя. Его удары оставляют выжженные следы на поле. [ПАССИВКА] Горящий рывок: После удара по мячу +15% скорость на 1 ход.',
+    stats: { power: 4, defense: 2, speed: 6, technique: 5 },
+    specialAbility: 'Magnetic Dribbling',
+    description:
+      'Дриблер магмы. Мяч «липнет», вы получаете лучший контроль траектории. [ПАССИВКА] Магнитный дриблинг: лёгкий разворот удара в сторону ворот соперника.',
     assetKey: 'magma_blaze',
     assetPath: `assets/units/magma/magma_inferno_dash.png?v=${ASSETS_VERSION}`,
     primaryColor: 0xf97316,
@@ -187,10 +189,15 @@ export const UNITS_REPOSITORY: UnitData[] = [
     nameRu: 'Огненный Шквал',
     accuracy: 0.90,
     passive: {
-      type: 'on_hit_ball',
-      name: 'Горящий рывок',
-      description: 'После удара по мячу: +15% скорость на 1 ход.',
-      params: { value: 0.15, duration: 1, target: 'self' }
+      type: 'dribbling',
+      name: 'Магнитный дриблинг',
+      description:
+        'Удар по мячу слегка подводит силу вектора к воротам соперника (контроль дриблера).',
+      params: {
+        dribbleDuration: 2000,
+        speedPenalty: 0.4,
+        bonusStrikePower: 0.3,
+      },
     },
   },
   {
@@ -424,23 +431,28 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'magma',
     name: 'Blaze Hawk',
     title: 'Flame Cannon',
-    role: 'sniper',
+    role: 'playmaker',
     rarity: 'rare',
-    stats: { power: 7, defense: 2, speed: 3, technique: 5 },
-    specialAbility: 'Hellfire Shot',
-    description: 'Его взгляд прожигает насквозь. На чужой территории он смертоносен. [ПАССИВКА] Пылающий взор: +10% сила на половине врага.',
+    stats: { power: 4, defense: 2, speed: 4, technique: 7 },
+    specialAbility: 'Magnetic Pass',
+    description:
+      'Мастер паса магмы. Создаёт огненные коридоры для союзников. [ПАССИВКА] Магнитный пас: подбор мяча в радиусе 250px и передача союзнику; следующий его удар сила × бонус.',
     assetKey: 'magma_inferno_shooter',
     assetPath: `assets/units/magma/magma_blaze_hawk.png?v=${ASSETS_VERSION}`,
     primaryColor: 0xdc2626,
     secondaryColor: 0xfde68a,
     fragmentsRequired: 6,
     nameRu: 'Глаз Инферно',
-    accuracy: 0.93,
+    accuracy: 0.98,
     passive: {
-      type: 'conditional',
-      name: 'Пылающий взор',
-      description: 'Удар по мячу: +10% сила, если мяч на половине врага.',
-      params: { value: 0.10, condition: 'enemy_half' }
+      type: 'magnetic_pass',
+      name: 'Магнитный пас',
+      description:
+        'У игрока: выберите союзника для быстрой передачи мяча; получатель бьёт с усиленным контролем (бонус к силе удара).',
+      params: {
+        passRadius: 250,
+        bonusStrikePower: 0.3,
+      },
     },
   },
   {
@@ -677,11 +689,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'cyborg',
     name: 'Circuit Breaker',
     title: 'Standard Protocol',
-    role: 'balanced',
+    role: 'playmaker',
     rarity: 'common',
-    stats: { power: 4, defense: 3, speed: 3, technique: 3 },
-    specialAbility: 'Auto-Calibrate',
-    description: 'Штурмовой модуль первой линии. Учится на ошибках. [ПАССИВКА] Автокалибровка: +5% точность после промаха.',
+    stats: { power: 3, defense: 3, speed: 4, technique: 7 },
+    specialAbility: 'Magnetic Pass',
+    description:
+      'Диспетчер киборгов. Просчитывает идеальные пасы. [ПАССИВКА] Магнитный пас: передача союзнику с радиусом подбора 250px и бонусным следующим ударом.',
     assetKey: 'cyborg_trooper',
     assetPath: `assets/units/cyborg/cyborg_circuit_breaker.png?v=${ASSETS_VERSION}`,
     primaryColor: 0x60a5fa,
@@ -690,12 +703,13 @@ export const UNITS_REPOSITORY: UnitData[] = [
     isShopItem: true,
     shopPrice: 1000,
     nameRu: 'Штурмовик',
-    accuracy: 0.96,
+    accuracy: 0.98,
     passive: {
-      type: 'conditional',
-      name: 'Автокалибровка',
-      description: 'После промаха: +5% точность следующего удара.',
-      params: { value: 0.05, condition: 'after_miss' }
+      type: 'magnetic_pass',
+      name: 'Магнитный пас',
+      description:
+        'Притягивает мяч в радиусе 250px, передаёт союзнику; следующий удар получателя с бонусом к силе.',
+      params: { passRadius: 250, bonusStrikePower: 0.3 },
     },
   },
   {
@@ -703,11 +717,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'cyborg',
     name: 'Steel Fist',
     title: 'Combat Unit v4.5',
-    role: 'balanced',
+    role: 'enforcer',
     rarity: 'rare',
-    stats: { power: 5, defense: 4, speed: 4, technique: 5 },
-    specialAbility: 'Tactical Override',
-    description: 'Модуль ликвидации угроз. Его удары оставляют вмятины в любой броне. [ПАССИВКА] Стальной кулак: Замедляет врага на 20% при столкновении.',
+    stats: { power: 6, defense: 4, speed: 4, technique: 2 },
+    specialAbility: 'Knockout Strike',
+    description:
+      'Модуль ликвидации киборгов. Его таран вырубает врагов. [ПАССИВКА] Нокаут: быстрое столкновение — враг в стане 1 ход.',
     assetKey: 'cyborg_enforcer',
     assetPath: `assets/units/cyborg/cyborg_steel_fist.png?v=${ASSETS_VERSION}`,
     primaryColor: 0x2563eb,
@@ -716,12 +731,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     isShopItem: true,
     shopPrice: 2500,
     nameRu: 'Ликвидатор',
-    accuracy: 0.97,
+    accuracy: 0.80,
     passive: {
-      type: 'on_collision',
-      name: 'Стальной кулак',
-      description: 'Столкновение с врагом: враг замедлен на 20% на 1 ход.',
-      params: { value: 0.20, duration: 1, target: 'enemy' }
+      type: 'knockout',
+      name: 'Нокаут',
+      description: 'Столкновение на скорости выше порога: враг оглушён на 1 ход.',
+      params: { knockoutTurns: 1, minSpeed: 300 },
     },
   },
   {
@@ -1077,23 +1092,30 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'cyborg',
     name: 'Phase Shift',
     title: 'Ghost Protocol',
-    role: 'trickster',
+    role: 'maestro',
     rarity: 'rare',
-    stats: { power: 4, defense: 3, speed: 5, technique: 6 },
-    specialAbility: 'Phase Shift',
-    description: 'Призрак в машине. Существует между измерениями. [ПАССИВКА] Фазовый сдвиг: 20% шанс уклониться от столкновения.',
+    stats: { power: 4, defense: 2, speed: 6, technique: 6 },
+    specialAbility: 'Magnetic Dribbling',
+    description:
+      'Призрачный дриблер. Проходит сквозь давление соперника с лучшим контролем мяча. [ПАССИВКА] Магнитный дриблинг + фазовый акцент.',
     assetKey: 'cyborg_phantom',
     assetPath: `assets/units/cyborg/cyborg_phase_shift.png?v=${ASSETS_VERSION}`,
     primaryColor: 0x3b82f6,
     secondaryColor: 0x6366f1,
     fragmentsRequired: 6,
     nameRu: 'Кибер-Призрак',
-    accuracy: 0.94,
+    accuracy: 0.90,
     passive: {
-      type: 'conditional',
-      name: 'Фазовый сдвиг',
-      description: '20% шанс уклониться от столкновения.',
-      params: { chance: 0.20 }
+      type: 'dribbling',
+      name: 'Магнитный дриблинг',
+      description:
+        'Удар чуть сильнее подводит мяч к воротам соперника; учитывается фазовый стиль (контроль).',
+      params: {
+        dribbleDuration: 2500,
+        speedPenalty: 0.4,
+        bonusStrikePower: 0.3,
+        canPhase: true,
+      },
     },
   },
   {
@@ -1179,28 +1201,29 @@ export const UNITS_REPOSITORY: UnitData[] = [
 
   // --- BALANCED (5 units) ---
   {
-    id: 'void_duskblade', // ✅ ИСПРАВЛЕНО: Изменен ID для избежания конфликта с void_initiate
+    id: 'void_duskblade',
     factionId: 'void',
     name: 'Duskblade',
     title: 'Shadow Dancer',
-    role: 'balanced',
+    role: 'enforcer',
     rarity: 'common',
-    stats: { power: 3, defense: 2, speed: 4, technique: 4 },
-    specialAbility: 'Phase Shift',
-    description: 'Воительница сумрака. Её клинок рассекает саму тьму. [ПАССИВКА] Сумеречный клинок: Стабильная точность без эффектов.',
+    stats: { power: 6, defense: 3, speed: 3, technique: 2 },
+    specialAbility: 'Knockout Strike',
+    description:
+      'Воин сумрака. Его клинок выбивает волю к защите. [ПАССИВКА] Нокаут при резком столкновении.',
     assetKey: 'void_duskblade',
     assetPath: `assets/units/void/void_duskblade.png?v=${ASSETS_VERSION}`,
     primaryColor: 0x6366f1,
     secondaryColor: 0x1e1b4b,
     fragmentsRequired: 3,
-    isStarter: true, // ✅ НОВОЕ: Стартовый юнит при получении фракции
+    isStarter: true,
     nameRu: 'Клинок Сумрака',
-    accuracy: 0.94,
+    accuracy: 0.80,
     passive: {
-      type: 'none',
-      name: 'Сумеречный клинок',
-      description: 'Стабильный боец с хорошей точностью.',
-      params: {}
+      type: 'knockout',
+      name: 'Нокаут',
+      description: 'Столкновение на скорости выше порога: враг в стане 1 ход.',
+      params: { knockoutTurns: 1, minSpeed: 250 },
     },
   },
   {
@@ -1462,23 +1485,25 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'void',
     name: 'Voidbolt',
     title: 'Precision in Chaos',
-    role: 'sniper',
+    role: 'playmaker',
     rarity: 'rare',
-    stats: { power: 6, defense: 2, speed: 4, technique: 6 },
-    specialAbility: 'Chaos Shot',
-    description: 'Стрелок из пустоты. Его выстрелы искривляют пространство. [ПАССИВКА] Хаотичный выстрел: 25% шанс телепорта мяча на 50px.',
+    stats: { power: 4, defense: 2, speed: 4, technique: 7 },
+    specialAbility: 'Magnetic Pass',
+    description:
+      'Диспетчер пустоты. Пасы искривляют пространство. [ПАССИВКА] Магнитный пас через искажение поля.',
     assetKey: 'void_marksman',
     assetPath: `assets/units/void/void_voidbolt.png?v=${ASSETS_VERSION}`,
     primaryColor: 0x4f46e5,
     secondaryColor: 0xa855f7,
     fragmentsRequired: 6,
-    nameRu: 'Стрелок Пустоты',
+    nameRu: 'Абиссал',
     accuracy: 0.98,
     passive: {
-      type: 'on_hit_ball',
-      name: 'Хаотичный выстрел',
-      description: '25% шанс: мяч телепортируется на 50px вперёд после удара.',
-      params: { chance: 0.25, value: 50 }
+      type: 'magnetic_pass',
+      name: 'Магнитный пас',
+      description:
+        'Радиус подбора 250px; передача союзнику и бонус к следующему удару получателя.',
+      params: { passRadius: 250, bonusStrikePower: 0.3 },
     },
   },
   {
@@ -1608,23 +1633,30 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'void',
     name: 'Echo',
     title: 'Phantom Illusionist',
-    role: 'trickster',
+    role: 'maestro',
     rarity: 'rare',
-    stats: { power: 4, defense: 3, speed: 5, technique: 6 },
-    specialAbility: 'Phantom Clone',
-    description: 'Призрачное эхо. Никто не знает, где она на самом деле. [ПАССИВКА] Фантомный клон: 20% шанс показать ложную позицию.',
+    stats: { power: 4, defense: 2, speed: 6, technique: 6 },
+    specialAbility: 'Magnetic Dribbling',
+    description:
+      'Призрачный дриблер пустоты. [ПАССИВКА] Магнитный дриблинг с призрачным акцентом.',
     assetKey: 'void_mirage',
     assetPath: `assets/units/void/void_echo.png?v=${ASSETS_VERSION}`,
     primaryColor: 0x818cf8,
     secondaryColor: 0x312e81,
     fragmentsRequired: 6,
     nameRu: 'Мираж',
-    accuracy: 0.91,
+    accuracy: 0.90,
     passive: {
-      type: 'on_hit_ball',
-      name: 'Фантомный клон',
-      description: 'После удара: 20% шанс создать "эхо" — враг видит ложную позицию.',
-      params: { chance: 0.20 }
+      type: 'dribbling',
+      name: 'Магнитный дриблинг',
+      description:
+        'Удар подводит вектор к воротам соперника; лучший контроль для обводки.',
+      params: {
+        dribbleDuration: 2000,
+        speedPenalty: 0.4,
+        bonusStrikePower: 0.3,
+        createPhantoms: true,
+      },
     },
   },
   {
@@ -1739,11 +1771,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'insect',
     name: 'Crawler',
     title: 'Collective Unit',
-    role: 'balanced',
+    role: 'playmaker',
     rarity: 'common',
-    stats: { power: 4, defense: 3, speed: 4, technique: 3 },
-    specialAbility: 'Hive Mind',
-    description: 'Связной улья. Если один видит мяч — его видят все. [ПАССИВКА] Разум улья: Видит радиус способностей союзников.',
+    stats: { power: 3, defense: 3, speed: 4, technique: 7 },
+    specialAbility: 'Magnetic Pass',
+    description:
+      'Связной улья. Передаёт через феромоны. [ПАССИВКА] Магнитный пас с роевым видением позиций.',
     assetKey: 'insect_worker',
     assetPath: `assets/units/insect/insect_crawler.png?v=${ASSETS_VERSION}`,
     primaryColor: 0x65a30d,
@@ -1752,12 +1785,13 @@ export const UNITS_REPOSITORY: UnitData[] = [
     isShopItem: true,
     shopPrice: 1000,
     nameRu: 'Трутень',
-    accuracy: 0.91,
+    accuracy: 0.98,
     passive: {
-      type: 'none',
-      name: 'Разум улья',
-      description: 'Видит радиус действия способностей союзников.',
-      params: {}
+      type: 'magnetic_pass',
+      name: 'Магнитный пас',
+      description:
+        'Подбор мяча в радиусе 250px и передача союзнику; следующий удар получателя с бонусом.',
+      params: { passRadius: 250, bonusStrikePower: 0.3, hiveVision: true },
     },
   },
   {
@@ -1765,11 +1799,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'insect',
     name: 'Razor',
     title: 'Battle Drone',
-    role: 'balanced',
+    role: 'enforcer',
     rarity: 'rare',
-    stats: { power: 5, defense: 4, speed: 5, technique: 4 },
-    specialAbility: 'Coordinated Strike',
-    description: 'Боевой дрон улья. Действует в идеальной координации с роем. [ПАССИВКА] Координированный удар: +10% сила после удара союзника.',
+    stats: { power: 6, defense: 4, speed: 4, technique: 2 },
+    specialAbility: 'Knockout Strike',
+    description:
+      'Боевой дрон улья. Лезвия оглушают цель. [ПАССИВКА] Нокаут при резком столкновении.',
     assetKey: 'insect_soldier',
     assetPath: `assets/units/insect/insect_razor.png?v=${ASSETS_VERSION}`,
     primaryColor: 0x84cc16,
@@ -1778,12 +1813,12 @@ export const UNITS_REPOSITORY: UnitData[] = [
     isShopItem: true,
     shopPrice: 2500,
     nameRu: 'Солдат Улья',
-    accuracy: 0.93,
+    accuracy: 0.80,
     passive: {
-      type: 'conditional',
-      name: 'Координированный удар',
-      description: 'После удара союзника Insect: +10% сила на 1 ход.',
-      params: { value: 0.10, duration: 1, condition: 'ally_hit' }
+      type: 'knockout',
+      name: 'Нокаут',
+      description: 'Столкновение на высокой скорости: враг в стане 1 ход.',
+      params: { knockoutTurns: 1, minSpeed: 300, venomEffect: true },
     },
   },
   {
@@ -2091,23 +2126,30 @@ export const UNITS_REPOSITORY: UnitData[] = [
     factionId: 'insect',
     name: 'Changeling',
     title: 'Master of Disguise',
-    role: 'trickster',
+    role: 'maestro',
     rarity: 'common',
-    stats: { power: 3, defense: 2, speed: 5, technique: 5 },
-    specialAbility: 'Adaptive Trajectory',
-    description: 'Мимик улья. Адаптирует траекторию под цель. [ПАССИВКА] Адаптивная траектория: Curve автоматически к ближайшему врагу.',
+    stats: { power: 4, defense: 2, speed: 6, technique: 5 },
+    specialAbility: 'Magnetic Dribbling',
+    description:
+      'Скарабей-мимик. Адаптирует дриблинг под давление. [ПАССИВКА] Адаптивный магнитный дриблинг.',
     assetKey: 'insect_changeling',
     assetPath: `assets/units/insect/insect_changeling.png?v=${ASSETS_VERSION}`,
     primaryColor: 0xa3e635,
     secondaryColor: 0x365314,
     fragmentsRequired: 3,
-    nameRu: 'Мимик',
-    accuracy: 0.87,
+    nameRu: 'Скарабей',
+    accuracy: 0.90,
     passive: {
-      type: 'stat_boost',
-      name: 'Адаптивная траектория',
-      description: 'Curve зависит от ближайшего врага (curve к нему).',
-      params: {}
+      type: 'dribbling',
+      name: 'Магнитный дриблинг',
+      description:
+        'Удар сильнее «тянет» траекторию к чужим воротам; адаптивный контроль.',
+      params: {
+        dribbleDuration: 2000,
+        speedPenalty: 0.4,
+        bonusStrikePower: 0.3,
+        adaptive: true,
+      },
     },
   },
   {
@@ -2781,11 +2823,14 @@ export function getFragmentsRequired(rarity: UnitRarity): number {
  * Получить иконку роли
  */
 export function getRoleIcon(role: CapClass): string {
-  const icons = {
+  const icons: Record<CapClass, string> = {
     balanced: '⚖️',
     tank: '🛡️',
     sniper: '🎯',
     trickster: '🌀',
+    playmaker: '⭐',
+    maestro: '⚡',
+    enforcer: '💥',
   };
   return icons[role];
 }
@@ -2794,11 +2839,14 @@ export function getRoleIcon(role: CapClass): string {
  * Получить название роли
  */
 export function getRoleName(role: CapClass): string {
-  const names = {
+  const names: Record<CapClass, string> = {
     balanced: 'Balanced',
     tank: 'Tank',
     sniper: 'Sniper',
     trickster: 'Trickster',
+    playmaker: 'Playmaker',
+    maestro: 'Maestro',
+    enforcer: 'Enforcer',
   };
   return names[role];
 }
@@ -2827,6 +2875,9 @@ export function getRepositoryStats() {
     tank: UNITS_REPOSITORY.filter(u => u.role === 'tank').length,
     sniper: UNITS_REPOSITORY.filter(u => u.role === 'sniper').length,
     trickster: UNITS_REPOSITORY.filter(u => u.role === 'trickster').length,
+    playmaker: UNITS_REPOSITORY.filter(u => u.role === 'playmaker').length,
+    maestro: UNITS_REPOSITORY.filter(u => u.role === 'maestro').length,
+    enforcer: UNITS_REPOSITORY.filter(u => u.role === 'enforcer').length,
   };
   
   return { total, byFaction, byRarity, byRole };
@@ -2910,7 +2961,10 @@ export function getUnitAccuracy(unitId: string): number {
     sniper: 0.96,
     balanced: 0.92,
     trickster: 0.88,
-    tank: 0.84
+    tank: 0.84,
+    playmaker: 0.98,
+    maestro: 0.9,
+    enforcer: 0.8,
   };
   return defaultAccuracy[role] || 0.90;
 }
