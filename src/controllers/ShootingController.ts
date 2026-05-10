@@ -14,7 +14,7 @@ import {
 import { Cap } from '../entities/Cap';
 import { Unit } from '../entities/Unit';
 import { PlayerNumber } from '../types';
-import { Ball } from '../entities/Ball';
+import type { Ball } from '../entities/Ball';
 import { getUnitById, getUnitAccuracy, getUnitPhysicsModifier, getUnitPassive } from '../data/UnitsRepository';
 import { PassiveManager } from '../systems/PassiveManager';
 
@@ -135,6 +135,9 @@ export class ShootingController {
   // ✅ Passive System
   private passiveManager: PassiveManager | null = null;
   private startAimingGuard: ((cap: ShootableUnit | null) => boolean) | null = null;
+  /** Блокирует прицеливание/удар (режим выбора направления дриблинга) */
+  private dribbleAimingBlockedCheck: (() => boolean) | null = null;
+  private getBallForPassives: (() => Ball) | null = null;
 
   private captainTrajectoryHooks: {
     getDistanceMultiplier(): number;
@@ -762,6 +765,23 @@ export class ShootingController {
     this.passiveManager = manager;
   }
 
+  public setBallGetter(fn: (() => Ball) | null): void {
+    this.getBallForPassives = fn;
+  }
+
+  /** Пока true — не обрабатываем drag-to-shoot (не снимаем выбор фишки). */
+  public setDribbleAimingBlockedCheck(fn: (() => boolean) | null): void {
+    this.dribbleAimingBlockedCheck = fn;
+  }
+
+  public suspendShotDragForExternalOverlay(): void {
+    this.clearAimingState();
+  }
+
+  public isScreenBlockedForGameplayPointer(screenX: number, screenY: number): boolean {
+    return this.shootingPointerScreenBlock?.(screenX, screenY) ?? false;
+  }
+
   public setStartAimingGuard(fn: ((cap: ShootableUnit | null) => boolean) | null): void {
     this.startAimingGuard = fn;
   }
@@ -837,6 +857,7 @@ export class ShootingController {
   // === POINTER DOWN ===
   private onPointerDown(pointer: Phaser.Input.Pointer, gameObjects: any[]): void {
     if (!this.isEnabled || this.hasFiredThisTurn) return;
+    if (this.dribbleAimingBlockedCheck?.()) return;
     if (this.isLassoActiveCheck()) return;
     if (this.shootingPointerScreenBlock?.(pointer.x, pointer.y)) return;
 
@@ -992,6 +1013,7 @@ export class ShootingController {
 
   // === POINTER MOVE ===
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
+    if (this.dribbleAimingBlockedCheck?.()) return;
     if (!this.isEnabled || !this.isAiming || !this.selectedCap || !this.dragStartPos) return;
     if (this.isLassoActiveCheck()) return;
     this.updateVisuals(pointer.x, pointer.y);
@@ -1005,6 +1027,7 @@ export class ShootingController {
 
   // === POINTER UP ===
   private onPointerUp(pointer: Phaser.Input.Pointer): void {
+      if (this.dribbleAimingBlockedCheck?.()) return;
       if (!this.isEnabled || !this.isAiming || !this.selectedCap || !this.dragStartPos) return;
       if (this.isLassoActiveCheck()) return;
 
@@ -1038,6 +1061,11 @@ export class ShootingController {
 
   private executeShot(cap: ShootableUnit, force: Phaser.Math.Vector2): void {
       if (this.isLassoActiveCheck()) return;
+      if (this.dribbleAimingBlockedCheck?.()) return;
+
+      if (isUnit(cap) && cap.isMagneticDribbleActive() && this.passiveManager && this.getBallForPassives) {
+        this.passiveManager.stopMagneticDribble(cap, this.getBallForPassives(), { skipReleaseImpulse: true });
+      }
 
       let modifiedForce = force.clone();
       

@@ -525,17 +525,17 @@ export class CollectionScene extends Phaser.Scene {
             })
             .setOrigin(0.5)
         );
-        const hit = this.add
-          .rectangle(0, 0, chipW - 2, chipH + 4, 0, 0)
-          .setInteractive({ useHandCursor: true });
-        hit.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        const iw = chipW - 2;
+        const ih = chipH + 4;
+        c.setSize(iw, ih);
+        c.setInteractive({ useHandCursor: true });
+        c.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
           preventNativeEvent(pointer);
           if (selected) return;
           AudioManager.getInstance().playUIClick();
           hapticImpact('light');
           apply(d.id);
         });
-        c.add(hit);
         this.filtersContainer.add(c);
       }
     };

@@ -9,8 +9,10 @@ import { getUnitPassive } from '../../data/UnitsRepository';
 export interface PassiveSkillButtonConfig {
   /** Магнитный пас */
   onMagneticPass?: (unit: Unit) => void;
-  /** Дриблинг */
+  /** Дриблинг — открыть прицеливание направления (обрабатывает GameScene) */
   onDribble?: (unit: Unit) => void;
+  /** Досрочная остановка активного дриблинга */
+  onStopDribble?: (unit: Unit) => void;
 }
 
 export class PassiveSkillButton {
@@ -27,6 +29,9 @@ export class PassiveSkillButton {
   private pulseEffect?: Phaser.Tweens.Tween;
 
   private hitArea: Phaser.GameObjects.Rectangle;
+  /** Маленькая кнопка STOP над основной (только во время дриблинга) */
+  private stopHit: Phaser.GameObjects.Rectangle;
+  private stopLabel: Phaser.GameObjects.Text;
 
   private isVisible = false;
   private currentCap: GameUnit | null = null;
@@ -89,10 +94,36 @@ export class PassiveSkillButton {
 
     this.hitArea = this.scene.add.rectangle(0, 0, this.SIZE, this.SIZE, 0x000000, 0);
     this.hitArea.setInteractive({ useHandCursor: true });
-    this.hitArea.on('pointerdown', () => this.onClick());
+    this.hitArea.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      pointer.event?.stopPropagation?.();
+      this.onClick();
+    });
     this.hitArea.on('pointerover', () => this.onHover(true));
     this.hitArea.on('pointerout', () => this.onHover(false));
     this.container.add(this.hitArea);
+
+    this.stopHit = this.scene.add
+      .rectangle(0, -this.SIZE * 0.72, Math.round(this.SIZE * 0.92), 22, 0xef4444, 0.96)
+      .setStrokeStyle(2, 0xffffff, 0.9)
+      .setInteractive({ useHandCursor: true })
+      .setVisible(false);
+    this.stopHit.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      pointer.event?.stopPropagation?.();
+      this.onStopDribblePressed();
+    });
+    this.container.add(this.stopHit);
+
+    this.stopLabel = this.scene.add
+      .text(0, -this.SIZE * 0.72, 'STOP', {
+        fontSize: '11px',
+        fontFamily: 'Orbitron, Arial',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5)
+      .setVisible(false);
+    this.container.add(this.stopLabel);
 
     this.scene.events.on('update', this.onUpdate, this);
     this.drawBackground(this.COLOR_MAGNETIC, false);
@@ -124,6 +155,8 @@ export class PassiveSkillButton {
       this.cooldownOverlay.setVisible(false);
       this.cooldownText.setVisible(false);
       this.iconText.setAlpha(0.35);
+      this.stopHit.setVisible(false);
+      this.stopLabel.setVisible(false);
       this.stopPulse();
       return;
     }
@@ -137,17 +170,18 @@ export class PassiveSkillButton {
 
     if (dribbling) {
       this.drawBackground(this.COLOR_DRIBBLE, true);
-      this.iconText.setText('⚡').setAlpha(0.85);
+      this.iconText.setText('🏃').setAlpha(1);
       this.statusText.setText('ДРИБЛ').setColor('#fde047');
-      this.cooldownOverlay.setVisible(true);
-      this.cooldownOverlay.clear();
-      const s = this.SIZE;
-      this.cooldownOverlay.fillStyle(0x000000, 0.55);
-      this.cooldownOverlay.fillRoundedRect(-s / 2, -s / 2, s, s, 12);
-      this.cooldownText.setText('…').setVisible(true);
+      this.cooldownOverlay.setVisible(false);
+      this.cooldownText.setVisible(false);
+      this.stopHit.setVisible(true);
+      this.stopLabel.setVisible(true);
       this.stopPulse();
       return;
     }
+
+    this.stopHit.setVisible(false);
+    this.stopLabel.setVisible(false);
 
     if (cd > 0) {
       const s = this.SIZE;
@@ -180,6 +214,13 @@ export class PassiveSkillButton {
     this.background.fillRoundedRect(-s / 2, -s / 2, s, s, r);
     this.background.lineStyle(isActive ? 2.5 : 1.5, color, isActive ? 1 : 0.82);
     this.background.strokeRoundedRect(-s / 2, -s / 2, s, s, r);
+  }
+
+  private onStopDribblePressed(): void {
+    const cap = this.currentCap instanceof Unit ? this.currentCap : null;
+    const kind = this.passiveKind();
+    if (!cap || kind !== 'dribbling' || !cap.isMagneticDribbleActive()) return;
+    this.config.onStopDribble?.(cap);
   }
 
   private onClick(): void {

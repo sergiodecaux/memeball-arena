@@ -446,8 +446,12 @@ export class CollisionHandler {
 
     // ✅ ПАССИВКА: столкновения (нокаут и др.)
     if (this.passiveManager && unitA instanceof Unit && unitB instanceof Unit) {
-      this.passiveManager.onUnitCollision(unitA, unitB, impactSpeed);
-      this.passiveManager.onUnitCollision(unitB, unitA, impactSpeed);
+      try {
+        this.passiveManager.onUnitCollision(unitA, unitB, impactSpeed);
+        this.passiveManager.onUnitCollision(unitB, unitA, impactSpeed);
+      } catch (e) {
+        console.error('[CollisionHandler] passive unit-unit:', e);
+      }
     }
 
     // Кулдаун

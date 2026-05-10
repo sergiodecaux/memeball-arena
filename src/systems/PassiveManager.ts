@@ -45,6 +45,8 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private knockoutVictimUntilMs = new Map<string, number>();
   /** Дриблинг: подписки update → cleanup в destroy */
   private dribbleFollowers = new Map<string, () => void>();
+  /** Tweens притягивания мяча перед стартом дриблинга */
+  private dribbleAttractTweens = new Map<string, Phaser.Tweens.Tween>();
 
   /** Стабильные ссылки для корректной отписки в destroy() */
   private readonly boundOnGoalScored = this.onGoalScored.bind(this);
@@ -458,9 +460,9 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
 
   /**
-   * Maestro: мягкий «липкий» дриблинг без Matter constraint — мяч следует за фишкой; по окончании — лёгкий импульс к воротам.
+   * Maestro: дриблинг с выбранным направлением — короткое притягивание мяча, затем синхронное движение без Matter constraint.
    */
-  public startMagneticDribble(unit: Unit, ball: Ball): boolean {
+  public startMagneticDribble(unit: Unit, ball: Ball, directionRad: number): boolean {
     const passive = this.getUnitPassive(unit.getUnitId());
     if (passive.type !== 'dribbling') return false;
     if (unit.getDribblingCooldownTurns() > 0) return false;
@@ -475,39 +477,120 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     const by = ball.body.position.y;
     if (Phaser.Math.Distance.Between(ux, uy, bx, by) > PASSIVE_DRIBBLE_ATTACH_MAX_DIST) return false;
 
+    const nx = Math.cos(directionRad);
+    const ny = Math.sin(directionRad);
     const duration = passive.params.dribbleDuration ?? 2000;
-    const endAt = this.scene.time.now + duration;
+    const penalty = passive.params.speedPenalty ?? 0.4;
     const matter = this.scene.matter;
 
-    unit.setMagneticDribbleActive(true);
-    unit.setDribblingCooldownTurns(PASSIVE_SKILL_COOLDOWN.DRIBBLE_TURNS);
-    this.showPassiveActivation(unit, passive.name, 0xfbbf24);
+    const attachLead = 22;
+    const targetBx = ux + nx * attachLead;
+    const targetBy = uy + ny * attachLead;
+
+    const pull = { x: bx, y: by };
+    const tw = this.scene.tweens.add({
+      targets: pull,
+      x: targetBx,
+      y: targetBy,
+      duration: 380,
+      ease: 'Power2',
+      onUpdate: () => {
+        matter.body.setVelocity(ball.body, { x: 0, y: 0 });
+        matter.body.setAngularVelocity(ball.body, 0);
+        matter.body.setPosition(ball.body, { x: pull.x, y: pull.y });
+      },
+      onComplete: () => {
+        this.dribbleAttractTweens.delete(uid);
+        if (unit.isDestroyed || ball.isDestroyed) return;
+        matter.body.setVelocity(ball.body, { x: 0, y: 0 });
+        matter.body.setAngularVelocity(ball.body, 0);
+
+        unit.setMagneticDribbleActive(true);
+        unit.setDribblingCooldownTurns(PASSIVE_SKILL_COOLDOWN.DRIBBLE_TURNS);
+        this.showPassiveActivation(unit, passive.name, 0xfbbf24);
+
+        this.runDirectedDribbleFollower(unit, ball, passive, nx, ny, duration, penalty);
+      },
+    });
+
+    this.dribbleAttractTweens.set(uid, tw);
+    return true;
+  }
+
+  private runDirectedDribbleFollower(
+    unit: Unit,
+    ball: Ball,
+    passive: PassiveAbility,
+    nx: number,
+    ny: number,
+    durationMs: number,
+    speedPenalty: number,
+  ): void {
+    const uid = unit.id;
+    const matter = this.scene.matter;
+    const endAt = this.scene.time.now + durationMs;
+    const cruise = Phaser.Math.Clamp(2.35 * (1 - speedPenalty * 0.55), 0.85, 3.2);
+    const lead = 26;
 
     const follower = () => {
-      if (unit.isDestroyed || ball.isDestroyed || this.scene.time.now >= endAt) {
-        this.scene.events.off('update', follower);
-        this.dribbleFollowers.delete(uid);
-        unit.setMagneticDribbleActive(false);
-        this.applyDribbleReleaseImpulse(unit, ball, passive);
+      if (unit.isDestroyed || ball.isDestroyed || !unit.isMagneticDribbleActive() || this.scene.time.now >= endAt) {
+        this.finishDirectedDribbleFollower(uid, unit, ball, passive, follower, { applyReleaseImpulse: true });
         return;
       }
 
-      const vx = unit.body.velocity.x;
-      const vy = unit.body.velocity.y;
-      const mag = Math.sqrt(vx * vx + vy * vy) || 1;
-      const nx = vx / mag;
-      const ny = vy / mag;
-      const lead = 26;
-      const tx = unit.body.position.x + nx * lead;
-      const ty = unit.body.position.y + ny * lead;
+      matter.body.setVelocity(unit.body, { x: nx * cruise, y: ny * cruise });
+      matter.body.setAngularVelocity(unit.body, 0);
       matter.body.setVelocity(ball.body, { x: 0, y: 0 });
       matter.body.setAngularVelocity(ball.body, 0);
-      matter.body.setPosition(ball.body, { x: tx, y: ty });
+      matter.body.setPosition(ball.body, {
+        x: unit.body.position.x + nx * lead,
+        y: unit.body.position.y + ny * lead,
+      });
     };
 
     this.dribbleFollowers.set(uid, follower);
     this.scene.events.on('update', follower);
-    return true;
+  }
+
+  private finishDirectedDribbleFollower(
+    uid: string,
+    unit: Unit,
+    ball: Ball,
+    passive: PassiveAbility,
+    follower: () => void,
+    opts: { applyReleaseImpulse: boolean },
+  ): void {
+    this.scene.events.off('update', follower);
+    this.dribbleFollowers.delete(uid);
+    const stillActive = unit.isMagneticDribbleActive();
+    unit.setMagneticDribbleActive(false);
+    if (!stillActive) return;
+    if (opts.applyReleaseImpulse && passive.type === 'dribbling') {
+      this.applyDribbleReleaseImpulse(unit, ball, passive);
+    }
+  }
+
+  /** Досрочная остановка дриблинга (кнопка STOP или удар). */
+  public stopMagneticDribble(unit: Unit, ball: Ball, opts?: { skipReleaseImpulse?: boolean }): void {
+    const uid = unit.id;
+    const tw = this.dribbleAttractTweens.get(uid);
+    if (tw) {
+      tw.stop();
+      this.dribbleAttractTweens.delete(uid);
+    }
+
+    const follower = this.dribbleFollowers.get(uid);
+    const passive = this.getUnitPassive(unit.getUnitId());
+    if (follower && passive.type === 'dribbling') {
+      this.finishDirectedDribbleFollower(uid, unit, ball, passive, follower, {
+        applyReleaseImpulse: opts?.skipReleaseImpulse !== true,
+      });
+      return;
+    }
+
+    if (unit.isMagneticDribbleActive()) {
+      unit.setMagneticDribbleActive(false);
+    }
   }
 
   private applyDribbleReleaseImpulse(unit: Unit, ball: Ball, passive: PassiveAbility): void {
@@ -531,55 +614,59 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   // ========== ОБРАБОТКА СТОЛКНОВЕНИЙ ==========
 
   public onUnitCollision(unit: Unit, enemy: Unit, impactSpeed = 0): void {
-    const passive = this.getUnitPassive(unit.getUnitId());
+    try {
+      const passive = this.getUnitPassive(unit.getUnitId());
 
-    if (
-      passive?.type === 'knockout' &&
-      unit.owner !== enemy.owner &&
-      impactSpeed > 0 &&
-      !unit.isStunned() &&
-      !enemy.isStunned()
-    ) {
-      const threshold = (passive.params.minSpeed ?? 320) / 52;
-      if (impactSpeed >= threshold) {
-        const now = this.scene.time.now;
-        const until = this.knockoutVictimUntilMs.get(enemy.id) ?? 0;
-        if (now >= until) {
-          enemy.applyStun(passive.params.knockoutTurns ?? 1);
-          this.knockoutVictimUntilMs.set(enemy.id, now + 520);
-          this.showPassiveActivation(unit, passive.name, 0xef4444);
+      if (
+        passive?.type === 'knockout' &&
+        unit.owner !== enemy.owner &&
+        impactSpeed > 0 &&
+        !unit.isStunned() &&
+        !enemy.isStunned()
+      ) {
+        const threshold = (passive.params.minSpeed ?? 320) / 52;
+        if (impactSpeed >= threshold) {
+          const now = this.scene.time.now;
+          const until = this.knockoutVictimUntilMs.get(enemy.id) ?? 0;
+          if (now >= until) {
+            enemy.applyStun(passive.params.knockoutTurns ?? 1);
+            this.knockoutVictimUntilMs.set(enemy.id, now + 520);
+            this.showPassiveActivation(unit, passive.name, 0xef4444);
+          }
         }
       }
-    }
 
-    if (!passive || passive.type !== 'on_collision') return;
+      if (!passive || passive.type !== 'on_collision') return;
 
-    const params = passive.params;
-    
-    // Slow enemy
-    if (params.target === 'enemy' && params.value) {
-      // Check for immunity (Iron Sentinel)
-      if (this.hasImmunity(enemy, 'slow')) {
-        this.showPassiveActivation(enemy, 'Иммунитет!', 0x00ff00);
-        return;
+      const params = passive.params;
+
+      // Slow enemy
+      if (params.target === 'enemy' && params.value) {
+        // Check for immunity (Iron Sentinel)
+        if (this.hasImmunity(enemy, 'slow')) {
+          this.showPassiveActivation(enemy, 'Иммунитет!', 0x00ff00);
+          return;
+        }
+
+        const slowAmount = params.value;
+        const duration = params.duration || 1;
+        this.applyDebuff(enemy, 'slow', slowAmount, duration, unit.getUnitId());
+        this.showPassiveActivation(unit, passive.name);
       }
-      
-      const slowAmount = params.value;
-      const duration = params.duration || 1;
-      this.applyDebuff(enemy, 'slow', slowAmount, duration, unit.getUnitId());
-      this.showPassiveActivation(unit, passive.name);
-    }
-    
-    // Extra knockback (Juggernaut)
-    if (passive.name === 'Сейсмический удар') {
-      this.applyExtraKnockback(enemy, params.value || 0.30);
-      this.showPassiveActivation(unit, passive.name, 0xffcc44);
-      this.showPassiveActivation(enemy, 'Отброс!', 0xffaa33);
-    }
-    
-    // Absorb impulse (Ironclad, Abyssal)
-    if (passive.name === 'Энергощит' || passive.name === 'Поглощение бездны') {
-      // Handled in collision physics
+
+      // Extra knockback (Juggernaut)
+      if (passive.name === 'Сейсмический удар') {
+        this.applyExtraKnockback(enemy, params.value || 0.30);
+        this.showPassiveActivation(unit, passive.name, 0xffcc44);
+        this.showPassiveActivation(enemy, 'Отброс!', 0xffaa33);
+      }
+
+      // Absorb impulse (Ironclad, Abyssal)
+      if (passive.name === 'Энергощит' || passive.name === 'Поглощение бездны') {
+        // Handled in collision physics
+      }
+    } catch (e) {
+      console.error('[PassiveManager] onUnitCollision:', e);
     }
   }
   
@@ -1351,6 +1438,8 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     eventBus.off(GameEvents.GOAL_SCORED, this.boundOnGoalScored);
     eventBus.off(GameEvents.TURN_STARTED, this.boundOnTurnStarted);
     eventBus.off(GameEvents.TURN_ENDED, this.boundOnTurnEnded);
+    this.dribbleAttractTweens.forEach((t) => t.stop());
+    this.dribbleAttractTweens.clear();
     this.dribbleFollowers.forEach((fn) => this.scene.events.off('update', fn));
     this.dribbleFollowers.clear();
     this.knockoutVictimUntilMs.clear();
