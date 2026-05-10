@@ -9,8 +9,10 @@ import { getUnitPassive } from '../../data/UnitsRepository';
 export interface PassiveSkillButtonConfig {
   /** Магнитный пас */
   onMagneticPass?: (unit: Unit) => void;
-  /** Дриблинг — открыть прицеливание направления (обрабатывает GameScene) */
+  /** Дриблинг — старт интерактивного режима (GameScene → PassiveManager) */
   onDribble?: (unit: Unit) => void;
+  /** Превью радиуса дриблинга при наведении на кнопку (Maestro, не во время КД) */
+  onMaestroRangePreview?: (unit: Unit | null) => void;
   /** Досрочная остановка активного дриблинга */
   onStopDribble?: (unit: Unit) => void;
 }
@@ -98,8 +100,14 @@ export class PassiveSkillButton {
       pointer.event?.stopPropagation?.();
       this.onClick();
     });
-    this.hitArea.on('pointerover', () => this.onHover(true));
-    this.hitArea.on('pointerout', () => this.onHover(false));
+    this.hitArea.on('pointerover', () => {
+      this.onHover(true);
+      this.emitMaestroRangePreview(true);
+    });
+    this.hitArea.on('pointerout', () => {
+      this.onHover(false);
+      this.emitMaestroRangePreview(false);
+    });
     this.container.add(this.hitArea);
 
     this.stopHit = this.scene.add
@@ -250,6 +258,22 @@ export class PassiveSkillButton {
     }
   }
 
+  private emitMaestroRangePreview(hovering: boolean): void {
+    const fn = this.config.onMaestroRangePreview;
+    if (!fn) return;
+    if (!hovering) {
+      fn(null);
+      return;
+    }
+    const cap = this.currentCap instanceof Unit ? this.currentCap : null;
+    const kind = this.passiveKind();
+    if (!cap || kind !== 'dribbling' || cap.isMagneticDribbleActive()) {
+      fn(null);
+      return;
+    }
+    fn(cap);
+  }
+
   private onHover(over: boolean): void {
     this.scene.tweens.add({
       targets: this.container,
@@ -309,6 +333,7 @@ export class PassiveSkillButton {
 
   public hide(): void {
     if (!this.isVisible) return;
+    this.emitMaestroRangePreview(false);
     this.stopPulse();
     this.scene.tweens.add({
       targets: this.container,
@@ -335,6 +360,7 @@ export class PassiveSkillButton {
   }
 
   public destroy(): void {
+    this.emitMaestroRangePreview(false);
     this.scene.events.off('update', this.onUpdate, this);
     this.stopPulse();
     this.container.destroy(true);

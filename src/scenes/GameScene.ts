@@ -2,7 +2,7 @@
 // вњ… РР—РњР•РќР•РќРћ: РСЃРїСЂР°РІР»РµРЅ Р±Р°Рі СЃ С‚Р°Р№РјРµСЂРѕРј - РґРѕР±Р°РІР»РµРЅРѕ РїРѕР»Рµ matchDuration, РёСЃРїСЂР°РІР»РµРЅ getState()
 
 import Phaser from 'phaser';
-import { GAME, GOAL, FactionId, LASSO_CONFIG, PASSIVE_SKILL_COOLDOWN, PASSIVE_DRIBBLE_ATTACH_MAX_DIST } from '../constants/gameConstants';
+import { GAME, GOAL, FactionId, LASSO_CONFIG, PASSIVE_SKILL_COOLDOWN, PASSIVE_DRIBBLE_ACTIVATION_RADIUS } from '../constants/gameConstants';
 import { isCaptainUnitId } from '../constants/captains';
 import { FieldBounds, PlayerNumber, AIDifficulty } from '../types';
 import { Unit } from '../entities/Unit';
@@ -180,13 +180,13 @@ export class GameScene extends Phaser.Scene {
   private passiveHudToast?: Phaser.GameObjects.Container;
   private lastPassiveHudHapticAt = 0;
 
-  /** Режим выбора направления дриблинга (линия прицела в мире) */
-  private dribbleAimingPhase = false;
-  private dribbleAimGfx?: Phaser.GameObjects.Graphics;
-  private dribbleAimHint?: Phaser.GameObjects.Text;
-  private dribbleAimMoveHandler?: (p: Phaser.Input.Pointer) => void;
-  private dribbleAimDownHandler?: (p: Phaser.Input.Pointer) => void;
-  private dribbleAimConfirmDelay?: Phaser.Time.TimerEvent;
+  /** Превью радиуса активации дриблинга (наведение на кнопку пассивки) */
+  private maestroRangePreview?: {
+    circle: Phaser.GameObjects.Arc;
+    line: Phaser.GameObjects.Line;
+    text: Phaser.GameObjects.Text;
+    tick: () => void;
+  };
 
   // === Р РµР¶РёРј ===
   private isCampaignMode = false;
@@ -489,9 +489,10 @@ export class GameScene extends Phaser.Scene {
     this.createCaptainMatchSystem();
     this.createManagers();
     this.createUI();
-    console.log('[GameScene] ✅ Новая система дриблинга загружена');
-    console.log('[GameScene] ✅ Защита от вылета Enforcer активна');
-    console.log('[GameScene] ✅ UI фильтрации классов исправлено');
+    console.log('[GameScene] ✅ Новая система дриблинга v2.0 загружена');
+    console.log('[GameScene] 📍 Радиус активации: 150px (как у Lasso)');
+    console.log('[GameScene] 🎮 Управление: перетаскивание пальцем');
+    console.log('[GameScene] ⚡ Выстрел: удержание >500мс + отпускание');
     this.subscribeToEvents();
     
     // вњ… РЈР›РЈР§РЁР•РќРћ: Р“Р»РѕР±Р°Р»СЊРЅС‹Р№ СЃР»СѓС€Р°С‚РµР»СЊ РІРІРѕРґР° СЃ РїСЂРёРѕСЂРёС‚РµС‚РѕРј СЃРїРѕСЃРѕР±РЅРѕСЃС‚РµР№
@@ -586,9 +587,6 @@ export class GameScene extends Phaser.Scene {
   private setupGlobalInput(): void {
     // вњ… РџСЂРёРѕСЂРёС‚РµС‚ 1: РћР±СЂР°Р±РѕС‚РєР° ESC/Back РґР»СЏ РѕС‚РјРµРЅС‹ СЃРїРѕСЃРѕР±РЅРѕСЃС‚Рё
     this.input.keyboard?.on('keydown-ESC', () => {
-      if (this.cancelDribbleAimingIfActive()) {
-        return;
-      }
       if (this.abilityManager?.isActivating()) {
         console.log('[GameScene] ESC pressed - cancelling ability');
         this.abilityManager.cancelActivation();
@@ -1180,7 +1178,10 @@ export class GameScene extends Phaser.Scene {
     // Подключаем PassiveManager ко всем системам
     this.shootingController.setPassiveManager(this.passiveManager);
     this.shootingController.setBallGetter(() => this.ball);
-    this.shootingController.setDribbleAimingBlockedCheck(() => this.dribbleAimingPhase);
+    this.passiveManager.setInteractiveDribbleHudBlock((sx, sy) =>
+      this.shootingController.isScreenBlockedForGameplayPointer(sx, sy),
+    );
+    this.wireDribblingSceneEvents();
     this.abilityManager.setPassiveManager(this.passiveManager);
     this.player2AbilityManager?.setPassiveManager(this.passiveManager);
     this.collisionHandler.setPassiveManager(this.passiveManager);
@@ -1543,6 +1544,7 @@ export class GameScene extends Phaser.Scene {
     this.passiveSkillButton = new PassiveSkillButton(this, {
       onMagneticPass: (u) => this.handlePassiveMagneticButton(u),
       onDribble: (u) => this.handlePassiveDribbleButton(u),
+      onMaestroRangePreview: (u) => this.showMaestroRangePreviewForUnit(u),
       onStopDribble: (u) => {
         if (!this.passiveManager) return;
         this.passiveManager.stopMagneticDribble(u, this.ball, { skipReleaseImpulse: true });
@@ -3019,103 +3021,121 @@ export class GameScene extends Phaser.Scene {
     );
   }
 
-  private cancelDribbleAimingIfActive(): boolean {
-    if (!this.dribbleAimingPhase) return false;
-    this.cleanupDribbleAiming();
-    return true;
+  private wireDribblingSceneEvents(): void {
+    this.events.on('dribbling-started', this.onDribblingStartedHud, this);
+    this.events.on('dribbling-finished', this.onDribblingFinishedHud, this);
+    this.events.on('dribbling-failed', this.onDribblingFailedHud, this);
   }
 
-  private cleanupDribbleAiming(): void {
-    this.dribbleAimingPhase = false;
-    this.dribbleAimConfirmDelay?.remove(false);
-    this.dribbleAimConfirmDelay = undefined;
-    if (this.dribbleAimMoveHandler) {
-      this.input.off('pointermove', this.dribbleAimMoveHandler);
-      this.dribbleAimMoveHandler = undefined;
-    }
-    if (this.dribbleAimDownHandler) {
-      this.input.off('pointerdown', this.dribbleAimDownHandler);
-      this.dribbleAimDownHandler = undefined;
-    }
-    this.dribbleAimGfx?.destroy();
-    this.dribbleAimGfx = undefined;
-    this.dribbleAimHint?.destroy();
-    this.dribbleAimHint = undefined;
+  private clearMaestroRangePreview(): void {
+    if (!this.maestroRangePreview) return;
+    this.events.off('update', this.maestroRangePreview.tick);
+    this.maestroRangePreview.circle.destroy();
+    this.maestroRangePreview.line.destroy();
+    this.maestroRangePreview.text.destroy();
+    this.maestroRangePreview = undefined;
   }
 
-  /**
-   * Выбор направления дриблинга (как прицел Lasso): движение курсора — линия, tap по полю — подтверждение.
-   */
-  private beginDribbleAiming(unit: Unit): void {
-    if (this.dribbleAimingPhase) return;
-    const maxPreviewDist = PASSIVE_DRIBBLE_ATTACH_MAX_DIST;
-    if (Phaser.Math.Distance.Between(unit.x, unit.y, this.ball.x, this.ball.y) > maxPreviewDist) {
-      this.showPassiveToast('Подойдите ближе к мячу!');
-      return;
-    }
+  /** Индикатор расстояния до мяча при наведении на кнопку Maestro */
+  private showMaestroRangePreviewForUnit(unit: Unit | null): void {
+    this.clearMaestroRangePreview();
+    if (!unit) return;
 
-    this.dribbleAimingPhase = true;
-    this.shootingController.suspendShotDragForExternalOverlay();
+    const ball = this.ball;
+    const R = PASSIVE_DRIBBLE_ACTIVATION_RADIUS;
+    const depthBase = unit.sprite.depth ?? 400;
 
-    this.dribbleAimGfx = this.add.graphics().setDepth(520).setScrollFactor(1);
+    const tick = () => {
+      if (unit.isDestroyed || ball.isDestroyed) {
+        this.clearMaestroRangePreview();
+        return;
+      }
+      const pr = this.maestroRangePreview;
+      if (!pr) return;
+      const d = Phaser.Math.Distance.Between(unit.x, unit.y, ball.x, ball.y);
+      const ok = d <= R;
+      pr.circle.setPosition(unit.x, unit.y);
+      pr.circle.setFillStyle(ok ? 0x22c55e : 0xef4444, 0.12);
+      pr.circle.setStrokeStyle(3, ok ? 0x10b981 : 0xdc2626);
+      pr.line.setTo(unit.x, unit.y, ball.x, ball.y);
+      pr.line.setStrokeStyle(2, ok ? 0x10b981 : 0xef4444);
+      pr.text.setPosition((unit.x + ball.x) / 2, (unit.y + ball.y) / 2 - 22);
+      pr.text.setText(`${Math.round(d)} px`);
+      pr.text.setBackgroundColor(ok ? '#10b981' : '#ef4444');
+    };
 
-    this.dribbleAimHint = createText(this, this.scale.width / 2, 88, '🎯 Выберите направление дриблинга', {
-      size: 'sm',
-      color: '#fffbeb',
-      stroke: true,
-    })
+    const d0 = Phaser.Math.Distance.Between(unit.x, unit.y, ball.x, ball.y);
+    const ok0 = d0 <= R;
+
+    const circle = this.add
+      .circle(unit.x, unit.y, R, ok0 ? 0x22c55e : 0xef4444, 0.12)
+      .setStrokeStyle(3, ok0 ? 0x10b981 : 0xdc2626)
+      .setDepth(depthBase - 2)
+      .setScrollFactor(1);
+
+    const line = this.add
+      .line(0, 0, unit.x, unit.y, ball.x, ball.y, ok0 ? 0x10b981 : 0xef4444, 0.55)
+      .setLineWidth(2)
+      .setDepth(depthBase - 1)
+      .setScrollFactor(1);
+
+    const text = this.add
+      .text((unit.x + ball.x) / 2, (unit.y + ball.y) / 2 - 22, `${Math.round(d0)} px`, {
+        fontSize: '14px',
+        color: '#ffffff',
+        backgroundColor: ok0 ? '#10b981' : '#ef4444',
+        padding: { x: 6, y: 4 },
+      })
+      .setOrigin(0.5)
+      .setDepth(520)
+      .setScrollFactor(1);
+
+    this.events.on('update', tick);
+    this.maestroRangePreview = { circle, line, text, tick };
+
+    this.time.delayedCall(2800, () => this.clearMaestroRangePreview());
+  }
+
+  private onDribblingStartedHud(data: { unit: Unit; ball: Ball; duration: number }): void {
+    console.log('[GameScene] dribbling-started', data.unit.getUnitId(), data.duration);
+    const hint = createText(
+      this,
+      this.scale.width / 2,
+      96,
+      '🎮 Ведите палец по полю\n⭐ Удерживайте и отпустите (>0.5 с) — удар',
+      { size: 'sm', color: '#fffbeb', stroke: true, align: 'center' },
+    )
       .setScrollFactor(0)
       .setDepth(560)
       .setOrigin(0.5);
 
-    const redraw = (pointer: Phaser.Input.Pointer) => {
-      if (!this.dribbleAimingPhase || !this.dribbleAimGfx) return;
-      const ux = unit.x;
-      const uy = unit.y;
-      const wx = pointer.worldX;
-      const wy = pointer.worldY;
-      const angle = Phaser.Math.Angle.Between(ux, uy, wx, wy);
-      const len = 140;
-      const ex = ux + Math.cos(angle) * len;
-      const ey = uy + Math.sin(angle) * len;
-      const g = this.dribbleAimGfx;
-      g.clear();
-      g.lineStyle(4, 0xfbbf24, 0.88);
-      g.beginPath();
-      g.moveTo(ux, uy);
-      g.lineTo(ex, ey);
-      g.strokePath();
-      const ah = 14;
-      const bx = ex - Math.cos(angle) * ah;
-      const by = ey - Math.sin(angle) * ah;
-      const px = -Math.sin(angle) * 8;
-      const py = Math.cos(angle) * 8;
-      g.fillStyle(0xfbbf24, 0.95);
-      g.fillTriangle(ex, ey, bx + px, by + py, bx - px, by - py);
-    };
-
-    this.dribbleAimMoveHandler = (pointer: Phaser.Input.Pointer) => redraw(pointer);
-    this.input.on('pointermove', this.dribbleAimMoveHandler);
-
-    redraw(this.input.activePointer);
-
-    this.dribbleAimConfirmDelay = this.time.delayedCall(90, () => {
-      this.dribbleAimDownHandler = (pointer: Phaser.Input.Pointer) => {
-        if (!this.dribbleAimingPhase) return;
-        if (this.shootingController.isScreenBlockedForGameplayPointer(pointer.x, pointer.y)) return;
-
-        const angle = Phaser.Math.Angle.Between(unit.x, unit.y, pointer.worldX, pointer.worldY);
-
-        this.cleanupDribbleAiming();
-
-        const ok = this.passiveManager?.startMagneticDribble(unit, this.ball, angle) ?? false;
-        if (!ok) {
-          this.showPassiveToast('Подойдите ближе к мячу или дождитесь КД');
-        }
-        this.passiveSkillButton?.refresh();
-      };
-      this.input.on('pointerdown', this.dribbleAimDownHandler);
+    this.time.delayedCall(3200, () => {
+      this.tweens.add({
+        targets: hint,
+        alpha: 0,
+        duration: 420,
+        onComplete: () => hint.destroy(),
+      });
     });
+  }
+
+  private onDribblingFinishedHud(data: { unit: Unit; ball: Ball; isAutoFinish: boolean }): void {
+    console.log('[GameScene] dribbling-finished', data.isAutoFinish ? 'auto' : 'manual');
+    this.passiveSkillButton?.refresh();
+    if (data.isAutoFinish) {
+      this.showPassiveToast('Время дриблинга истекло');
+    }
+  }
+
+  private onDribblingFailedHud(data: { reason: string; distance?: number }): void {
+    console.warn('[GameScene] dribbling-failed', data.reason);
+    if (data.reason === 'too_far' && data.distance !== undefined) {
+      this.showPassiveToast(
+        `Мяч далеко (${Math.round(data.distance)} px, макс ${PASSIVE_DRIBBLE_ACTIVATION_RADIUS})`,
+      );
+    } else {
+      this.showPassiveToast('Не удалось начать дриблинг');
+    }
   }
 
   private handlePassiveDribbleButton(unit: Unit): void {
@@ -3131,7 +3151,8 @@ export class GameScene extends Phaser.Scene {
     }
     if (!this.passiveManager) return;
 
-    this.beginDribbleAiming(unit);
+    this.passiveManager.startMagneticDribble(unit, this.ball);
+    this.passiveSkillButton?.refresh();
   }
 
   private handleLassoReleased(capId: string | null): void {

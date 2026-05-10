@@ -544,11 +544,14 @@ export const LASSO_CONFIG = {
 /** Кулдауны активируемых классовых пассивок (в ходах матча). */
 export const PASSIVE_SKILL_COOLDOWN = {
   MAGNETIC_PASS_TURNS: 3,
-  DRIBBLE_TURNS: 4,
+  DRIBBLE_TURNS: 15,
 } as const;
 
-/** Макс. дистанция юнит↔мяч для старта дриблинга (px). */
-export const PASSIVE_DRIBBLE_ATTACH_MAX_DIST = 78;
+/** Макс. дистанция юнит↔мяч для старта дриблинга (как радиус Lasso). */
+export const PASSIVE_DRIBBLE_ACTIVATION_RADIUS = 150;
+
+/** Совместимость: прежнее имя — используйте PASSIVE_DRIBBLE_ACTIVATION_RADIUS. */
+export const PASSIVE_DRIBBLE_ATTACH_MAX_DIST = PASSIVE_DRIBBLE_ACTIVATION_RADIUS;
 
 // ========== СИСТЕМА ТОЧНОСТИ ==========
 
