@@ -705,7 +705,9 @@ export class AbilityButton {
   }
 
   /**
-   * Ульта капитана: applyCard + явный runtime id в unitIds (lastActiveUnit до выстрела часто другой).
+   * Ульта капитана: только CaptainMatchSystem.tryBeginUltFromUi (конус Урока, точка Этельгард,
+   * выбор Хроноса, фазы Ксеркса). Старый путь через AbilityManager.applyCaptainAbility почти не толкал фишки
+   * и для роя вызывал EXTRA_TURN без подписчиков в матче.
    */
   private activateCaptainAbility(): boolean {
     if (!this.currentUnit) {
@@ -729,19 +731,9 @@ export class AbilityButton {
       name: meta.name,
     });
 
-    if (meta.id === 'captain_chronos') {
-      devAbilityBtnLog('[AbilityButton] Chronos — targeting mode');
-      const ok = this.abilityManager.beginCaptainUltTargeting();
-      devAbilityBtnLog('[AbilityButton] Chronos targeting:', ok);
-      return ok;
-    }
-
-    const success = this.abilityManager.applyCard(meta.id, {
-      position: null,
-      unitIds: [this.currentUnit.id],
-    });
-    devAbilityBtnLog('[AbilityButton] Captain ability result:', success);
-    return success;
+    const ok = this.abilityManager.beginCaptainUltTargeting();
+    devAbilityBtnLog('[AbilityButton] Captain ult targeting begun:', ok);
+    return ok;
   }
 
   public destroy(): void {
