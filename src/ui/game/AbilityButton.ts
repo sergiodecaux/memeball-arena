@@ -203,68 +203,86 @@ export class AbilityButton {
     this.chargeText.setText(`${charges}/${maxCharges}`);
   }
 
-  // Обновление состояния кнопки (включая таймер)
   public updateVisuals(): void {
     const isCaptain = Boolean(this.currentUnit && this.isCaptainUnit(this.currentUnit));
     const captainUltReady = isCaptain && this.isCaptainUltUiReady();
-
     const cooldown = this.abilityManager.getCooldownRemaining();
 
-    if (cooldown > 0 && !captainUltReady) {
+    if (isCaptain) {
+      this.chargeBar.clear();
+      this.chargeText.setVisible(false);
+      this.cardBadge.setVisible(false);
+
+      if (captainUltReady) {
+        this.cooldownOverlay.setVisible(false);
+        this.cooldownText.setVisible(false);
+        this.iconText.setAlpha(1);
+
+        this.chargeText.setVisible(true);
+        this.chargeText.setText('⚡100%');
+
+        this.statusText.setText('ULTIMATE READY');
+        this.statusText.setColor('#ffd700');
+
+        const color = FACTIONS[this.factionId].color;
+        this.drawBackground(color, false);
+        this.isReady = true;
+        this.startPulseAnimation();
+      } else {
+        this.cooldownOverlay.setVisible(false);
+        this.cooldownText.setVisible(false);
+        this.iconText.setAlpha(0.5);
+
+        this.statusText.setText('CHARGING...');
+        this.statusText.setColor('#888888');
+        this.drawBackground(0x333333, false);
+        this.isReady = false;
+        this.stopPulseAnimation();
+      }
+      return;
+    }
+
+    this.chargeText.setVisible(true);
+
+    if (cooldown > 0) {
       this.isReady = false;
       this.stopPulseAnimation();
 
       this.cooldownOverlay.clear();
       this.cooldownOverlay.fillStyle(0x000000, 0.7);
-      this.cooldownOverlay.fillRoundedRect(-this.WIDTH / 2, -this.HEIGHT / 2, this.WIDTH, this.HEIGHT, 12);
+      this.cooldownOverlay.fillRoundedRect(
+        -this.WIDTH / 2,
+        -this.HEIGHT / 2,
+        this.WIDTH,
+        this.HEIGHT,
+        12,
+      );
       this.cooldownOverlay.setVisible(true);
 
       this.cooldownText.setText(cooldown.toString());
       this.cooldownText.setVisible(true);
 
-      this.statusText.setText(isCaptain ? 'CHARGING' : 'COOLDOWN');
+      this.statusText.setText('COOLDOWN');
       this.statusText.setColor('#888888');
 
       this.chargeBar.clear();
       this.chargeText.setVisible(false);
       this.iconText.setAlpha(0.3);
       this.drawBackground(0x333333, false);
-
       return;
     }
 
     this.cooldownOverlay.setVisible(false);
     this.cooldownText.setVisible(false);
-    this.chargeText.setVisible(true);
     this.iconText.setAlpha(1);
 
-    if (captainUltReady) {
-      this.chargeBar.clear();
-      this.chargeText.setText('⚡100%');
-
-      this.statusText.setText('ULTIMATE READY');
-      this.statusText.setColor('#ffd700');
-
-      const color = FACTIONS[this.factionId].color;
-      this.drawBackground(color, false);
-      this.isReady = true;
-
-      this.cardBadge.setVisible(false);
-      this.startPulseAnimation();
-      return;
-    }
-
-    // 2. Стандартный режим
     const charges = this.getChargesCount();
     const cards = this.getMatchCardsCount();
-    const captainUltForCharge = this.isCaptainUltUiReady();
-    const hasCharge = charges >= 1 || captainUltForCharge;
-    
-    this.isReady = hasCharge;
+    const hasCharge = charges >= 1;
 
+    this.isReady = hasCharge;
     this.drawChargeBar();
 
-    // Обновляем бейдж (количество карт в колоде)
     if (cards > 0) {
       this.cardCountText.setText(`+${cards}`);
       this.cardBadge.setVisible(true);
@@ -273,7 +291,7 @@ export class AbilityButton {
     }
 
     const color = FACTIONS[this.factionId].color;
-    
+
     if (this.isActivating) {
       this.statusText.setText('TAP TARGET');
       this.statusText.setColor('#ffcc00');
@@ -561,6 +579,8 @@ export class AbilityButton {
 
     if (unit && this.isCaptainUnit(unit)) {
       this.show();
+    } else if (unit === null) {
+      this.hide();
     } else {
       this.hide();
     }

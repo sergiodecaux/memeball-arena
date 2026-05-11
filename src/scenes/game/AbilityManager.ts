@@ -646,15 +646,21 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     const tryUnit = (u: GameUnit | undefined): Unit | undefined => {
       if (!u || !(u instanceof Unit)) return undefined;
       if (u.owner !== this.playerId) return undefined;
-      if (u.getUnitId() !== captainCatalogId) return undefined;
-      if (!getUnitById(u.getUnitId())?.isCaptain) return undefined;
+      const unitCatalogId = u.getUnitId();
+      if (unitCatalogId !== captainCatalogId) return undefined;
+      if (!getUnitById(unitCatalogId)?.isCaptain) return undefined;
       return u;
     };
 
-    const explicitId = data.unitIds?.[0];
-    if (explicitId) {
-      const fromExplicit = tryUnit(this.resolveCapByUnitRef(explicitId));
+    const explicitRuntimeId = data.unitIds?.[0];
+    if (explicitRuntimeId) {
+      const fromExplicit = tryUnit(this.resolveCapByUnitRef(explicitRuntimeId));
       if (fromExplicit) return fromExplicit;
+    }
+
+    for (const cap of this.getCaps()) {
+      const result = tryUnit(cap);
+      if (result) return result;
     }
 
     return tryUnit(this.getLastActiveUnit());
@@ -776,10 +782,15 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
     console.log(`[AbilityManager] Chronos needs target pick: ${chronosNeedsPick}`);
 
     if (!chronosNeedsPick) {
+      const isReady = this.canCaptainUltReady?.() ?? false;
+      if (!isReady) {
+        console.warn(`[AbilityManager] Captain SUPER: энергия не готова (${captainId})`);
+        return false;
+      }
       const energySpent = this.trySpendCaptainUltEnergy?.() ?? false;
       console.log(`[AbilityManager] Energy spent: ${energySpent}`);
       if (!energySpent) {
-        console.warn(`[AbilityManager] Captain SUPER: энергия недоступна (${captainId})`);
+        console.warn(`[AbilityManager] Captain SUPER: не удалось списать энергию (${captainId})`);
         return false;
       }
     }
