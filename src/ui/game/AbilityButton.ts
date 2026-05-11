@@ -656,7 +656,15 @@ export class AbilityButton {
     }
 
     const ok = mgr.canActivateCaptainUlt();
-    devAbilityBtnLog('[AbilityButton] isCaptainUltUiReady:', ok);
+
+    if (import.meta.env.DEV) {
+      devAbilityBtnLog('[AbilityButton] isCaptainUltUiReady check:', {
+        unitId: u.getUnitId(),
+        isCaptain: meta.isCaptain,
+        canActivate: ok,
+      });
+    }
+
     return ok;
   }
 

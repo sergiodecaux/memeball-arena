@@ -484,6 +484,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     HapticManager.init();
+
+    // ✅ ИСПРАВЛЕНО: правильный порядок инициализации — CaptainMatchSystem до AbilityManager (createManagers)
     this.createMatchDirector();
     this.createControllers();
     this.createCaptainMatchSystem();
@@ -988,8 +990,14 @@ export class GameScene extends Phaser.Scene {
 
   private refreshCaptainSuperHud(): void {
     if (!this.captainMatchSystem || !this.captainSuperEnergyGfx) return;
+
     const frac = this.captainMatchSystem.getHumanEnergyFraction();
     const ready = this.captainMatchSystem.canHumanActivateUlt();
+
+    if (import.meta.env.DEV && ready !== this.captainSuperLastReady) {
+      console.log('[GameScene] Captain SUPER state changed:', { frac, ready });
+    }
+
     const panelW = this.CAPTAIN_SUPER_PANEL_W;
     const panelH = this.CAPTAIN_SUPER_PANEL_H;
     const barW = panelW - 12;
@@ -1381,6 +1389,12 @@ export class GameScene extends Phaser.Scene {
     const playerFaction = state.playerFaction || 'cyborg';
     const opponentFaction = state.opponentFaction || 'magma';
 
+    if (!this.captainMatchSystem) {
+      console.error('[GameScene] ❌ captainMatchSystem not initialized! Captain abilities will not work.');
+    } else {
+      console.log('[GameScene] ✅ captainMatchSystem ready for AbilityManager');
+    }
+
     this.abilityManager = new AbilityManager({
       scene: this,
       getCaps: () => this.caps,
@@ -1391,9 +1405,27 @@ export class GameScene extends Phaser.Scene {
       playerFaction,
       playerId: 1,
       vfxManager: this.vfxManager,
-      canCaptainUltReady: () => this.captainMatchSystem?.canHumanActivateUlt() ?? false,
-      tryBeginCaptainUlt: () => this.captainMatchSystem?.tryBeginUltFromUi() ?? false,
-      trySpendCaptainUltEnergy: () => this.captainMatchSystem?.tryConsumeHumanCaptainUltEnergy() ?? false,
+      canCaptainUltReady: () => {
+        const ready = this.captainMatchSystem?.canHumanActivateUlt() ?? false;
+        if (import.meta.env.DEV) {
+          console.log('[GameScene] canCaptainUltReady:', ready, {
+            hasSystem: !!this.captainMatchSystem,
+            energy: this.captainMatchSystem?.getHumanEnergyFraction(),
+            ultMode: (this.captainMatchSystem as any)?.ultMode,
+          });
+        }
+        return ready;
+      },
+      tryBeginCaptainUlt: () => {
+        const result = this.captainMatchSystem?.tryBeginUltFromUi() ?? false;
+        console.log('[GameScene] tryBeginCaptainUlt:', result);
+        return result;
+      },
+      trySpendCaptainUltEnergy: () => {
+        const result = this.captainMatchSystem?.tryConsumeHumanCaptainUltEnergy() ?? false;
+        console.log('[GameScene] trySpendCaptainUltEnergy:', result);
+        return result;
+      },
     });
 
     this.player2AbilityManager = new AbilityManager({
@@ -1402,7 +1434,7 @@ export class GameScene extends Phaser.Scene {
       getBall: () => this.ball,
       getFieldBounds: () => this.fieldBounds,
       isHost: this.isHost,
-      isPvPMode: false, // OLD PVP system removed, always false
+      isPvPMode: false,
       playerFaction: opponentFaction,
       playerId: 2,
       vfxManager: this.vfxManager,
@@ -3418,7 +3450,12 @@ export class GameScene extends Phaser.Scene {
 
   update(time: number, delta: number): void {
     if (!this.isInitialized) return;
-    
+
+    if (!this.isRealtimePvP) {
+      this.refreshCaptainSuperHud();
+    }
+    this.captainMatchSystem?.update(time, delta);
+
     const phase = this.matchDirector.getPhase();
     if (phase === MatchPhase.PAUSED || phase === MatchPhase.FINISHED) return;
     
@@ -3439,9 +3476,6 @@ export class GameScene extends Phaser.Scene {
       this.abilityManager?.update(delta);
       this.player2AbilityManager?.update(delta);
 
-      this.captainMatchSystem?.update(time, delta);
-      this.refreshCaptainSuperHud();
-      
       // CHEAT: BOSS NO COOLDOWN
       if (this.campaignLevelConfig?.isBoss && this.player2AbilityManager) {
         (this.player2AbilityManager as any).lastGlobalActivationTime = 0;

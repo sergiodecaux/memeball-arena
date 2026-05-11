@@ -102,13 +102,32 @@ export class CaptainMatchSystem {
 
   canHumanActivateUlt(): boolean {
     const o = this.deps.getHumanOwner();
-    return (
+    const energy = this.energyByOwner[o];
+    const hasCaptain = this.findCaptain(o) !== undefined;
+    const isIdle = this.ultMode === 'idle';
+    const notXerxa = this.xerxaPhase === 'off';
+
+    const canActivate =
       !this.deps.isPvP &&
-      this.energyByOwner[o] >= CAPTAIN_MAX_ENERGY &&
-      this.findCaptain(o) !== undefined &&
-      this.ultMode === 'idle' &&
-      this.xerxaPhase === 'off'
-    );
+      energy >= CAPTAIN_MAX_ENERGY &&
+      hasCaptain &&
+      isIdle &&
+      notXerxa;
+
+    if (import.meta.env.DEV) {
+      console.log('[CaptainMatchSystem] canHumanActivateUlt check:', {
+        owner: o,
+        energy,
+        maxEnergy: CAPTAIN_MAX_ENERGY,
+        hasCaptain,
+        isIdle,
+        notXerxa,
+        isPvP: this.deps.isPvP,
+        result: canActivate,
+      });
+    }
+
+    return canActivate;
   }
 
   /** Только списать энергию SUPER (мгновенная ульта через AbilityManager без режима таргета). */
@@ -350,7 +369,19 @@ export class CaptainMatchSystem {
 
   private addEnergy(owner: PlayerNumber, amt: number): void {
     if (!this.teamHasCaptain(owner)) return;
-    this.energyByOwner[owner] = Math.min(CAPTAIN_MAX_ENERGY, this.energyByOwner[owner] + amt);
+
+    const oldEnergy = this.energyByOwner[owner];
+    this.energyByOwner[owner] = Math.min(CAPTAIN_MAX_ENERGY, oldEnergy + amt);
+
+    if (import.meta.env.DEV) {
+      console.log('[CaptainMatchSystem] Energy added:', {
+        owner,
+        amount: amt,
+        oldEnergy,
+        newEnergy: this.energyByOwner[owner],
+        maxEnergy: CAPTAIN_MAX_ENERGY,
+      });
+    }
   }
 
   private onBallUnitCollision(payload: import('../core/EventBus').CollisionBallUnitPayload): void {
