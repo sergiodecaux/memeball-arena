@@ -3015,7 +3015,10 @@ export class GameScene extends Phaser.Scene {
     this.events.on('pass-successful', this.onPassSuccessfulHud, this);
     this.events.on('dribbling-kick-turn', this.handleDribblingKickTurn, this);
 
-    console.log('[GameScene] ✅ Исправления v7: автоочистка привязки паса, гол по «губе» ворот, ход после удара дриблера');
+    console.log('[GameScene] ✅ Дриблинг v8.0 — стабильная визуализация прицела');
+    console.log('[GameScene] 🎯 Плавная стрелка (lerp 0.3), мёртвая зона курсора 20px');
+    console.log('[GameScene] 🟡 Индикатор силы — круг у мяча; 🔴 обводка после 300мс');
+    console.log('[GameScene] ✅ Исправления v7: пас / гол / ход после удара дриблера');
   }
 
   private unregisterPassiveHudListeners(): void {
@@ -3104,14 +3107,14 @@ export class GameScene extends Phaser.Scene {
       this,
       this.scale.width / 2,
       96,
-      '🏃 ДРИБЛИНГ АКТИВЕН\n👆 Зажмите поле — движение по прицелу от мяча\n🎯 Направление — палец (360°)\n⚡ Отпуск после удержания >0.3 с — удар\n🛑 Или кнопка ОСТАНОВИТЬ',
+      '🏃 ДРИБЛИНГ АКТИВЕН\n👆 Зажмите поле — движение по прицелу от мяча\n🎯 Водите палец — стрелка следует плавно (360°)\n🟡 Жёлтый круг — заряд силы удара\n🔴 Красная обводка круга (>0.3 с) — можно отпускать для удара\n🛑 Или кнопка ОСТАНОВИТЬ',
       { size: 'sm', color: '#fffbeb', stroke: true, align: 'center' },
     )
       .setScrollFactor(0)
       .setDepth(560)
       .setOrigin(0.5);
 
-    this.time.delayedCall(3500, () => {
+    this.time.delayedCall(4000, () => {
       this.tweens.add({
         targets: hint,
         alpha: 0,

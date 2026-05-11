@@ -73,8 +73,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       updateCtrl: () => void;
       aimLine: Phaser.GameObjects.Line;
       aimArrow: Phaser.GameObjects.Triangle;
+      aimPulseTween?: Phaser.Tweens.Tween;
       linkLine: Phaser.GameObjects.Line;
       linkPulseTween?: Phaser.Tweens.Tween;
+      powerCircle: Phaser.GameObjects.Arc;
     }
   >();
 
@@ -1245,8 +1247,20 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
 
     const goal = this.enemyGoalPoint(unit);
     const angleRef = { v: Phaser.Math.Angle.Between(unit.x, unit.y, goal.x, goal.y) };
-    const aimLen = 140;
+    const lastValidAngle = { v: angleRef.v };
+    const aimLen = 130;
     const orbitDist = 40;
+    const orbitLerp = 0.2;
+    const aimVisualLerp = 0.3;
+    const cursorDeadPx = 20;
+
+    const bx0 = ball.body.position.x;
+    const by0 = ball.body.position.y;
+    const smoothTip = {
+      x: bx0 + Math.cos(angleRef.v) * aimLen,
+      y: by0 + Math.sin(angleRef.v) * aimLen,
+    };
+    const smoothedArrowRot = { v: angleRef.v };
 
     matter.body.setVelocity(ball.body, { x: 0, y: 0 });
     matter.body.setAngularVelocity(ball.body, 0);
@@ -1255,22 +1269,35 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       .line(
         0,
         0,
-        ball.x,
-        ball.y,
-        ball.x + Math.cos(angleRef.v) * aimLen,
-        ball.y + Math.sin(angleRef.v) * aimLen,
+        bx0,
+        by0,
+        smoothTip.x,
+        smoothTip.y,
         0xfbbf24,
         0.92,
       )
-      .setLineWidth(5)
+      .setLineWidth(6)
       .setDepth(1500)
       .setScrollFactor(1);
 
-    const ax = ball.x + Math.cos(angleRef.v) * aimLen;
-    const ay = ball.y + Math.sin(angleRef.v) * aimLen;
     const aimArrow = this.scene.add
-      .triangle(ax, ay, 0, -12, 24, 0, 0, 12, 0xfbbf24, 1)
+      .triangle(smoothTip.x, smoothTip.y, 0, -15, 28, 0, 0, 15, 0xfbbf24, 1)
       .setDepth(1501)
+      .setScrollFactor(1);
+
+    const aimPulseTween = this.scene.tweens.add({
+      targets: aimArrow,
+      scale: { from: 1, to: 1.15 },
+      duration: 600,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.InOut',
+    });
+
+    const powerCircle = this.scene.add
+      .circle(ball.x, ball.y, 50, 0xfbbf24, 0)
+      .setStrokeStyle(3, 0xfbbf24, 0.8)
+      .setDepth(1555)
       .setScrollFactor(1);
 
     const linkLine = this.scene.add
@@ -1295,15 +1322,11 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     const gesture = { sawDown: false };
     const gestureHoldMs = { v: 0 };
 
-    const refreshAimGraphics = () => {
-      const bx = ball.x;
-      const by = ball.y;
-      const ex = bx + Math.cos(angleRef.v) * aimLen;
-      const ey = by + Math.sin(angleRef.v) * aimLen;
-      aimLine.setTo(bx, by, ex, ey);
-      aimArrow.setPosition(ex, ey);
-      aimArrow.setRotation(angleRef.v);
-      linkLine.setTo(unit.x, unit.y, bx, by);
+    const smoothAngleDelta = (from: number, to: number): number => {
+      let d = to - from;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      return d;
     };
 
     const pointerDown = (pointer: Phaser.Input.Pointer) => {
@@ -1329,6 +1352,10 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       const heldMs = gestureHoldMs.v;
       gestureHoldMs.v = 0;
 
+      powerCircle.setFillStyle(0xfbbf24, 0);
+      powerCircle.setScale(1);
+      powerCircle.setStrokeStyle(3, 0xfbbf24, 0.8);
+
       if (heldMs > 300) {
         const kickPower = Phaser.Math.Clamp(heldMs / 1000, 0.35, 1);
         this.teardownInteractiveDribble(uid, 'kick', { angle: angleRef.v, power: kickPower });
@@ -1342,9 +1369,31 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       const ptr = this.scene.input.activePointer;
       const hudBlock = this.interactiveDribbleHudBlock?.(ptr.x, ptr.y) ?? false;
 
+      const bx = ball.body.position.x;
+      const by = ball.body.position.y;
+
       if (!hudBlock) {
-        angleRef.v = Phaser.Math.Angle.Between(ball.x, ball.y, ptr.worldX, ptr.worldY);
+        const distPtr = Phaser.Math.Distance.Between(bx, by, ptr.worldX, ptr.worldY);
+        if (distPtr > cursorDeadPx) {
+          const na = Phaser.Math.Angle.Between(bx, by, ptr.worldX, ptr.worldY);
+          angleRef.v = na;
+          lastValidAngle.v = na;
+        } else {
+          angleRef.v = lastValidAngle.v;
+        }
       }
+
+      const dex = bx + Math.cos(angleRef.v) * aimLen;
+      const dey = by + Math.sin(angleRef.v) * aimLen;
+      smoothTip.x += (dex - smoothTip.x) * aimVisualLerp;
+      smoothTip.y += (dey - smoothTip.y) * aimVisualLerp;
+
+      aimLine.setTo(bx, by, smoothTip.x, smoothTip.y);
+
+      const arrowDiff = smoothAngleDelta(smoothedArrowRot.v, angleRef.v);
+      smoothedArrowRot.v += arrowDiff * aimVisualLerp;
+      aimArrow.setPosition(smoothTip.x, smoothTip.y);
+      aimArrow.setRotation(smoothedArrowRot.v);
 
       if (holding.v && !hudBlock) {
         gestureHoldMs.v += this.scene.game.loop.delta;
@@ -1354,20 +1403,39 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
         });
         matter.body.setAngularVelocity(unit.body, 0);
         unit.sprite.setRotation(angleRef.v);
+
+        const powerPercent = Math.min(gestureHoldMs.v / 1000, 1);
+        powerCircle.setPosition(ball.x, ball.y);
+        powerCircle.setFillStyle(0xfbbf24, powerPercent * 0.6);
+        powerCircle.setScale(1 + powerPercent * 0.3);
+        if (gestureHoldMs.v > 300) {
+          powerCircle.setStrokeStyle(3, 0xff4444, 1);
+        } else {
+          powerCircle.setStrokeStyle(3, 0xfbbf24, 0.8);
+        }
       } else {
         matter.body.setVelocity(unit.body, { x: 0, y: 0 });
         matter.body.setAngularVelocity(unit.body, 0);
+        powerCircle.setPosition(ball.x, ball.y);
+        powerCircle.setFillStyle(0xfbbf24, 0);
+        powerCircle.setScale(1);
+        powerCircle.setStrokeStyle(3, 0xfbbf24, 0.8);
       }
 
       const ux = unit.body.position.x;
       const uy = unit.body.position.y;
       const obx = ux + Math.cos(angleRef.v) * orbitDist;
       const oby = uy + Math.sin(angleRef.v) * orbitDist;
-      matter.body.setPosition(ball.body, { x: obx, y: oby });
+      const cx = ball.body.position.x;
+      const cy = ball.body.position.y;
+      matter.body.setPosition(ball.body, {
+        x: cx + (obx - cx) * orbitLerp,
+        y: cy + (oby - cy) * orbitLerp,
+      });
       matter.body.setVelocity(ball.body, { x: 0, y: 0 });
       matter.body.setAngularVelocity(ball.body, 0);
 
-      refreshAimGraphics();
+      linkLine.setTo(unit.x, unit.y, ball.x, ball.y);
     };
 
     this.scene.events.on('update', updateCtrl);
@@ -1387,11 +1455,12 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       updateCtrl,
       aimLine,
       aimArrow,
+      aimPulseTween,
       linkLine,
       linkPulseTween,
+      powerCircle,
     });
 
-    refreshAimGraphics();
     this.scene.events.emit('dribbling-started', { unit, ball });
   }
 
@@ -1433,6 +1502,11 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     } catch {
       /* ignore */
     }
+    try {
+      meta.aimPulseTween?.stop();
+    } catch {
+      /* ignore */
+    }
 
     const killDestroy = (go: Phaser.GameObjects.GameObject | undefined | null) => {
       if (!go || !go.scene) return;
@@ -1444,6 +1518,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       }
     };
 
+    killDestroy(meta.powerCircle);
     killDestroy(aimLine);
     killDestroy(aimArrow);
     killDestroy(linkLine);
