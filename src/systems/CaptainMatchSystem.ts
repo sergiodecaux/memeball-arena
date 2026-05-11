@@ -15,6 +15,7 @@ import {
   CAPTAIN_VOID_PULL_RADIUS,
   isCaptainUnitId,
 } from '../constants/captains';
+import { FACTIONS } from '../constants/gameConstants';
 import { ShootingController } from '../controllers/ShootingController';
 
 export interface CaptainMatchSystemDeps {
@@ -49,6 +50,7 @@ export class CaptainMatchSystem {
   private swarmGfx?: Phaser.GameObjects.Graphics;
 
   private singularity?: { x: number; y: number; until: number };
+  private singularityVfxRing?: Phaser.GameObjects.Arc;
 
   private captainStasisTurns = new Map<string, number>();
 
@@ -90,6 +92,7 @@ export class CaptainMatchSystem {
     this.massAuraRestore.clear();
     this.swarmGfx?.destroy();
     this.swarmGfx = undefined;
+    this.clearSingularityVfx();
     this.deps.shootingController.setCaptainTrajectoryHooks(null);
     this.deps.shootingController.setCaptainShotForceScale(null);
     this.deps.shootingController.setCaptainSelectionFilter(null);
@@ -222,10 +225,7 @@ export class CaptainMatchSystem {
 
   handleWorldPointer(worldX: number, worldY: number): boolean {
     if (this.ultMode === 'urok_aim_cone' && this.urokCaptain) {
-      const cx = this.urokCaptain.body.position.x;
-      const cy = this.urokCaptain.body.position.y;
-      const dir = new Phaser.Math.Vector2(worldX - cx, worldY - cy).normalize();
-      this.fireUrokCone(cx, cy, dir);
+      this.fireUrokCone(this.urokCaptain, worldX, worldY);
       this.ultMode = 'idle';
       this.urokCaptain = undefined;
       return true;
@@ -281,13 +281,7 @@ export class CaptainMatchSystem {
 
     if (uid === 'captain_urok') {
       const ball = this.deps.getBall();
-      const cx = captain.body.position.x;
-      const cy = captain.body.position.y;
-      const tx = ball.body.position.x - cx;
-      const ty = ball.body.position.y - cy;
-      const len = Math.sqrt(tx * tx + ty * ty) || 1;
-      const dir = new Phaser.Math.Vector2(tx / len, ty / len);
-      this.fireUrokCone(cx, cy, dir);
+      this.fireUrokCone(captain, ball.body.position.x, ball.body.position.y);
       return true;
     }
 
@@ -347,9 +341,10 @@ export class CaptainMatchSystem {
 
     const now = Date.now();
     if (this.singularity && now < this.singularity.until) {
-      this.applySingularityForces(this.singularity);
+      this.applySingularityForces(this.singularity, delta);
     } else if (this.singularity && now >= this.singularity.until) {
       this.singularity = undefined;
+      this.clearSingularityVfx();
     }
 
     const owner = this.deps.shootingController.getCurrentPlayer?.();
@@ -537,54 +532,149 @@ export class CaptainMatchSystem {
     }
   }
 
-  private fireUrokCone(cx: number, cy: number, dir: Phaser.Math.Vector2): void {
-    const caps = this.deps.getCaps();
-    const captain = caps.find((u) => u.getUnitId() === 'captain_urok');
-    const owner = captain?.owner;
+  /**
+   * Тектонический конус: направление от капитана к точке тапа.
+   * Короткий вектор (тап возле Урока) давал почти нулевой normalize() — импульса не было.
+   */
+  private fireUrokCone(captain: Unit, aimWorldX: number, aimWorldY: number): void {
+    const cx = captain.body.position.x;
+    const cy = captain.body.position.y;
+    const owner = captain.owner;
 
-    this.deps.scene.cameras.main.shake(250, 0.012);
+    let dx = aimWorldX - cx;
+    let dy = aimWorldY - cy;
+    let len = Math.sqrt(dx * dx + dy * dy);
+    const minAim = 36;
+    if (len < minAim) {
+      const ball = this.deps.getBall();
+      dx = ball.body.position.x - cx;
+      dy = ball.body.position.y - cy;
+      len = Math.sqrt(dx * dx + dy * dy);
+    }
+    if (len < minAim) {
+      dx = 240;
+      dy = 0;
+      len = 240;
+    }
+    const dirX = dx / len;
+    const dirY = dy / len;
+
+    const caps = this.deps.getCaps();
+    const cam = this.deps.scene.cameras.main;
+    cam.shake(340, 0.018);
+
+    const waveColor = FACTIONS[captain.factionId]?.color ?? 0xff5722;
+    for (let i = 0; i < 3; i++) {
+      const ring = this.deps.scene.add.circle(cx, cy, 48 + i * 36, waveColor, 0).setDepth(88 + i);
+      ring.setStrokeStyle(5 - i, waveColor, 0.95 - i * 0.22);
+      this.deps.scene.time.delayedCall(i * 70, () => {
+        this.deps.scene.tweens.add({
+          targets: ring,
+          scaleX: 3.2,
+          scaleY: 3.2,
+          alpha: 0,
+          duration: 520,
+          ease: 'Cubic.easeOut',
+          onComplete: () => ring.destroy(),
+        });
+      });
+    }
+
+    try {
+      eventBus.dispatch(GameEvents.HAPTIC_FEEDBACK, { type: 'heavy' });
+    } catch {}
 
     const halfRad = Phaser.Math.DegToRad(CAPTAIN_UROK_CONE_DEG / 2);
-    const forward = Math.atan2(dir.y, dir.x);
+    const forward = Math.atan2(dirY, dirX);
+
+    const impulsePerMass = 0.052;
 
     for (const u of caps) {
-      if (owner === undefined || u.owner === owner) continue;
+      if (u.owner === owner) continue;
       const ux = u.body.position.x - cx;
       const uy = u.body.position.y - cy;
       const dist = Math.sqrt(ux * ux + uy * uy);
       if (dist > CAPTAIN_UROK_CONE_RANGE || dist < 8) continue;
       const ang = Math.atan2(uy, ux);
-      let delta = ang - forward;
-      while (delta > Math.PI) delta -= Math.PI * 2;
-      while (delta < -Math.PI) delta += Math.PI * 2;
-      if (Math.abs(delta) > halfRad) continue;
+      let deltaAng = ang - forward;
+      while (deltaAng > Math.PI) deltaAng -= Math.PI * 2;
+      while (deltaAng < -Math.PI) deltaAng += Math.PI * 2;
+      if (Math.abs(deltaAng) > halfRad) continue;
 
       const nx = ux / dist;
       const ny = uy / dist;
-      const force = 0.022 * u.body.mass;
+      const falloff = 0.55 + 0.45 * (1 - dist / CAPTAIN_UROK_CONE_RANGE);
+      const force = impulsePerMass * u.body.mass * falloff;
       this.deps.scene.matter.body.applyForce(u.body, u.body.position, { x: nx * force, y: ny * force });
       u.applyCaptainRiftSelectionBan(1);
     }
   }
 
-  private spawnSingularity(x: number, y: number): void {
-    this.singularity = { x, y, until: Date.now() + 2000 };
-    this.deps.scene.cameras.main.flash(120, 120, 80, 180, false);
+  private clearSingularityVfx(): void {
+    if (this.singularityVfxRing) {
+      this.deps.scene.tweens.killTweensOf(this.singularityVfxRing);
+      this.singularityVfxRing.destroy();
+      this.singularityVfxRing = undefined;
+    }
   }
 
-  private applySingularityForces(s: { x: number; y: number }): void {
+  private spawnSingularity(x: number, y: number): void {
+    this.clearSingularityVfx();
+    const durationMs = 2800;
+    this.singularity = { x, y, until: Date.now() + durationMs };
+
+    const cam = this.deps.scene.cameras.main;
+    cam.flash(160, 110, 70, 210, false, undefined, 0.38);
+    cam.shake(380, 0.011);
+
+    const ring = this.deps.scene.add.circle(x, y, 36, 0x581c87, 0.42).setDepth(91);
+    ring.setStrokeStyle(8, 0xe9d5ff, 0.95);
+    this.singularityVfxRing = ring;
+    this.deps.scene.tweens.add({
+      targets: ring,
+      scaleX: 6,
+      scaleY: 6,
+      alpha: 0.12,
+      duration: durationMs,
+      ease: 'Cubic.easeOut',
+    });
+
+    const core = this.deps.scene.add.circle(x, y, 22, 0x1e1b4b, 0.92).setDepth(93);
+    this.deps.scene.tweens.add({
+      targets: core,
+      scaleX: 2.1,
+      scaleY: 2.1,
+      alpha: 0,
+      duration: durationMs - 200,
+      ease: 'Sine.easeInOut',
+      onComplete: () => core.destroy(),
+    });
+
+    try {
+      eventBus.dispatch(GameEvents.HAPTIC_FEEDBACK, { type: 'heavy' });
+    } catch {}
+  }
+
+  /** Притяжение к точке SUPER — раньше сила была слишком мала, эффект почти не чувствовался. */
+  private applySingularityForces(s: { x: number; y: number }, delta: number): void {
     const caps = this.deps.getCaps();
     const bodies: MatterJS.BodyType[] = caps.map((c) => c.body);
     bodies.push(this.deps.getBall().body);
+    const dt = Math.min(Math.max(delta, 8), 40);
+    const dtNorm = dt / 1000;
+
     for (const body of bodies) {
       const dx = s.x - body.position.x;
       const dy = s.y - body.position.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      if (dist > 900) continue;
-      const k = 0.00006 / dist;
+      if (dist > 920 || dist < 14) continue;
+
+      const invR2 = 1 / (dist * dist + 1800);
+      const pull = dtNorm * body.mass * 520 * invR2;
+
       this.deps.scene.matter.body.applyForce(body, body.position, {
-        x: (dx / dist) * k * body.mass,
-        y: (dy / dist) * k * body.mass,
+        x: (dx / dist) * pull,
+        y: (dy / dist) * pull,
       });
     }
   }

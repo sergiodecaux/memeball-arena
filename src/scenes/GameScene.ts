@@ -1638,6 +1638,7 @@ export class GameScene extends Phaser.Scene {
         this.captainSuperPanel,
         this.cardPanel,
         this.passiveSkillButton?.getContainer(),
+        this.abilityButton?.getHudContainer(),
       ];
       for (const p of panels) {
         if (!p?.visible || !p.active) continue;

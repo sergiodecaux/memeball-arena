@@ -736,6 +736,11 @@ export class AbilityButton {
     return ok;
   }
 
+  /** Для блокировки тапов по HUD (прицел SUPER по полю, не перехватывать левую кнопку). */
+  public getHudContainer(): Phaser.GameObjects.Container {
+    return this.container;
+  }
+
   public destroy(): void {
     this.stopPulseAnimation();
     this.scene.events.off('update');
