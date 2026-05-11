@@ -26,6 +26,7 @@ import { MatchStateMachine, MatchPhase } from '../core/MatchStateMachine';
 import { MatchDirector } from '../controllers/match/MatchDirector';
 import { ShootingController, ShootEventData } from '../controllers/ShootingController';
 import { AIController } from '../ai/AIController';
+import type { TeamArchetype } from '../ai/team/TeamArchetypes';
 import type { AIMatchContext } from '../ai/MatchContext';
 import type { AIOpponentProfile } from '../ai/AIProfile';
 
@@ -239,6 +240,8 @@ export class GameScene extends Phaser.Scene {
   private lastSyncedAIFormationId?: string;
   /** Сложность матча из GameSceneSetup (лига/кастом/кампания), не только кампания */
   private matchAIDifficulty: AIDifficulty = 'medium';
+  /** Мета-архетип команды AI из EntityFactory (только фракционные матчи с ботом). */
+  private matchAiArchetype?: TeamArchetype;
   private aiOpponentProfile?: AIOpponentProfile;
 
   // === Р’РЅСѓС‚СЂРµРЅРЅРёРµ С„Р»Р°РіРё ===
@@ -730,6 +733,7 @@ export class GameScene extends Phaser.Scene {
     this.storedOpponentFaction = result.state.opponentFaction as FactionId;
     this.matchAIDifficulty = result.state.aiDifficulty;
     this.aiOpponentProfile = result.state.aiOpponentProfile;
+    this.matchAiArchetype = result.aiArchetype;
     
     // ✅ NEW PVP: Регистрируем сущности в PvPHelper
     if (this.isRealtimePvP && this.pvpHelper) {
@@ -1095,6 +1099,10 @@ export class GameScene extends Phaser.Scene {
 
     this.aiController.init(aiUnits as any[], this.ball, playerUnits as any[]);
 
+    if (this.matchAiArchetype) {
+      this.aiController.setArchetype(this.matchAiArchetype);
+    }
+
     this.aiController.setMatchContext(this.buildAIMatchContext());
 
     this.aiController.setCaptainShotGate((u) =>
@@ -1121,6 +1129,34 @@ export class GameScene extends Phaser.Scene {
 
     this.syncAIFormationPositions('match-start');
     this.lastSyncedAIFormationId = this.aiController.getCurrentFormation().id;
+
+    this.registerAIDebugHook();
+  }
+
+  /** Консоль: во время матча вызовите `debugAI()` для снимка состояния бота. */
+  private registerAIDebugHook(): void {
+    const scene = this;
+    (window as unknown as { debugAI?: () => void }).debugAI = () => {
+      const ctrl = scene.aiController;
+      if (!ctrl) {
+        console.log('[debugAI] No AI controller (PvP human vs human or AI off)');
+        return;
+      }
+      console.log('=== AI DEBUG ===');
+      console.log('Difficulty:', scene.matchAIDifficulty);
+      const arch = ctrl.getArchetype?.();
+      console.log('Archetype:', arch ? `${arch.name} (${arch.id})` : '—');
+      console.log('Cards in hand:', ctrl.getAvailableCards().map((c) => c.name));
+      console.log('Cards used:', ctrl.getCardsUsedCount());
+      console.log('Formation:', ctrl.getCurrentFormation().name, ctrl.getCurrentFormation().slots?.length);
+      console.log('Team size (AI controller):', ctrl.getTeamSize());
+      const pattern = ctrl.getPlayerPattern();
+      if (pattern) console.log('Player pattern:', pattern.detected, pattern.predictions);
+      console.log('===============');
+    };
+    if (import.meta.env.DEV) {
+      console.log('[GameScene] Tip: run debugAI() in the browser console during a match');
+    }
   }
 
   /** После createUI: LassoController создаётся позже setupAIController. */
@@ -3632,9 +3668,14 @@ export class GameScene extends Phaser.Scene {
   private syncAIFormationPositions(reason: string): void {
     if (!this.aiController || !this.isAIEnabled || this.isRealtimePvP) return;
 
+    this.aiController.reconcileFormationToTeamSize();
+
     const formation = this.aiController.getCurrentFormation();
-    const aiCaps = this.caps.filter(c => c.owner === 2);
+    const aiCaps = this.caps.filter((c) => c.owner === 2);
     if (!formation.slots?.length || aiCaps.length !== formation.slots.length) {
+      console.warn(
+        `[GameScene] AI formation sync skipped (${reason}): aiCaps=${aiCaps.length}, formationSlots=${formation.slots?.length ?? 0}, formation=${formation.name}`,
+      );
       return;
     }
 

@@ -22,6 +22,14 @@ import { GameStartData, MultiplayerManager, PvPPlayer } from '../../managers/Mul
 import { getUnit, getStarterUnits, UnitData, TUTORIAL_LEGENDARY_UNITS } from '../../data/UnitsCatalog';
 import { UNITS_REPOSITORY, UnitRarity, getUnitById as getRepositoryUnit, getUnitsByFactionAndRole } from '../../data/UnitsRepository';
 import { applyCaptainSlotToAiUnitIds } from '../../utils/aiCaptainRoster';
+import { TeamBalancer } from '../../ai/team/TeamBalancer';
+import { ArchetypeSelector, type TeamArchetype } from '../../ai/team/TeamArchetypes';
+
+export type EntityCapsSpawnResult = {
+  caps: GameUnit[];
+  startPositions: { x: number; y: number }[];
+  aiArchetype?: TeamArchetype;
+};
 
 // === AI UPGRADE PRESETS BY DIFFICULTY ===
 
@@ -83,7 +91,7 @@ export class EntityFactory {
     return { ball, startPosition: pos };
   }
 
-  createCaps(): { caps: GameUnit[]; startPositions: { x: number; y: number }[] } {
+  createCaps(): EntityCapsSpawnResult {
     Cap.resetCounters();
     Unit.resetCounters();
 
@@ -106,9 +114,10 @@ export class EntityFactory {
   /**
    * 🔥 ИЗМЕНЕНО: Создание юнитов фракций с поддержкой 3-5 юнитов
    */
-  private createFactionCaps(): { caps: GameUnit[]; startPositions: { x: number; y: number }[] } {
+  private createFactionCaps(): EntityCapsSpawnResult {
     const caps: GameUnit[] = [];
     const startPositions: { x: number; y: number }[] = [];
+    let aiArchetype: TeamArchetype | undefined;
     
     // ✅ ИЗМЕНЕНО: Определяем размер команды
     const playerTeamSize = this.config.playerTeamSize || 3;
@@ -125,12 +134,46 @@ export class EntityFactory {
     const playerTeam = this.getPlayerTeam(this.config.playerFaction, playerTeamSize);
     console.log(`[EntityFactory] 📋 Player team (${playerTeamSize}):`, playerTeam);
 
-    // Получаем команду оппонента (с учётом сложности AI)
-    let opponentTeam = this.getAITeamForDifficulty(
-      this.config.opponentFaction, 
-      aiTeamSize, 
-      this.config.aiDifficulty
-    );
+    // Получаем команду оппонента: easy — прежняя эвристика; medium+ — зеркалирование классов/силы под состав игрока
+    const aiDifficulty = this.config.aiDifficulty ?? 'medium';
+    let opponentTeam: string[];
+    if (aiDifficulty === 'easy') {
+      opponentTeam = this.getAITeamForDifficulty(this.config.opponentFaction, aiTeamSize, 'easy');
+    } else {
+      const playerComposition = TeamBalancer.analyzePlayerTeamByIds(playerTeam, this.config.playerFaction);
+      aiArchetype = ArchetypeSelector.selectCounterArchetype(
+        playerComposition.composition,
+        aiTeamSize,
+        aiDifficulty,
+      );
+      opponentTeam = ArchetypeSelector.buildTeamFromArchetype(
+        aiArchetype,
+        aiTeamSize,
+        this.config.opponentFaction,
+      );
+      const capPick = ArchetypeSelector.selectCaptain(opponentTeam, aiArchetype);
+      if (capPick) {
+        console.log(`[EntityFactory] 👑 Meta captain preference on roster: ${capPick}`);
+      }
+      console.log(`[EntityFactory] 🎭 AI archetype: ${aiArchetype.name} (${aiArchetype.id})`);
+
+      if (opponentTeam.length < aiTeamSize) {
+        const pad = TeamBalancer.createBalancedAITeam(
+          playerComposition,
+          aiTeamSize,
+          this.config.opponentFaction,
+          aiDifficulty,
+        );
+        for (const id of pad) {
+          if (opponentTeam.length >= aiTeamSize) break;
+          if (!opponentTeam.includes(id)) opponentTeam.push(id);
+        }
+      }
+      while (opponentTeam.length < aiTeamSize) {
+        const pad = this.getAITeamForDifficulty(this.config.opponentFaction, aiTeamSize, aiDifficulty);
+        opponentTeam.push(pad[opponentTeam.length % pad.length]);
+      }
+    }
     opponentTeam = applyCaptainSlotToAiUnitIds(opponentTeam, this.config.opponentFaction, aiTeamSize, {
       includeCaptain: !!this.config.aiIncludeCaptain,
       reserveBossSlot: !!(this.config.isBossLevel && this.config.bossUnitId),
@@ -152,7 +195,7 @@ export class EntityFactory {
         });
       }
     }
-    console.log(`[EntityFactory] 🤖 Opponent team (${aiTeamSize}, ${this.config.aiDifficulty}):`, opponentTeam);
+    console.log(`[EntityFactory] 🤖 Opponent team (${aiTeamSize}, ${aiDifficulty}):`, opponentTeam);
 
     // ===== PLAYER UNITS =====
     for (let i = 0; i < playerTeamSize; i++) {
@@ -332,7 +375,7 @@ export class EntityFactory {
     }
 
     console.log(`[EntityFactory] ✅ Created ${caps.length} faction units total (${playerTeamSize} + ${aiTeamSize})`);
-    return { caps, startPositions };
+    return { caps, startPositions, aiArchetype };
   }
 
   /**
@@ -642,7 +685,7 @@ export class EntityFactory {
     return team.slice(0, teamSize);
   }
 
-  private createPvPCaps(): { caps: GameUnit[]; startPositions: { x: number; y: number }[] } {
+  private createPvPCaps(): EntityCapsSpawnResult {
     const players = this.config.pvpData!.players;
     const hostPlayer = players.find((p) => p.playerIndex === 0)!;
     const guestPlayer = players.find((p) => p.playerIndex === 1)!;
@@ -912,7 +955,7 @@ export class EntityFactory {
     return ['meme_doge', 'meme_gigachad', 'meme_doge'];
   }
 
-  private createOfflineCaps(): { caps: GameUnit[]; startPositions: { x: number; y: number }[] } {
+  private createOfflineCaps(): EntityCapsSpawnResult {
     const caps: GameUnit[] = [];
     const startPositions: { x: number; y: number }[] = [];
     const formation = this.config.formation;

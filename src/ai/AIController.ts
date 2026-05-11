@@ -32,6 +32,7 @@ import { ComebackPlanner } from './comeback/ComebackPlanner';
 import { SynergyAnalyzer } from './synergy/SynergyAnalyzer';
 import { PassChainPlanner } from './passes/PassChainPlanner';
 import { MatchAdapter } from './adaptation/MatchAdapter';
+import type { TeamArchetype } from './team/TeamArchetypes';
 
 // === ТИПЫ ===
 
@@ -247,6 +248,8 @@ export class AIController {
   private teamSynergies: UnitSynergy[] = [];
   private comebackState?: ComebackState;
   private hasAppliedInitialCounterFormation = false;
+  /** Мета-тактика команды (из EntityFactory / ArchetypeSelector). */
+  private currentArchetype?: TeamArchetype;
 
   // ЗАЩИТА ОТ ДВОЙНОГО ХОДА
   public isThinking = false;
@@ -423,6 +426,33 @@ export class AIController {
 
     if (!this.bossId) {
       this.performPreMatchAnalysis();
+      if (this.settings.usePreMatchAnalysis && (this.opponentAnalysis || this.counterStrategy)) {
+        console.log('[AI] ========================================');
+        console.log('[AI] PRE-MATCH ANALYSIS');
+        console.log('[AI] ========================================');
+        if (this.opponentAnalysis) {
+          console.log('[AI] Opponent:', this.opponentAnalysis.faction, `team=${this.opponentAnalysis.teamSize}`);
+          console.log(
+            `[AI] Avg accuracy: ${(this.opponentAnalysis.avgAccuracy * 100).toFixed(0)}% · strategy: ${this.opponentAnalysis.likelyStrategy}`,
+          );
+          console.log('[AI] Composition:', this.opponentAnalysis.composition);
+          console.log('[AI] Threats:', this.opponentAnalysis.threats.length);
+          this.opponentAnalysis.threats.forEach((t) => {
+            console.log(`    • ${t.capClass}: ${t.reason} (prio ${t.priority})`);
+          });
+          console.log('[AI] Weaknesses:', this.opponentAnalysis.weaknesses.length);
+          this.opponentAnalysis.weaknesses.forEach((w) => {
+            console.log(`    • ${w.type}: ${w.description}`);
+          });
+        }
+        if (this.counterStrategy) {
+          console.log('[AI] Counter formation:', this.counterStrategy.recommendedFormation.name);
+          console.log('[AI] Counter playStyle:', this.counterStrategy.playStyle);
+          console.log('[AI] Reasoning:');
+          this.counterStrategy.reasoning.forEach((r) => console.log(`    • ${r}`));
+        }
+        console.log('[AI] ========================================');
+      }
     }
     this.updateComebackState();
 
@@ -430,10 +460,22 @@ export class AIController {
     this.selectFormation();
 
     console.log(`[AI] Initialized: ${aiUnits.length} AI (${this.factionId}), ${playerUnits.length} player units, teamSize: ${this.teamSize}`);
-    console.log(`[AI] Card hand: ${this.availableCards.map(c => c.id).join(', ')}`);
+    console.log(`[AI] Card hand: ${this.availableCards.map((c) => c.name || c.id).join(', ')}`);
     if (this.opponentAnalysis) {
-      console.log(`[AI] 🔍 Opponent strategy hint: ${this.opponentAnalysis.likelyStrategy}`);
+      console.log(`[AI] Opponent strategy hint: ${this.opponentAnalysis.likelyStrategy}`);
     }
+  }
+
+  setArchetype(archetype: TeamArchetype): void {
+    this.currentArchetype = archetype;
+    console.log(`[AI] Archetype: ${archetype.name} (${archetype.id})`);
+    console.log(
+      `[AI]   style: aggr=${archetype.playStyle.aggression.toFixed(2)} pass=${archetype.playStyle.passFrequency.toFixed(2)} long×=${archetype.playStyle.longShotBonus} close×=${archetype.playStyle.closeRangeBonus}`,
+    );
+  }
+
+  getArchetype(): TeamArchetype | undefined {
+    return this.currentArchetype;
   }
 
   private performPreMatchAnalysis(): void {
@@ -649,50 +691,75 @@ export class AIController {
       this.state.currentFormation = this.counterStrategy.recommendedFormation;
       this.hasAppliedInitialCounterFormation = true;
       console.log(`[AI] 📐 Initial formation (counter-setup): ${this.counterStrategy.recommendedFormation.name}`);
-      return;
-    }
-
-    if (this.comebackState && this.comebackState.desperationLevel !== 'none') {
+    } else if (this.comebackState && this.comebackState.desperationLevel !== 'none') {
       const comebackFormation = ComebackPlanner.getComebackFormation(this.comebackState, this.teamSize);
       if (comebackFormation.id !== this.state.currentFormation.id) {
         console.log(`[AI] 🔥 Comeback formation → ${comebackFormation.name}`);
         this.state.currentFormation = comebackFormation;
-        return;
       }
-    }
-
-    const diff = this.state.aiScore - this.state.playerScore;
-    const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
-
-    let formationType: string;
-
-    if (diff >= 2) {
-      formationType = 'defensive';
-    } else if (bunker > 0.62 && diff <= 1) {
-      formationType = diff <= -1 ? 'aggressive' : 'counter';
-    } else if (diff <= -2) {
-      formationType = 'aggressive';
-    } else if (this.state.consecutiveGoalsAgainst >= 2) {
-      formationType = 'defensive';
-    } else if (diff === -1 && this.state.turnsSinceLastGoal > 5) {
-      formationType = 'counter';
     } else {
-      const roll = (Math.abs(this.profile.seed) + this.state.turnsSinceLastGoal * 11) % 100;
-      if (roll < 24 && formations.counter) {
-        formationType = 'counter';
-      } else if (roll < 40 && formations.aggressive && diff >= -1) {
+      const diff = this.state.aiScore - this.state.playerScore;
+      const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
+
+      let formationType: string;
+
+      if (diff >= 2) {
+        formationType = 'defensive';
+      } else if (bunker > 0.62 && diff <= 1) {
+        formationType = diff <= -1 ? 'aggressive' : 'counter';
+      } else if (diff <= -2) {
         formationType = 'aggressive';
+      } else if (this.state.consecutiveGoalsAgainst >= 2) {
+        formationType = 'defensive';
+      } else if (diff === -1 && this.state.turnsSinceLastGoal > 5) {
+        formationType = 'counter';
       } else {
-        formationType = 'balanced';
+        const roll = (Math.abs(this.profile.seed) + this.state.turnsSinceLastGoal * 11) % 100;
+        if (roll < 24 && formations.counter) {
+          formationType = 'counter';
+        } else if (roll < 40 && formations.aggressive && diff >= -1) {
+          formationType = 'aggressive';
+        } else {
+          formationType = 'balanced';
+        }
+      }
+
+      const newFormation = formations[formationType] || formations.balanced;
+
+      if (newFormation.id !== this.state.currentFormation.id) {
+        console.log(
+          `[AI] 📐 Formation: ${this.state.currentFormation.name} → ${newFormation.name} (teamSize: ${this.teamSize})`,
+        );
+        this.state.currentFormation = newFormation;
       }
     }
 
-    const newFormation = formations[formationType] || formations.balanced;
-    
-    if (newFormation.id !== this.state.currentFormation.id) {
-      console.log(`[AI] 📐 Formation: ${this.state.currentFormation.name} → ${newFormation.name} (teamSize: ${this.teamSize})`);
-      this.state.currentFormation = newFormation;
+    this.snapFormationSlotsToTeamSize();
+  }
+
+  /** Согласовать число слотов формации с фактическим числом фишек AI (иначе GameScene не двигает позиции). */
+  private snapFormationSlotsToTeamSize(): void {
+    const formations = getAIFormationsForTeamSize(this.teamSize);
+    const cur = this.state.currentFormation;
+    const slotCount = cur.slots?.length ?? 0;
+    if (slotCount === this.teamSize) return;
+
+    const label = `${cur.id} ${cur.name}`.toLowerCase();
+    let replacement = formations.balanced;
+    if (label.includes('defensive') && formations.defensive) replacement = formations.defensive;
+    else if (label.includes('aggressive') && formations.aggressive) replacement = formations.aggressive;
+    else if (label.includes('counter') && formations.counter) replacement = formations.counter;
+
+    if (!replacement?.slots?.length || replacement.slots.length !== this.teamSize) {
+      replacement = getDefaultAIFormation(this.teamSize);
     }
+
+    console.warn(`[AI] Formation slots (${slotCount}) ≠ team ${this.teamSize} → ${replacement.name}`);
+    this.state.currentFormation = replacement;
+  }
+
+  public reconcileFormationToTeamSize(): void {
+    this.snapFormationSlotsToTeamSize();
   }
 
   getCurrentFormation(): Formation {
@@ -764,50 +831,85 @@ export class AIController {
       this.skillLevel,
     );
 
-    if (adaptation.actions.changeFormation) {
-      const newFormation = this.matchAdapter.getAdaptiveFormation(
-        this.state.currentFormation,
-        adaptation,
-        this.teamSize,
-        this.state.aiScore,
-        this.state.playerScore,
-      );
-      if (newFormation.id !== this.state.currentFormation.id) {
-        console.log(`[AI] 🔄 Adaptive formation → ${newFormation.name}`);
-        this.state.currentFormation = newFormation;
+    if (adaptation.actions.switchPlayStyle) {
+      if (playerPattern.detected.positioning === 'offensive') {
+        this.settings.defenseZone = Math.min(600, this.settings.defenseZone * 1.2);
+      } else if (playerPattern.detected.positioning === 'defensive') {
+        this.settings.passChance = Math.min(0.85, this.settings.passChance * 1.15);
       }
     }
 
-    if (adaptation.actions.switchPlayStyle) {
-      if (playerPattern.detected.positioning === 'offensive') {
-        this.settings.defenseZone = Math.min(600, this.settings.defenseZone * 1.15);
-      } else if (playerPattern.detected.positioning === 'defensive') {
-        this.settings.passChance = Math.min(0.85, this.settings.passChance * 1.12);
-      }
+    if (adaptation.actions.adjustCardUsage) {
+      this.settings.cardUsageChance = Math.min(0.95, this.settings.cardUsageChance * 1.08);
     }
   }
 
   // === ЛОГИКА ХОДА ===
 
   private executeMove(): void {
+    const archName = this.currentArchetype?.name ?? '—';
+    console.log('[AI] ================================================');
+    console.log(`[AI] EXECUTE MOVE — AI turn #${this.state.turnNumber}`);
+    console.log(`[AI] Score ${this.state.aiScore}:${this.state.playerScore}, archetype: ${archName}`);
+
     if (!this.isThinking) {
-      console.log('[AI] ⚠️ Not thinking anymore, aborting move');
+      console.warn('[AI] Not thinking anymore, aborting move');
       return;
     }
 
-    if (this.shouldUseCard()) {
-      this.tryUseCard();
-    }
-
-    const candidates = this.generateAllCandidates();
-
-    if (candidates.length === 0) {
-      console.log('[AI] ❌ No valid moves!');
+    if (!this.scene.matter?.world?.enabled) {
+      console.error('[AI] Physics world disabled — aborting AI move');
       this.finishMove();
       return;
     }
 
+    const cardRoll = this.shouldUseCard();
+    if (import.meta.env.DEV) {
+      console.log(`[AI] Card roll (should try): ${cardRoll}`);
+    }
+    if (cardRoll) {
+      const used = this.tryUseCard();
+      if (import.meta.env.DEV) {
+        console.log(`[AI] Card attempt result: ${used}`);
+      }
+    }
+
+    let candidates = this.generateAllCandidates();
+
+    if (candidates.length === 0) {
+      console.warn('[AI] No candidates — emergency shots (toward goal)');
+      candidates = this.generateEmergencyShots();
+      console.log(`[AI] Emergency tier-1: ${candidates.length} shots`);
+    }
+
+    if (candidates.length === 0) {
+      console.error('[AI] CRITICAL: still no shots after emergency generator');
+      const anyUnit = this.aiUnits.find((u) => !u.isStunned?.());
+      if (anyUnit) {
+        const dir = new Phaser.Math.Vector2(Math.random() - 0.5, Math.random() * 0.55 + 0.12).normalize();
+        console.warn('[AI] LAST RESORT: random impulse on first movable unit');
+        this.scene.matter.body.applyForce(
+          anyUnit.body,
+          anyUnit.body.position,
+          this.applyError(dir, 0.48, anyUnit),
+        );
+        this.finishMove();
+        console.log('[AI] ================================================');
+        return;
+      }
+      this.finishMove();
+      console.log('[AI] ================================================');
+      return;
+    }
+
     candidates.sort((a, b) => b.score - a.score);
+
+    if (import.meta.env.DEV && candidates.length > 0) {
+      console.log('[AI] Top candidates:');
+      candidates.slice(0, 5).forEach((c, i) => {
+        console.log(`  ${i + 1}. [${c.type}] ${c.description} — ${c.score.toFixed(1)}`);
+      });
+    }
 
     let selected: ShotCandidate;
 
@@ -843,17 +945,51 @@ export class AIController {
     }
 
     console.log(
-      `[AI] 🎯 ${selected.description} (score:${selected.score.toFixed(1)}, mode:${this.aiMatchContext.mode})`,
+      `[AI] SELECTED: ${selected.description} (score:${selected.score.toFixed(1)}, mode:${this.aiMatchContext.mode})`,
     );
     this.executeShot(selected);
+    console.log('[AI] ================================================');
+  }
+
+  /** Экстренные «прострелы» в сторону ворот игрока, если основная эвристика ничего не дала. */
+  private generateEmergencyShots(): ShotCandidate[] {
+    const out: ShotCandidate[] = [];
+    const gx = this.fieldBounds.centerX;
+    const gy = this.fieldBounds.bottom;
+
+    for (const unit of this.aiUnits) {
+      if (unit.isStunned?.()) continue;
+      if (!this.allowedByCaptainGate(unit)) continue;
+
+      const uPos = unit.body.position;
+      const bPos = this.ball.body.position;
+      const dist = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+
+      const toGoal = new Phaser.Math.Vector2(gx - uPos.x, gy - uPos.y).normalize();
+      const power = Phaser.Math.Clamp(0.38 + dist / 720, 0.3, 0.74);
+      const force = this.applyError(toGoal, power, unit);
+
+      out.push({
+        unit,
+        target: { x: gx, y: gy },
+        score: 26 - dist * 0.048,
+        type: 'goal',
+        force,
+        description: `EMERGENCY → goal (${unit.getCapClass()})`,
+      });
+    }
+    return out;
   }
 
   // ⭐ NEW: Проверка, стоит ли использовать карту
   private shouldUseCard(): boolean {
-    if (this.availableCards.length === 0) return false;
-    if (this.cardsUsedThisMatch >= this.settings.maxCardsPerMatch) return false;
-    
-    // ✅ BOSS OVERRIDE: Bosses use cards much more frequently
+    if (this.availableCards.length === 0) {
+      return false;
+    }
+    if (this.cardsUsedThisMatch >= this.settings.maxCardsPerMatch) {
+      return false;
+    }
+
     if (this.bossId) {
       return Math.random() < 0.7;
     }
@@ -866,6 +1002,12 @@ export class AIController {
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
     if (bunker > 0.58) {
       chance = Math.min(0.95, chance + 0.22);
+    }
+
+    if (this.skillLevel === 'hard' || this.skillLevel === 'expert') {
+      if (this.state.turnNumber > 0 && this.state.turnNumber % 3 === 0) {
+        chance = Math.max(chance, 0.82);
+      }
     }
 
     return Math.random() < chance;
@@ -886,28 +1028,46 @@ export class AIController {
       preferred = Math.max(5, Math.floor(preferred * 0.88));
     }
 
-    const bestCard = AbilityScorer.pickBestExecutableCardForAI(
+    let bestCard = AbilityScorer.pickBestExecutableCardForAI(
       this.availableCards,
       gameState,
       this.factionId,
       preferred,
-      5
+      5,
     );
-    
+
+    if (!bestCard && this.skillLevel === 'hard') {
+      bestCard = AbilityScorer.pickBestExecutableCardForAI(
+        this.availableCards,
+        gameState,
+        this.factionId,
+        Math.min(preferred, 8),
+        4,
+      );
+    }
+
+    if (!bestCard && this.skillLevel === 'expert') {
+      bestCard = AbilityScorer.pickBestExecutableCardForAI(
+        this.availableCards,
+        gameState,
+        this.factionId,
+        0,
+        0,
+      );
+    }
+
     if (!bestCard) {
-      console.log('[AI] 🃏 No good card to use');
       return false;
     }
-    
-    console.log(`[AI] 🃏 Using card: ${bestCard.card.name} (score: ${bestCard.score}) - ${bestCard.reason}`);
 
     const applied = this.onCardUsed?.(bestCard.cardId, bestCard.targetData) ?? false;
     if (!applied) {
-      console.warn(`[AI] 🃏 Card apply failed: ${bestCard.card.name} — keeping in hand`);
+      console.warn(`[AI] Card apply failed: ${bestCard.card.name} — keeping in hand`);
       return false;
     }
 
-    this.availableCards = this.availableCards.filter(c => c.id !== bestCard.cardId);
+    console.log(`[AI] Card used: ${bestCard.card.name} (${bestCard.score}) — ${bestCard.reason}`);
+    this.availableCards = this.availableCards.filter((c) => c.id !== bestCard.cardId);
     this.cardsUsedThisMatch++;
     return true;
   }
@@ -934,6 +1094,12 @@ export class AIController {
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
     const goalOpenness = this.evaluateGoalOpenness();
     const bunkerAttackBoost = (1 + bunker * 0.62) * (1 + this.profileNoise.bunkerOffset * 0.35);
+
+    const arch = this.currentArchetype;
+    const aggressionBonus = arch?.playStyle.aggression ?? 0.62;
+    const longShotMult = arch?.playStyle.longShotBonus ?? 1;
+    const closeRangeMult = arch?.playStyle.closeRangeBonus ?? 1;
+    const passStyle = arch?.playStyle.passFrequency ?? 0.55;
 
     const pushPassChainCandidate = (chain: PassChainPlan, scoreBoost: number, description: string) => {
       const pass = chain.passes[0];
@@ -1007,6 +1173,12 @@ export class AIController {
       const goal = this.evaluateGoalShot(unit);
       if (goal) {
         goal.score += synergyBonus;
+        const bPos = this.ball.body.position;
+        const goalPos = { x: this.fieldBounds.centerX, y: this.fieldBounds.bottom };
+        const distBallToGoal = Phaser.Math.Distance.Between(bPos.x, bPos.y, goalPos.x, goalPos.y);
+        if (distBallToGoal > 300) goal.score *= longShotMult;
+        else goal.score *= closeRangeMult;
+        if (aggressionBonus > 0.72) goal.score *= 1.26;
         if (attackOpportunity > 0.6) {
           goal.score *= 1.2;
         }
@@ -1022,6 +1194,11 @@ export class AIController {
         candidates.push(goal);
       }
 
+      if (unit.getCapClass() === 'trickster') {
+        const finisher = this.evaluateTricksterFinisher(unit);
+        if (finisher) candidates.push(finisher);
+      }
+
       const lassoShot = this.evaluateTricksterLassoShot(unit);
       if (lassoShot) {
         candidates.push(lassoShot);
@@ -1029,6 +1206,7 @@ export class AIController {
 
       const defend = this.evaluateDefenseShot(unit);
       if (defend) {
+        if (aggressionBonus > 0.82) defend.score *= 0.62;
         if (danger > 0.7) {
           defend.score *= 1.35;
         }
@@ -1041,7 +1219,11 @@ export class AIController {
         candidates.push(defend);
       }
 
-      let effectivePassChance = Phaser.Math.Clamp(this.settings.passChance + this.profileNoise.passOffset, 0, 0.92);
+      let effectivePassChance = Phaser.Math.Clamp(
+        this.settings.passChance * (0.38 + 0.72 * passStyle) + this.profileNoise.passOffset,
+        0,
+        0.94,
+      );
       if (this.comebackState?.tactics.allowRiskyPasses) {
         effectivePassChance = Math.min(0.92, effectivePassChance * 1.22);
       }
@@ -1060,8 +1242,14 @@ export class AIController {
         }
       }
 
-      const pressure = this.evaluatePressure(unit);
+      const pressDist =
+        aggressionBonus > 0.74 || unit.getCapClass() === 'playmaker' ? 172 : 92;
+      let pressure = this.evaluatePressure(unit, pressDist);
+      if (!pressure && aggressionBonus > 0.88) {
+        pressure = this.evaluatePressure(unit, 228);
+      }
       if (pressure) {
+        pressure.score *= 0.82 + aggressionBonus * 0.48;
         if (danger > 0.7 && bunker < 0.38) {
           pressure.score *= 0.55;
         }
@@ -1072,10 +1260,82 @@ export class AIController {
       }
     }
 
+    if (candidates.length === 0) {
+      console.warn('[AI] No standard moves — generating fallback toward-ball shots');
+      for (const unit of this.aiUnits) {
+        if (unit.isStunned?.()) continue;
+        if (!this.allowedByCaptainGate(unit)) continue;
+
+        const uPos = unit.body.position;
+        const bPos = this.ball.body.position;
+        const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+        if (distToBall > 780) continue;
+
+        const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
+        const power = Phaser.Math.Clamp(0.32 + distToBall / 820, 0.26, 0.68);
+        const force = this.applyError(toBall, power, unit);
+
+        candidates.push({
+          unit,
+          target: { x: bPos.x, y: bPos.y },
+          score: 32 - distToBall * 0.065,
+          type: 'pressure',
+          force,
+          description: `FALLBACK → ball (${unit.getCapClass()})`,
+        });
+      }
+    }
+
     return candidates;
   }
 
   // === ОЦЕНКА УДАРОВ ===
+
+  /** Трикстер у линии ворот игрока — высокий приоритет добивания. */
+  private evaluateTricksterFinisher(unit: AIUnit): ShotCandidate | null {
+    if (unit.getCapClass() !== 'trickster') return null;
+
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    const goalPos = { x: this.fieldBounds.centerX, y: this.fieldBounds.bottom };
+
+    const distBallToGoal = Phaser.Math.Distance.Between(bPos.x, bPos.y, goalPos.x, goalPos.y);
+    if (distBallToGoal > 200) return null;
+
+    const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    if (distToBall > 250) return null;
+
+    const targetX = bPos.x < this.fieldBounds.centerX ? goalPos.x - 44 : goalPos.x + 44;
+    const target = { x: targetX, y: goalPos.y };
+
+    let vx = target.x - bPos.x;
+    let vy = target.y - bPos.y;
+    const len = Math.sqrt(vx * vx + vy * vy) || 1;
+    vx /= len;
+    vy /= len;
+    const curveAngle = (Math.random() - 0.5) * 0.32;
+    const cos = Math.cos(curveAngle);
+    const sin = Math.sin(curveAngle);
+    const rx = vx * cos - vy * sin;
+    const ry = vx * sin + vy * cos;
+    const toTarget = new Phaser.Math.Vector2(rx, ry).normalize();
+
+    const power = this.calculatePower(unit, distToBall) * 0.94;
+    const force = this.applyError(toTarget, power, unit);
+
+    let score = 76;
+    score += Math.max(0, 30 - distBallToGoal / 5);
+    score -= distToBall * 0.09;
+
+    return {
+      unit,
+      target,
+      score,
+      type: 'goal',
+      force,
+      description: `TRICKSTER FINISHER near goal (${distBallToGoal.toFixed(0)}px)`,
+    };
+  }
 
   private evaluateGoalShot(unit: AIUnit): ShotCandidate | null {
     const uPos = unit.body.position;
@@ -1386,12 +1646,12 @@ export class AIController {
     };
   }
 
-  private evaluatePressure(unit: AIUnit): ShotCandidate | null {
+  private evaluatePressure(unit: AIUnit, maxDist = 90): ShotCandidate | null {
     const uPos = unit.body.position;
     const bPos = this.ball.body.position;
     const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
 
-    if (distToBall > 90) return null;
+    if (distToBall > maxDist) return null;
 
     const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
 

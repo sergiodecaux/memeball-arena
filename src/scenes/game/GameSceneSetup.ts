@@ -7,6 +7,7 @@ import Phaser from 'phaser';
 import { FIELD, GOAL, COLLISION_CATEGORIES, GAME, FACTIONS, FactionId, getFactionArena, WALL_PHYSICS } from '../../constants/gameConstants';
 import { FieldBounds, PlayerNumber, normalizeGameAIDifficulty } from '../../types';
 import { deriveAIProfileFromKey } from '../../ai/AIProfile';
+import type { TeamArchetype } from '../../ai/team/TeamArchetypes';
 import { Unit } from '../../entities/Unit';
 import { Ball } from '../../entities/Ball';
 import { playerData } from '../../data/PlayerData';
@@ -43,7 +44,9 @@ export interface GameSceneSetupResult {
   campaignLevelConfig?: LevelConfig;
   campaignChapterConfig?: ChapterConfig;
   
-  // ✅ ДОБАВЛЕНО: Размер команды для AI
+  /** Архетип AI-команды (мета-состав), если матч собран через фракции + AI */
+  aiArchetype?: TeamArchetype;
+
   playerTeamSize: number;
 }
 
@@ -121,7 +124,7 @@ export class GameSceneSetup {
     await this.ensureMatchAssetsLoaded(state, playerTeamSize, aiTeamSize, campaignLevelConfig);
 
     // 8. Создаём сущности (с учётом размера команды)
-    const { ball, caps, startPositions } = this.createEntities(
+    const { ball, caps, startPositions, aiArchetype } = this.createEntities(
       fieldBounds,
       state,
       playerTeamSize,
@@ -156,6 +159,7 @@ export class GameSceneSetup {
       campaignLevelConfig,
       campaignChapterConfig,
       playerTeamSize,
+      aiArchetype,
     };
   }
 
@@ -492,7 +496,12 @@ export class GameSceneSetup {
     playerTeamSize: number,
     aiTeamSize: number,
     campaignLevelConfig?: LevelConfig
-  ): { ball: Ball; caps: GameUnit[]; startPositions: StartPositions } {
+  ): {
+    ball: Ball;
+    caps: GameUnit[];
+    startPositions: StartPositions;
+    aiArchetype?: TeamArchetype;
+  } {
     // ✅ Проверяем является ли это туториальным матчем
     const isTutorialMatch = this.checkIfTutorialMatch(campaignLevelConfig);
     const fieldScale = fieldBounds.width / FIELD.WIDTH;
@@ -563,6 +572,7 @@ export class GameSceneSetup {
         ball: ballResult.startPosition,
         caps: capsResult.startPositions,
       },
+      aiArchetype: capsResult.aiArchetype,
     };
   }
 
