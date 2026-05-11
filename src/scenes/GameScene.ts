@@ -2,7 +2,7 @@
 // вњ… РР—РњР•РќР•РќРћ: РСЃРїСЂР°РІР»РµРЅ Р±Р°Рі СЃ С‚Р°Р№РјРµСЂРѕРј - РґРѕР±Р°РІР»РµРЅРѕ РїРѕР»Рµ matchDuration, РёСЃРїСЂР°РІР»РµРЅ getState()
 
 import Phaser from 'phaser';
-import { GAME, GOAL, FactionId, LASSO_CONFIG, PASSIVE_SKILL_COOLDOWN, PASSIVE_DRIBBLE_ACTIVATION_RADIUS } from '../constants/gameConstants';
+import { GAME, GOAL, FactionId, LASSO_CONFIG, PASSIVE_DRIBBLE_ACTIVATION_RADIUS, PLAYMAKER_PASS_RADIUS } from '../constants/gameConstants';
 import { isCaptainUnitId } from '../constants/captains';
 import { FieldBounds, PlayerNumber, AIDifficulty } from '../types';
 import { Unit } from '../entities/Unit';
@@ -14,7 +14,7 @@ import { AnnouncerManager } from '../managers/AnnouncerManager';
 import { MultiplayerManager } from '../managers/MultiplayerManager';
 import { PvPIntegrationHelper } from '../managers/PvPIntegrationHelper';
 import { DEFAULT_PVP_CONFIG } from '../types/pvp';
-import { getUnitPassive } from '../data/UnitsRepository';
+import { getUnitPassive, getUnitById as getCatalogUnitById } from '../data/UnitsRepository';
 import { dailyTasksManager } from '../data/DailyTasks';
 import { createText } from '../utils/TextFactory';
 
@@ -53,7 +53,6 @@ import { ResultScreen } from '../ui/game/ResultScreen';
 import { SessionPersistence } from '../utils/SessionPersistence';
 import { InGameSettings } from '../ui/game/InGameSettings';
 import { MatchIntroOverlay } from '../ui/game/MatchIntroOverlay';
-import { MagneticPassOverlay } from '../ui/game/MagneticPassOverlay';
 import { AbilityButton } from '../ui/game/AbilityButton';
 import { playerData } from '../data/PlayerData';
 import { LassoButton } from '../ui/game/LassoButton';
@@ -124,7 +123,6 @@ export class GameScene extends Phaser.Scene {
   private campaignDialogue?: CampaignDialogueSystem;
   private fieldRenderer!: FieldRenderer;
   private passiveManager!: PassiveManager;
-  private magneticPassOverlay?: MagneticPassOverlay;
   private achievementManager?: any; // AchievementManager
   // OLD: private pvpSync - removed, using PvPSyncManager inside pvpHelper
   // OLD: private networkIndicator - removed
@@ -1186,10 +1184,8 @@ export class GameScene extends Phaser.Scene {
     this.player2AbilityManager?.setPassiveManager(this.passiveManager);
     this.collisionHandler.setPassiveManager(this.passiveManager);
 
-    this.magneticPassOverlay = new MagneticPassOverlay(this);
-
     this.setupAIController();
-    
+
     // Initialize CampaignDialogueSystem for campaign mode
     if (this.isCampaignMode && this.campaignLevelConfig) {
       this.campaignDialogue = new CampaignDialogueSystem(this);
@@ -2997,34 +2993,21 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const allies = this.caps.filter(
-      (u): u is Unit =>
-        u instanceof Unit &&
-        u.owner === passer.owner &&
-        u !== passer &&
-        !u.isStunned(),
-    );
-    if (allies.length === 0) {
-      this.showPassiveToast('Нет союзников для паса');
-      return;
+    const ok = this.passiveManager.beginMagneticPassTargeting(passer, this.ball);
+    if (ok) {
+      this.passiveSkillButton?.refresh();
     }
-
-    this.magneticPassOverlay?.show(
-      allies,
-      passer,
-      (target) => {
-        this.shootingController.activateMagneticPass(passer, this.ball, target);
-        passer.setMagneticPassCooldownTurns(PASSIVE_SKILL_COOLDOWN.MAGNETIC_PASS_TURNS);
-        this.passiveSkillButton?.refresh();
-      },
-      () => this.passiveSkillButton?.refresh(),
-    );
   }
 
   private wireDribblingSceneEvents(): void {
     this.events.on('dribbling-started', this.onDribblingStartedHud, this);
     this.events.on('dribbling-finished', this.onDribblingFinishedHud, this);
     this.events.on('dribbling-failed', this.onDribblingFailedHud, this);
+    this.events.on('magnetic-pass-failed', this.onMagneticPassFailedHud, this);
+    this.events.on('pass-intercepted', this.onPassInterceptedHud, this);
+    this.events.on('magnetic-pass-finished', this.onMagneticPassFinishedHud, this);
+
+    console.log('[GameScene] Упрощённые способности: дриблинг ~180 px к мячу; магнитный пас без меню (можно во врага)');
   }
 
   private clearMaestroRangePreview(): void {
@@ -3102,7 +3085,7 @@ export class GameScene extends Phaser.Scene {
       this,
       this.scale.width / 2,
       96,
-      '🎮 Ведите палец по полю\n⭐ Удерживайте и отпустите (>0.5 с) — удар',
+      '🎮 Наведите направление от мяча\n⭐ Удержите и отпустите на поле — удар (сила по растяжению)',
       { size: 'sm', color: '#fffbeb', stroke: true, align: 'center' },
     )
       .setScrollFactor(0)
@@ -3136,6 +3119,49 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.showPassiveToast('Не удалось начать дриблинг');
     }
+  }
+
+  private onMagneticPassFinishedHud(): void {
+    this.passiveSkillButton?.refresh();
+  }
+
+  private onMagneticPassFailedHud(data: { reason: string; distance?: number }): void {
+    this.passiveSkillButton?.refresh();
+    if (data.reason === 'too_far' && data.distance !== undefined) {
+      this.showPassiveToast(`Мяч далеко для паса (${Math.round(data.distance)} px, макс ${PLAYMAKER_PASS_RADIUS})`);
+    } else if (data.reason === 'no_target') {
+      this.showPassiveToast('Нет фишки рядом с указателем');
+    } else if (data.reason === 'no_targets') {
+      this.showPassiveToast('Нет доступных целей для паса');
+    } else {
+      this.showPassiveToast('Магнитный пас не выполнен');
+    }
+  }
+
+  private onPassInterceptedHud(data: { passer: Unit; interceptor: Unit }): void {
+    const nm =
+      getCatalogUnitById(data.interceptor.getUnitId())?.nameRu ??
+      getCatalogUnitById(data.interceptor.getUnitId())?.name ??
+      data.interceptor.getUnitId();
+
+    const msg = this.add
+      .text(this.scale.width / 2, 150, `Перехват! ${nm}`, {
+        fontSize: '22px',
+        color: '#ffffff',
+        backgroundColor: '#ef4444',
+        padding: { x: 20, y: 10 },
+      })
+      .setOrigin(0.5)
+      .setDepth(2000)
+      .setScrollFactor(0);
+
+    this.tweens.add({
+      targets: msg,
+      alpha: 0,
+      y: msg.y - 50,
+      duration: 2000,
+      onComplete: () => msg.destroy(),
+    });
   }
 
   private handlePassiveDribbleButton(unit: Unit): void {

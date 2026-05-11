@@ -764,6 +764,9 @@ export class ShootingController {
   }
 
   private inputBlockedByMagneticDribble(): boolean {
+    if (this.passiveManager && typeof this.passiveManager.consumesStandardShotInput === 'function') {
+      if (this.passiveManager.consumesStandardShotInput()) return true;
+    }
     for (const [cap] of this.registeredCaps) {
       if (isUnit(cap) && cap.isMagneticDribbleActive()) return true;
     }

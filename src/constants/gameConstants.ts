@@ -548,7 +548,7 @@ export const PASSIVE_SKILL_COOLDOWN = {
 } as const;
 
 /** Макс. дистанция юнит↔мяч для старта дриблинга (как радиус Lasso). */
-export const PASSIVE_DRIBBLE_ACTIVATION_RADIUS = 150;
+export const PASSIVE_DRIBBLE_ACTIVATION_RADIUS = 180;
 
 /** Совместимость: прежнее имя — используйте PASSIVE_DRIBBLE_ACTIVATION_RADIUS. */
 export const PASSIVE_DRIBBLE_ATTACH_MAX_DIST = PASSIVE_DRIBBLE_ACTIVATION_RADIUS;
