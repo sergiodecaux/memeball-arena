@@ -2797,6 +2797,10 @@ export class GameScene extends Phaser.Scene {
     this.passiveSkillButton?.setCurrentCap(null);
     this.passiveSkillButton?.hide();
 
+    if (this.passiveManager?.stopInteractiveDribbleClean()) {
+      this.showPassiveToast('Дриблинг остановлен — смена хода');
+    }
+
     this.captainMatchSystem?.onTurnOwnerChanged(player);
     
     // Cleanup previous state
@@ -3008,8 +3012,8 @@ export class GameScene extends Phaser.Scene {
     this.events.on('magnetic-pass-finished', this.onMagneticPassFinishedHud, this);
     this.events.on('pass-successful', this.onPassSuccessfulHud, this);
 
-    console.log('[GameScene] Способности v3: дриблинг — медленное движение + долгое нажатие = удар');
-    console.log('[GameScene] Магнитный пас 360°: конус 45°, линия прицела, радиус с подсказками');
+    console.log('[GameScene] ✅ Дриблинг v6: без автофиниша — STOP / удар после удержания >300 мс / смена хода');
+    console.log('[GameScene] ✅ Магнитный пас: мяч у получателя до обычного удара');
   }
 
   private clearMaestroRangePreview(): void {
@@ -3081,20 +3085,20 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(2800, () => this.clearMaestroRangePreview());
   }
 
-  private onDribblingStartedHud(data: { unit: Unit; ball: Ball; duration: number }): void {
-    console.log('[GameScene] dribbling-started', data.unit.getUnitId(), data.duration);
+  private onDribblingStartedHud(data: { unit: Unit; ball: Ball; duration?: number }): void {
+    console.log('[GameScene] dribbling-started', data.unit.getUnitId());
     const hint = createText(
       this,
       this.scale.width / 2,
       96,
-      '🎮 Удерживайте на поле — фишка движется к прицелу от мяча\n⭐ Отпускание после долгого нажатия (≥200 мс) — удар по времени удержания',
+      '🏃 ДРИБЛИНГ АКТИВЕН\n👆 Зажмите поле — движение по прицелу от мяча\n🎯 Направление — палец (360°)\n⚡ Отпуск после удержания >0.3 с — удар\n🛑 Или кнопка ОСТАНОВИТЬ',
       { size: 'sm', color: '#fffbeb', stroke: true, align: 'center' },
     )
       .setScrollFactor(0)
       .setDepth(560)
       .setOrigin(0.5);
 
-    this.time.delayedCall(3200, () => {
+    this.time.delayedCall(3500, () => {
       this.tweens.add({
         targets: hint,
         alpha: 0,
@@ -3107,9 +3111,6 @@ export class GameScene extends Phaser.Scene {
   private onDribblingFinishedHud(data: { unit: Unit; ball: Ball; isAutoFinish: boolean }): void {
     console.log('[GameScene] dribbling-finished', data.isAutoFinish ? 'auto' : 'manual');
     this.passiveSkillButton?.refresh();
-    if (data.isAutoFinish) {
-      this.showPassiveToast('Время дриблинга истекло');
-    }
   }
 
   private onDribblingFailedHud(data: { reason: string; distance?: number }): void {
@@ -3158,15 +3159,20 @@ export class GameScene extends Phaser.Scene {
       data.receiver.getUnitId();
 
     const msg = this.add
-      .text(this.scale.width / 2, 120, `Пас: ${pn} → ${rn}`, {
-        fontSize: '20px',
-        color: '#ffffff',
-        backgroundColor: '#10b981',
-        padding: { x: 18, y: 10 },
-        stroke: '#000000',
-        strokeThickness: 3,
-        align: 'center',
-      })
+      .text(
+        this.scale.width / 2,
+        120,
+        `✅ ПАС: ${pn} → ${rn}\n💡 Мяч у получателя — ударите этой фишкой или выберите другую`,
+        {
+          fontSize: '20px',
+          color: '#ffffff',
+          backgroundColor: '#10b981',
+          padding: { x: 18, y: 10 },
+          stroke: '#000000',
+          strokeThickness: 3,
+          align: 'center',
+        },
+      )
       .setOrigin(0.5)
       .setDepth(2000)
       .setScrollFactor(0);

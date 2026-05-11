@@ -111,7 +111,7 @@ export class PassiveSkillButton {
     this.container.add(this.hitArea);
 
     this.stopHit = this.scene.add
-      .rectangle(0, -this.SIZE * 0.72, Math.round(this.SIZE * 0.92), 22, 0xef4444, 0.96)
+      .rectangle(0, -this.SIZE * 0.72, Math.round(this.SIZE * 1.35), 24, 0xef4444, 0.96)
       .setStrokeStyle(2, 0xffffff, 0.9)
       .setInteractive({ useHandCursor: true })
       .setVisible(false);
@@ -122,8 +122,8 @@ export class PassiveSkillButton {
     this.container.add(this.stopHit);
 
     this.stopLabel = this.scene.add
-      .text(0, -this.SIZE * 0.72, 'STOP', {
-        fontSize: '11px',
+      .text(0, -this.SIZE * 0.72, 'ОСТАНОВИТЬ', {
+        fontSize: '9px',
         fontFamily: 'Orbitron, Arial',
         color: '#ffffff',
         stroke: '#000000',

@@ -1061,6 +1061,10 @@ export class ShootingController {
   private executeShot(cap: ShootableUnit, force: Phaser.Math.Vector2): void {
       if (this.isLassoActiveCheck()) return;
 
+      if (isUnit(cap) && this.passiveManager && this.getBallForPassives) {
+        this.passiveManager.releaseBallFromPassCatch(cap, this.getBallForPassives());
+      }
+
       if (isUnit(cap) && cap.isMagneticDribbleActive() && this.passiveManager && this.getBallForPassives) {
         this.passiveManager.stopMagneticDribble(cap, this.getBallForPassives(), { skipReleaseImpulse: true });
       }
