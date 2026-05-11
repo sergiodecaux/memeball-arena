@@ -33,6 +33,8 @@ import { SynergyAnalyzer } from './synergy/SynergyAnalyzer';
 import { PassChainPlanner } from './passes/PassChainPlanner';
 import { MatchAdapter } from './adaptation/MatchAdapter';
 import type { TeamArchetype } from './team/TeamArchetypes';
+import { RoleManager, type UnitRole } from './roles/UnitRoles';
+import { RoleBasedScoring, type RoleScoreContext } from './roles/RoleBasedScoring';
 
 // === ТИПЫ ===
 
@@ -251,6 +253,12 @@ export class AIController {
   /** Мета-тактика команды (из EntityFactory / ArchetypeSelector). */
   private currentArchetype?: TeamArchetype;
 
+  /** Роль каждой фишки AI (вратарь, финишер и т.д.). */
+  private unitRoles = new Map<string, UnitRole>();
+
+  /** Ходы после пропущенного гола: усиление агрессии и карт (счётчик AI-ходов). */
+  private concedeReactionTurnsLeft = 0;
+
   // ЗАЩИТА ОТ ДВОЙНОГО ХОДА
   public isThinking = false;
   private lastMoveTime = 0;
@@ -421,6 +429,15 @@ export class AIController {
     
     this.hasAppliedInitialCounterFormation = false;
 
+    this.unitRoles = RoleManager.assignRoles(aiUnits);
+    if (import.meta.env.DEV) {
+      console.log('[AI] Unit roles:');
+      this.unitRoles.forEach((r, id) => {
+        const u = aiUnits.find((x) => x.id === id);
+        console.log(`  ${id} (${u?.getCapClass() ?? '?'}) → ${r}`);
+      });
+    }
+
     // Генерируем виртуальную руку карт
     this.generateCardHand();
 
@@ -476,6 +493,32 @@ export class AIController {
 
   getArchetype(): TeamArchetype | undefined {
     return this.currentArchetype;
+  }
+
+  /** Для сцены: роль фишки по id (после init). */
+  getRoleForUnitId(unitId: string): UnitRole {
+    return this.unitRoles.get(unitId) ?? 'flex';
+  }
+
+  private getUnitRole(unit: AIUnit): UnitRole {
+    return this.unitRoles.get(unit.id) ?? 'flex';
+  }
+
+  private buildRoleScoreContext(): RoleScoreContext {
+    const bp = this.ball.getPosition();
+    const desperation = this.comebackState?.desperationLevel;
+    const allowGkAttack =
+      this.concedeReactionTurnsLeft > 0 ||
+      desperation === 'critical' ||
+      desperation === 'high';
+    return {
+      ballPosition: bp,
+      opponentGoalY: this.fieldBounds.bottom,
+      ownGoalY: this.fieldBounds.top,
+      fieldHeight: this.fieldBounds.height,
+      opponentUnits: this.playerUnits,
+      allowGoalkeeperAttack: allowGkAttack,
+    };
   }
 
   private performPreMatchAnalysis(): void {
@@ -634,6 +677,13 @@ export class AIController {
 
     if (scoredBy === 'player') {
       this.state.consecutiveGoalsAgainst++;
+      this.concedeReactionTurnsLeft = 3;
+      this.state.aggression = Math.min(1, this.state.aggression + 0.28);
+      console.log(
+        `[AI] Goal conceded — comeback pulse (${this.concedeReactionTurnsLeft} AI turns): aggression ${(
+          this.state.aggression * 100
+        ).toFixed(0)}%`,
+      );
     } else {
       this.state.consecutiveGoalsAgainst = 0;
     }
@@ -1010,6 +1060,10 @@ export class AIController {
       }
     }
 
+    if (this.concedeReactionTurnsLeft > 0) {
+      chance = Math.min(0.95, chance * 1.42);
+    }
+
     return Math.random() < chance;
   }
 
@@ -1164,11 +1218,53 @@ export class AIController {
       }
     }
 
+    const roleCtx = this.buildRoleScoreContext();
+
     for (const unit of this.aiUnits) {
       if (unit.isStunned?.()) continue;
       if (!this.allowedByCaptainGate(unit)) continue;
 
+      const role = this.getUnitRole(unit);
+      const roleBehavior = RoleManager.getRoleBehavior(role);
       const synergyBonus = this.calculateSynergyBonus(unit);
+      const ballPos = this.ball.getPosition();
+
+      const fb = this.fieldBounds;
+      for (const move of RoleBasedScoring.generateRoleSpecificMoves(unit, role, {
+        ball: ballPos,
+        opponentUnits: this.playerUnits,
+        opponentGoalY: fb.bottom,
+        ownGoalY: fb.top,
+        fieldBounds: fb,
+      })) {
+        if (move.type === 'goal') {
+          const gShot = this.evaluateGoalShot(unit);
+          if (gShot) {
+            const g = { ...gShot, description: move.description };
+            g.score = RoleBasedScoring.modifyScoreByRole(
+              g.score + move.priority,
+              'goal',
+              unit,
+              role,
+              roleCtx,
+            );
+            candidates.push(g);
+          }
+        } else if (move.type === 'disrupt') {
+          const disrupt = this.evaluateDisruptShot(unit, move.target);
+          if (disrupt) {
+            disrupt.score = RoleBasedScoring.modifyScoreByRole(
+              disrupt.score + move.priority * 0.35,
+              'disrupt',
+              unit,
+              role,
+              roleCtx,
+            );
+            disrupt.description = move.description;
+            candidates.push(disrupt);
+          }
+        }
+      }
 
       const goal = this.evaluateGoalShot(unit);
       if (goal) {
@@ -1191,12 +1287,22 @@ export class AIController {
         if (this.comebackState?.tactics.allowLongShots) {
           goal.score *= 1.12;
         }
+        goal.score = RoleBasedScoring.modifyScoreByRole(goal.score, 'goal', unit, role, roleCtx);
         candidates.push(goal);
       }
 
-      if (unit.getCapClass() === 'trickster') {
+      if (role === 'opportunist' && unit.getCapClass() === 'trickster') {
         const finisher = this.evaluateTricksterFinisher(unit);
-        if (finisher) candidates.push(finisher);
+        if (finisher) {
+          finisher.score = RoleBasedScoring.modifyScoreByRole(
+            finisher.score,
+            'goal',
+            unit,
+            role,
+            roleCtx,
+          );
+          candidates.push(finisher);
+        }
       }
 
       const lassoShot = this.evaluateTricksterLassoShot(unit);
@@ -1216,6 +1322,7 @@ export class AIController {
         if (bunker > 0.55 && danger < 0.68) {
           defend.score *= 1 - bunker * 0.22;
         }
+        defend.score = RoleBasedScoring.modifyScoreByRole(defend.score, 'defend', unit, role, roleCtx);
         candidates.push(defend);
       }
 
@@ -1224,6 +1331,8 @@ export class AIController {
         0,
         0.94,
       );
+      effectivePassChance *= 0.38 + 0.62 * roleBehavior.priorities.createChances;
+      effectivePassChance = Phaser.Math.Clamp(effectivePassChance, 0.06, 0.95);
       if (this.comebackState?.tactics.allowRiskyPasses) {
         effectivePassChance = Math.min(0.92, effectivePassChance * 1.22);
       }
@@ -1238,12 +1347,15 @@ export class AIController {
           if (bunker > 0.48) {
             pass.score *= 1.15;
           }
+          pass.score = RoleBasedScoring.modifyScoreByRole(pass.score, 'pass', unit, role, roleCtx);
           candidates.push(pass);
         }
       }
 
       const pressDist =
-        aggressionBonus > 0.74 || unit.getCapClass() === 'playmaker' ? 172 : 92;
+        aggressionBonus > 0.74 || unit.getCapClass() === 'playmaker' || role === 'disruptor'
+          ? 172
+          : 92;
       let pressure = this.evaluatePressure(unit, pressDist);
       if (!pressure && aggressionBonus > 0.88) {
         pressure = this.evaluatePressure(unit, 228);
@@ -1255,6 +1367,9 @@ export class AIController {
         }
         if (bunker > 0.45) {
           pressure.score *= 1 + bunker * 0.45;
+        }
+        if (role === 'disruptor') {
+          pressure.score *= 1.18;
         }
         candidates.push(pressure);
       }
@@ -1504,6 +1619,30 @@ export class AIController {
       type: 'defend',
       force,
       description: `Defense by ${unitClass} ballSpeed:${ballSpeed.toFixed(1)}`,
+    };
+  }
+
+  /** Сдвиг мяча в сторону опасной фишки (disruptor). */
+  private evaluateDisruptShot(unit: AIUnit, target: { x: number; y: number }): ShotCandidate | null {
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    if (distToBall > 320) return null;
+
+    const toThreat = new Phaser.Math.Vector2(target.x - bPos.x, target.y - bPos.y).normalize();
+    const power = this.calculatePower(unit, distToBall) * 0.92;
+    const force = this.applyError(toThreat, power, unit);
+
+    let score = 58;
+    score -= distToBall * 0.12;
+
+    return {
+      unit,
+      target,
+      score,
+      type: 'pressure',
+      force,
+      description: 'DISRUPT toward threat',
     };
   }
 
@@ -1846,6 +1985,9 @@ export class AIController {
   private finishMove(opts?: { skipDirectorShot?: boolean }): void {
     this.isThinking = false;
     this.lastMoveTime = Date.now();
+    if (this.concedeReactionTurnsLeft > 0) {
+      this.concedeReactionTurnsLeft--;
+    }
     this.moveCompleteCallback?.(opts?.skipDirectorShot === true);
   }
 
@@ -1891,6 +2033,8 @@ export class AIController {
     this.tricksterLassoRunner = undefined;
     this.onCardUsed = undefined;
     this.availableCards = [];
+    this.unitRoles.clear();
+    this.concedeReactionTurnsLeft = 0;
     this.patternRecognizer.reset();
     this.matchAdapter.reset();
   }

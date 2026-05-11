@@ -27,6 +27,7 @@ import { MatchDirector } from '../controllers/match/MatchDirector';
 import { ShootingController, ShootEventData } from '../controllers/ShootingController';
 import { AIController } from '../ai/AIController';
 import type { TeamArchetype } from '../ai/team/TeamArchetypes';
+import { RoleManager } from '../ai/roles/UnitRoles';
 import type { AIMatchContext } from '../ai/MatchContext';
 import type { AIOpponentProfile } from '../ai/AIProfile';
 
@@ -1146,6 +1147,9 @@ export class GameScene extends Phaser.Scene {
       console.log('Difficulty:', scene.matchAIDifficulty);
       const arch = ctrl.getArchetype?.();
       console.log('Archetype:', arch ? `${arch.name} (${arch.id})` : '—');
+      scene.caps
+        .filter((c) => c.owner === 2)
+        .forEach((c) => console.log(`  P2 ${c.id}: role=${ctrl.getRoleForUnitId(c.id)}`));
       console.log('Cards in hand:', ctrl.getAvailableCards().map((c) => c.name));
       console.log('Cards used:', ctrl.getCardsUsedCount());
       console.log('Formation:', ctrl.getCurrentFormation().name, ctrl.getCurrentFormation().slots?.length);
@@ -3682,7 +3686,18 @@ export class GameScene extends Phaser.Scene {
     formation.slots.forEach((slot, index) => {
       const absPos = this.relativeToAbsolute(slot.x, slot.y);
       const cap = aiCaps[index];
-      cap?.reset(absPos.x, absPos.y);
+      if (!cap) return;
+
+      const role = this.aiController!.getRoleForUnitId(cap.id);
+      let x = absPos.x;
+      let y = absPos.y;
+      if (role !== 'flex') {
+        const roleAnchor = RoleManager.getTargetPosition(role, this.fieldBounds, slot.x);
+        const blend = role === 'goalkeeper' || role === 'defender' ? 0.48 : 0.26;
+        x = Phaser.Math.Linear(absPos.x, roleAnchor.x, blend * 0.4);
+        y = Phaser.Math.Linear(absPos.y, roleAnchor.y, blend);
+      }
+      cap.reset(x, y);
     });
 
     if (import.meta.env.DEV) {

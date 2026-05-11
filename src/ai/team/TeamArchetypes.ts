@@ -153,15 +153,15 @@ export const TEAM_ARCHETYPES: Record<string, TeamArchetype> = {
   maestro_control: {
     id: 'maestro_control',
     name: '🎼 Maestro Control',
-    description: 'Pass-heavy with Maestros and finishers',
+    description: 'Pass-heavy with three Maestros, sniper finisher and tank cover',
     composition: [
-      { capClass: 'maestro', count: 2, priority: 'high' },
-      { capClass: 'sniper', count: 2, priority: 'high' },
-      { capClass: 'playmaker', count: 1, priority: 'medium' },
+      { capClass: 'maestro', count: 3, priority: 'high' },
+      { capClass: 'sniper', count: 1, priority: 'high' },
+      { capClass: 'tank', count: 1, priority: 'medium' },
     ],
     playStyle: {
       aggression: 0.65,
-      passFrequency: 0.9,
+      passFrequency: 0.95,
       longShotBonus: 1.5,
       closeRangeBonus: 1.0,
     },
