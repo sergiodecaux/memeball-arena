@@ -52,18 +52,19 @@ export class GoalDetector {
   private calculateGoalZones(bounds: FieldBounds, scale: number): void {
     const halfWidth = (GOAL.WIDTH * scale) / 2;
     const depth = GOAL.DEPTH * scale;
-    
+    const mouthTol = Math.max(8, 12 * scale);
+
     this.topGoalZone = {
       minX: bounds.centerX - halfWidth,
       maxX: bounds.centerX + halfWidth,
       minY: bounds.top - depth,
-      maxY: bounds.top,
+      maxY: bounds.top + mouthTol,
     };
-    
+
     this.bottomGoalZone = {
       minX: bounds.centerX - halfWidth,
       maxX: bounds.centerX + halfWidth,
-      minY: bounds.bottom,
+      minY: bounds.bottom - mouthTol,
       maxY: bounds.bottom + depth,
     };
   }
@@ -144,7 +145,12 @@ export class GoalDetector {
 
   private triggerGoal(scoringPlayer: PlayerNumber): void {
     if (this.goalScored) return;
-    
+
+    const { x, y } = this.ball.body.position;
+    if (import.meta.env.DEV) {
+      console.log(`[GoalDetector] Goal player ${scoringPlayer} ball @ (${x.toFixed(1)}, ${y.toFixed(1)})`);
+    }
+
     this.goalScored = true;
     this.onGoalCallback?.(scoringPlayer);
   }

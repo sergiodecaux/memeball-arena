@@ -44,6 +44,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   /** Мяч после магнитного паса остаётся у получателя: один активный Matter constraint + линия */
   private passCatchAttachment: {
     receiverRuntimeId: string;
+    receiver: Unit;
     constraint: MatterJS.Constraint;
     linkLine: Phaser.GameObjects.Line;
     linkPulseTween: Phaser.Tweens.Tween;
@@ -566,9 +567,49 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     } catch {
       /* ignore */
     }
-    att.linkLine.destroy();
+    try {
+      att.linkLine.destroy();
+    } catch {
+      /* ignore */
+    }
     this.removeDribbleConstraint(att.constraint);
     this.passCatchAttachment = null;
+  }
+
+  /**
+   * Если мяч после паса «улетел» от получателя (constraint/Matter рассинхрон), снимаем привязку.
+   * Вызывать с троттлингом из сцены (~500 мс).
+   */
+  public checkAndClearStrayPassCatchAttachment(ball: Ball, maxDistPx = 100): void {
+    const att = this.passCatchAttachment;
+    if (!att || ball.isDestroyed) return;
+
+    const recv = att.receiver;
+    if (recv.isDestroyed) {
+      this.clearPassCatchAttachment();
+      return;
+    }
+
+    const d = Phaser.Math.Distance.Between(
+      recv.body.position.x,
+      recv.body.position.y,
+      ball.body.position.x,
+      ball.body.position.y,
+    );
+
+    if (d > maxDistPx) {
+      if (import.meta.env.DEV) {
+        console.warn('[PassiveManager] Снята привязка паса: мяч далеко от получателя', Math.round(d), 'px');
+      }
+      this.clearPassCatchAttachment();
+    }
+  }
+
+  /** Совместимость с прежним именем из ТЗ (берёт ball из сцены). */
+  public checkAndClearStrayBallConstraints(scene: Phaser.Scene): void {
+    const ball = (scene as { ball?: Ball }).ball;
+    if (!ball) return;
+    this.checkAndClearStrayPassCatchAttachment(ball);
   }
 
   /** Снять привязку мяча после магнитного паса (перед обычным ударом и т.п.) */
@@ -638,6 +679,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
 
     this.passCatchAttachment = {
       receiverRuntimeId: receiver.id,
+      receiver,
       constraint: constraint as MatterJS.Constraint,
       linkLine,
       linkPulseTween,
@@ -1386,10 +1428,25 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     this.scene.input.off('pointerdown', pointerDown);
     this.scene.input.off('pointerup', pointerUp);
 
-    meta.linkPulseTween?.stop();
-    aimLine.destroy();
-    aimArrow.destroy();
-    linkLine.destroy();
+    try {
+      meta.linkPulseTween?.stop();
+    } catch {
+      /* ignore */
+    }
+
+    const killDestroy = (go: Phaser.GameObjects.GameObject | undefined | null) => {
+      if (!go || !go.scene) return;
+      try {
+        this.scene.tweens.killTweensOf(go);
+        go.destroy();
+      } catch (e) {
+        console.warn('[PassiveManager] Ошибка удаления объекта дриблинга:', e);
+      }
+    };
+
+    killDestroy(aimLine);
+    killDestroy(aimArrow);
+    killDestroy(linkLine);
 
     matter.body.setVelocity(unit.body, { x: 0, y: 0 });
     matter.body.setAngularVelocity(unit.body, 0);
@@ -1413,6 +1470,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       matter.body.setAngularVelocity(ball.body, 0);
       this.showPassiveActivation(unit, 'Удар!', 0xfbbf24);
       this.scene.events.emit('dribbling-finished', { unit, ball, isAutoFinish: false });
+      this.scene.events.emit('dribbling-kick-turn', { unit });
       return;
     }
 

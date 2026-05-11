@@ -97,6 +97,8 @@ export class GameScene extends Phaser.Scene {
   
   // ✅ FIX: Флаг для защиты от повторной обработки гола
   private isProcessingGoal: boolean = false;
+  /** Троттлинг проверки «улетевшего» мяча после магнитного паса */
+  private lastPassCatchStrayCheckMs = 0;
 
   // === РЎСѓС‰РЅРѕСЃС‚Рё ===
   private ball!: Ball;
@@ -3011,9 +3013,20 @@ export class GameScene extends Phaser.Scene {
     this.events.on('pass-intercepted', this.onPassInterceptedHud, this);
     this.events.on('magnetic-pass-finished', this.onMagneticPassFinishedHud, this);
     this.events.on('pass-successful', this.onPassSuccessfulHud, this);
+    this.events.on('dribbling-kick-turn', this.handleDribblingKickTurn, this);
 
-    console.log('[GameScene] ✅ Дриблинг v6: без автофиниша — STOP / удар после удержания >300 мс / смена хода');
-    console.log('[GameScene] ✅ Магнитный пас: мяч у получателя до обычного удара');
+    console.log('[GameScene] ✅ Исправления v7: автоочистка привязки паса, гол по «губе» ворот, ход после удара дриблера');
+  }
+
+  private unregisterPassiveHudListeners(): void {
+    this.events.off('dribbling-started', this.onDribblingStartedHud, this);
+    this.events.off('dribbling-finished', this.onDribblingFinishedHud, this);
+    this.events.off('dribbling-failed', this.onDribblingFailedHud, this);
+    this.events.off('magnetic-pass-failed', this.onMagneticPassFailedHud, this);
+    this.events.off('pass-intercepted', this.onPassInterceptedHud, this);
+    this.events.off('magnetic-pass-finished', this.onMagneticPassFinishedHud, this);
+    this.events.off('pass-successful', this.onPassSuccessfulHud, this);
+    this.events.off('dribbling-kick-turn', this.handleDribblingKickTurn, this);
   }
 
   private clearMaestroRangePreview(): void {
@@ -3333,6 +3346,34 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * Удар из режима дриблинга Maestro: импульс задаёт PassiveManager, матч нужно перевести в фазу движения как после выстрела.
+   */
+  private handleDribblingKickTurn(data: { unit: Unit }): void {
+    if (this.isTutorialMode) return;
+
+    const cap = data.unit;
+
+    if (this.abilityManager.isActivating()) {
+      this.abilityManager.cancelActivation();
+    }
+
+    this.abilityButton.hide();
+    this.cardPanel?.setVisible(false);
+    this.abilityManager.forceClearTargetingUI();
+    this.hideCardInfo();
+
+    this.shootingController.notifyShotCommittedWithoutDragShot();
+    this.shootingController.setEnabled(false);
+    this.isAbilityInputActive = false;
+
+    this.lastShootingCap = cap;
+    this.abilityManager.setLastActiveUnit(this.lastShootingCap);
+
+    this.matchDirector.onShot(cap.id);
+    this.showPassiveToast('Ход после удара дриблера');
+  }
+
+  /**
    * Legacy swap callback (kept for compatibility).
    * Note: Swap is now processed via onShoot(isSwap=true) and matchDirector.onShot(),
    * so this callback may not be used by the current swap implementation.
@@ -3405,6 +3446,14 @@ export class GameScene extends Phaser.Scene {
     }
     
     this.vfxManager?.update();
+
+    if (this.passiveManager && this.ball && phase !== MatchPhase.GOAL) {
+      const now = this.time.now;
+      if (now - this.lastPassCatchStrayCheckMs >= 500) {
+        this.lastPassCatchStrayCheckMs = now;
+        this.passiveManager.checkAndClearStrayPassCatchAttachment(this.ball);
+      }
+    }
 
     this.lassoController?.update(delta);
     this.lassoButton?.refresh();
@@ -4447,6 +4496,7 @@ export class GameScene extends Phaser.Scene {
     
     this.devOverlay?.destroy();
     this.unsubscribeFromEvents();
+    this.unregisterPassiveHudListeners();
     HapticManager.cleanup();
     AudioManager.getInstance().stopAll();
     this.announcer?.clear();

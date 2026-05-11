@@ -777,6 +777,12 @@ export class ShootingController {
     this.getBallForPassives = fn;
   }
 
+  /** Удар Maestro при дриблинге не проходит через executeShot — фиксируем расход хода. */
+  public notifyShotCommittedWithoutDragShot(): void {
+    this.hasFiredThisTurn = true;
+    this.deselectCap();
+  }
+
   public isScreenBlockedForGameplayPointer(screenX: number, screenY: number): boolean {
     return this.shootingPointerScreenBlock?.(screenX, screenY) ?? false;
   }

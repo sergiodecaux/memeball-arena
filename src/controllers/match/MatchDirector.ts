@@ -5,7 +5,7 @@
 
 import Phaser from 'phaser';
 import { PlayerNumber, FieldBounds } from '../../types';
-import { FactionId } from '../../constants/gameConstants';
+import { FactionId, GOAL, FIELD } from '../../constants/gameConstants';
 import { MatchStateMachine, MatchPhase } from '../../core/MatchStateMachine';
 import { eventBus, GameEvents } from '../../core/EventBus';
 import { Ball } from '../../entities/Ball';
@@ -551,22 +551,35 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
 
     const ball = this.config.ball;
     const bounds = this.config.fieldBounds;
-    
+
+    const scale = bounds.width / FIELD.WIDTH;
+    const goalHalfWidth = (GOAL.WIDTH * scale) / 2;
+    const goalDepth = GOAL.DEPTH * scale;
+    const mouthTol = Math.max(8, 12 * scale);
+
     const { x, y } = ball.body.position;
-    const goalHalfWidth = 69; // GOAL.WIDTH * scale / 2
-    
-    // Верхние ворота (гол игрока 1)
-    if (x >= bounds.centerX - goalHalfWidth && 
-        x <= bounds.centerX + goalHalfWidth &&
-        y < bounds.top) {
+    const inMouthX = x >= bounds.centerX - goalHalfWidth && x <= bounds.centerX + goalHalfWidth;
+
+    // Верхние ворота (гол игрока 1): луза + небольшая «губа» внутрь поля (не отскакивает без засчёта)
+    const topGoal =
+      inMouthX && y >= bounds.top - goalDepth && y <= bounds.top + mouthTol;
+
+    // Нижние ворота (гол игрока 2)
+    const bottomGoal =
+      inMouthX && y >= bounds.bottom - mouthTol && y <= bounds.bottom + goalDepth;
+
+    if (topGoal) {
+      if (import.meta.env.DEV) {
+        console.log(`[MatchDirector] Goal (top) ball @ (${x.toFixed(1)}, ${y.toFixed(1)})`);
+      }
       this.onGoalScored(1);
       return;
     }
-    
-    // Нижние ворота (гол игрока 2)
-    if (x >= bounds.centerX - goalHalfWidth && 
-        x <= bounds.centerX + goalHalfWidth &&
-        y > bounds.bottom) {
+
+    if (bottomGoal) {
+      if (import.meta.env.DEV) {
+        console.log(`[MatchDirector] Goal (bottom) ball @ (${x.toFixed(1)}, ${y.toFixed(1)})`);
+      }
       this.onGoalScored(2);
       return;
     }
