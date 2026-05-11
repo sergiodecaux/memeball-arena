@@ -897,6 +897,7 @@ export class GameScene extends Phaser.Scene {
       shootingController: this.shootingController,
       getHumanOwner: () => this.getMyOwner(),
       isPvP: this.isRealtimePvP,
+      getMatchPhase: () => this.matchDirector.getPhase(),
     });
 
     this.matchDirector.setResolveTurnAdvance((lastId) =>
@@ -2497,6 +2498,8 @@ export class GameScene extends Phaser.Scene {
     this.abilityManager.forceClearTargetingUI();
     this.hideCardInfo();
 
+    this.captainMatchSystem?.cancelUlt();
+
     if (this.aiController) {
       this.aiController.updateScore(data.newScore.player1, data.newScore.player2);
       this.aiController.recordGoal(data.player === 1 ? 'player' : 'ai');
@@ -3460,7 +3463,6 @@ export class GameScene extends Phaser.Scene {
     if (!this.isRealtimePvP) {
       this.refreshCaptainSuperHud();
     }
-    this.captainMatchSystem?.update(time, delta);
 
     const phase = this.matchDirector.getPhase();
     if (phase === MatchPhase.PAUSED || phase === MatchPhase.FINISHED) return;
@@ -3471,6 +3473,8 @@ export class GameScene extends Phaser.Scene {
       this.ball?.update();
       this.caps.forEach(cap => cap.update());
       this.vfxManager?.update();
+
+      this.captainMatchSystem?.update(time, delta);
       
       // НЕ делаем return - физика должна обновляться для waitForObjectsToStop()
       // Пропускаем только MatchDirector update чтобы не было автоматической смены ходов
@@ -3478,6 +3482,9 @@ export class GameScene extends Phaser.Scene {
       this.ball.update();
       this.caps.forEach(cap => cap.update());
       this.matchDirector.update();
+
+      // После матч-логики (гол → GOAL): очистка SUPER до применения сил сингулярности в том же кадре
+      this.captainMatchSystem?.update(time, delta);
       
       this.abilityManager?.update(delta);
       this.player2AbilityManager?.update(delta);
