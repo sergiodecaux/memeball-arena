@@ -648,8 +648,6 @@ export class GameScene extends Phaser.Scene {
             pointer.event.stopPropagation();
           }
         }
-      } else if (this.captainMatchSystem?.handleWorldPointer(pointer.worldX, pointer.worldY)) {
-        pointer.event.stopPropagation();
       }
     });
 
@@ -904,6 +902,13 @@ export class GameScene extends Phaser.Scene {
     this.matchDirector.setResolveTurnAdvance((lastId) =>
       this.captainMatchSystem?.resolveTurnAdvanceAfterStop(lastId) ?? 'switch'
     );
+
+    this.shootingController.setCaptainUltWorldPointerHandler((pointer) => {
+      if (this.shootingController.isScreenBlockedForGameplayPointer(pointer.x, pointer.y)) {
+        return false;
+      }
+      return this.captainMatchSystem?.handleWorldPointer(pointer.worldX, pointer.worldY) ?? false;
+    });
 
     if (this.isRealtimePvP) return;
 

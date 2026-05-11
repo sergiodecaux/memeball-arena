@@ -147,6 +147,12 @@ export class ShootingController {
   /** Экранные координаты (pointer.x/y): если HUD попал под палец — не трогаем стрельбу/выбор фишки */
   private shootingPointerScreenBlock?: (screenX: number, screenY: number) => boolean;
 
+  /**
+   * SUPER капитана: второй тап по полю (конус Урока, сингулярность Этельгард).
+   * Должен выполняться до выбора фишки / прицеливания, иначе стрельба перехватывает pointerdown раньше глобального хэндлера сцены.
+   */
+  private captainUltWorldPointerHandler?: (pointer: Phaser.Input.Pointer) => boolean;
+
   private isLassoActiveCheck: () => boolean = () => false;
 
   private pendingShot: { cap: ShootableUnit; localIndex: number; hitOffset: number } | null = null;
@@ -834,6 +840,12 @@ export class ShootingController {
     this.shootingPointerScreenBlock = fn;
   }
 
+  public setCaptainUltWorldPointerHandler(
+    fn: ((pointer: Phaser.Input.Pointer) => boolean) | undefined,
+  ): void {
+    this.captainUltWorldPointerHandler = fn;
+  }
+
   public setLassoActiveCheck(fn: (() => boolean) | null): void {
     this.isLassoActiveCheck = fn ?? (() => false);
   }
@@ -861,6 +873,10 @@ export class ShootingController {
 
   // === POINTER DOWN ===
   private onPointerDown(pointer: Phaser.Input.Pointer, gameObjects: any[]): void {
+    if (this.captainUltWorldPointerHandler?.(pointer)) {
+      return;
+    }
+
     if (!this.isEnabled || this.hasFiredThisTurn) return;
     if (this.inputBlockedByMagneticDribble()) return;
     if (this.isLassoActiveCheck()) return;
