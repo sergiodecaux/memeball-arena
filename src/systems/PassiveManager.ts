@@ -55,12 +55,13 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       unit: Unit;
       ball: Ball;
       passive: PassiveAbility;
+      constraint: MatterJS.Constraint | null;
       angleRef: { v: number };
-      dragging: { v: boolean };
-      pointerMove: (p: Phaser.Input.Pointer) => void;
+      moveSpeed: number;
+      holding: { v: boolean };
       pointerDown: (p: Phaser.Input.Pointer) => void;
       pointerUp: (p: Phaser.Input.Pointer) => void;
-      linkUpdater: () => void;
+      updateCtrl: () => void;
       aimLine: Phaser.GameObjects.Line;
       aimArrow: Phaser.GameObjects.Triangle;
       linkLine: Phaser.GameObjects.Line;
@@ -77,10 +78,15 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     passive: PassiveAbility;
     targets: Unit[];
     highlights: Phaser.GameObjects.Arc[];
-    labels: Phaser.GameObjects.Text[];
+    nameLabels: Phaser.GameObjects.Text[];
+    distanceLabels: Phaser.GameObjects.Text[];
     aimLine: Phaser.GameObjects.Line;
     aimArrow: Phaser.GameObjects.Triangle;
     hint: Phaser.GameObjects.Text;
+    radiusCircle: Phaser.GameObjects.Arc;
+    passTargetLine: Phaser.GameObjects.Line | null;
+    passTargetLineTween: Phaser.Tweens.Tween | null;
+    sceneUpdateHandlers: (() => void)[];
     pointerMove: (p: Phaser.Input.Pointer) => void;
     pointerDown: (p: Phaser.Input.Pointer) => void;
   } | null = null;
@@ -481,7 +487,7 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     const py = passer.body.position.y;
     const dist = Phaser.Math.Distance.Between(px, py, bx, by);
     if (dist > maxR) {
-      this.scene.events.emit('magnetic-pass-failed', { reason: 'too_far', distance: dist });
+      this.scene.events.emit('magnetic-pass-failed', { reason: 'too_far', distance: dist, maxDistance: maxR });
       return false;
     }
 
@@ -550,17 +556,21 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     passive: PassiveAbility,
     grantBonusToReceiver: boolean,
   ): void {
-    const bonus = passive.params.bonusStrikePower ?? 0.3;
+    const bonus = passive.params.bonusStrikePower ?? 0.35;
     const matter = this.scene.matter;
     const px = passer.body.position.x;
     const py = passer.body.position.y;
+    const rx = receiver.body.position.x;
+    const ry = receiver.body.position.y;
+
+    this.drawMagneticPassTrajectory(px, py, rx, ry, grantBonusToReceiver ? 0x22c55e : 0xef4444);
 
     const pass = { x: px, y: py };
     this.scene.tweens.add({
       targets: pass,
-      x: receiver.body.position.x,
-      y: receiver.body.position.y,
-      duration: 380,
+      x: rx,
+      y: ry,
+      duration: 420,
       ease: 'Sine.InOut',
       onUpdate: () => {
         matter.body.setVelocity(ball.body, { x: 0, y: 0 });
@@ -573,6 +583,12 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
         if (grantBonusToReceiver) {
           this.magneticNextShotMulByReceiverRuntimeId.set(receiver.id, bonus);
           this.showPassiveActivation(passer, passive.name, 0x34d399);
+          this.scene.events.emit('pass-successful', { passer, receiver });
+          this.scene.time.delayedCall(200, () => {
+            if (!receiver.isDestroyed && !ball.isDestroyed) {
+              this.applyPlaymakerBonusStrike(receiver, ball);
+            }
+          });
         } else {
           this.scene.events.emit('pass-intercepted', { passer, interceptor: receiver });
         }
@@ -582,12 +598,125 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     });
   }
 
+  /** Пунктирная траектория паса (краткая визуализация) */
+  private drawMagneticPassTrajectory(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    color: number,
+  ): void {
+    const g = this.scene.add.graphics().setDepth(1550).setScrollFactor(1);
+    g.lineStyle(4, color, 0.62);
+    const steps = 24;
+    let prevX = Phaser.Math.Linear(x0, x1, 0);
+    let prevY = Phaser.Math.Linear(y0, y1, 0);
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const x = Phaser.Math.Linear(x0, x1, t);
+      const y = Phaser.Math.Linear(y0, y1, t);
+      if (i % 2 === 1) {
+        g.beginPath();
+        g.moveTo(prevX, prevY);
+        g.lineTo(x, y);
+        g.strokePath();
+      }
+      prevX = x;
+      prevY = y;
+    }
+    this.scene.time.delayedCall(620, () => g.destroy());
+  }
+
+  /** Импульс мяча к чужим воротам после успешного паса союзнику */
+  private applyPlaymakerBonusStrike(striker: Unit, ball: Ball): void {
+    const matter = this.scene.matter;
+    const goal = this.enemyGoalPoint(striker);
+    const ang = Phaser.Math.Angle.Between(ball.body.position.x, ball.body.position.y, goal.x, goal.y);
+    const repo = getUnitById(striker.getUnitId());
+    const pwr = repo?.stats?.power ?? 5;
+    const sp = Phaser.Math.Clamp(pwr * 0.35 * 1.65, 2.6, 10);
+    matter.body.setVelocity(ball.body, { x: Math.cos(ang) * sp, y: Math.sin(ang) * sp });
+    matter.body.setAngularVelocity(ball.body, 0);
+  }
+
+  /** Расстояние от точки до отрезка [x1,y1]-[x2,y2] */
+  private distanceToLine(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+    const A = px - x1;
+    const B = py - y1;
+    const C = x2 - x1;
+    const D = y2 - y1;
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    let param = -1;
+    if (lenSq !== 0) param = dot / lenSq;
+    let xx: number;
+    let yy: number;
+    if (param < 0) {
+      xx = x1;
+      yy = y1;
+    } else if (param > 1) {
+      xx = x2;
+      yy = y2;
+    } else {
+      xx = x1 + param * C;
+      yy = y1 + param * D;
+    }
+    const dx = px - xx;
+    const dy = py - yy;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  private syncMagneticPassTargetLine(
+    sess: {
+      passTargetLine: Phaser.GameObjects.Line | null;
+      passTargetLineTween: Phaser.Tweens.Tween | null;
+    },
+    ball: Ball,
+    target: Unit | null,
+    passer: Unit,
+  ): void {
+    if (sess.passTargetLineTween) {
+      try {
+        this.scene.tweens.killTweensOf(sess.passTargetLine!);
+      } catch {
+        /* ignore */
+      }
+      sess.passTargetLineTween = null;
+    }
+    if (sess.passTargetLine) {
+      sess.passTargetLine.destroy();
+      sess.passTargetLine = null;
+    }
+    if (!target) return;
+
+    const isAlly = target.owner === passer.owner;
+    const color = isAlly ? 0x22c55e : 0xef4444;
+    const line = this.scene.add
+      .line(0, 0, ball.x, ball.y, target.x, target.y, color, 0.72)
+      .setLineWidth(4)
+      .setDepth(1590)
+      .setScrollFactor(1);
+    sess.passTargetLine = line;
+    sess.passTargetLineTween = this.scene.tweens.add({
+      targets: line,
+      alpha: { from: 0.42, to: 0.92 },
+      duration: 300,
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
   private unitDisplayName(unit: Unit): string {
     const repo = getUnitById(unit.getUnitId());
     return repo?.nameRu ?? repo?.name ?? unit.getUnitId();
   }
 
   private enterMagneticPassAimMode(passer: Unit, ball: Ball, passive: PassiveAbility): void {
+    const passRadiusPx = passive.params.passRadius ?? PLAYMAKER_PASS_RADIUS;
+    const coneRad = Phaser.Math.DegToRad(45);
+    const maxLineDist = 70;
+    const farRing = Math.round(passRadiusPx * 0.72);
+
     const targets = [...this.units.values()].filter(
       (u) => u !== passer && !u.isDestroyed && !u.isStunned(),
     );
@@ -596,16 +725,18 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       return;
     }
 
+    const sceneUpdateHandlers: (() => void)[] = [];
     const highlights: Phaser.GameObjects.Arc[] = [];
-    const labels: Phaser.GameObjects.Text[] = [];
+    const nameLabels: Phaser.GameObjects.Text[] = [];
+    const distanceLabels: Phaser.GameObjects.Text[] = [];
 
     targets.forEach((target) => {
       const isAlly = target.owner === passer.owner;
       const color = isAlly ? 0x10b981 : 0xef4444;
 
       const highlight = this.scene.add
-        .circle(target.x, target.y, 35, color, 0.3)
-        .setStrokeStyle(2, color)
+        .circle(target.x, target.y, 40, color, 0.25)
+        .setStrokeStyle(3, color)
         .setDepth(1500)
         .setScrollFactor(1);
 
@@ -613,96 +744,188 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
 
       this.scene.tweens.add({
         targets: highlight,
-        scale: { from: 1, to: 1.15 },
-        alpha: { from: 0.3, to: 0.5 },
-        duration: 500,
+        scale: { from: 1, to: 1.18 },
+        alpha: { from: 0.25, to: 0.48 },
+        duration: 580,
         yoyo: true,
         repeat: -1,
       });
 
+      const uhH = () => {
+        if (!this.magneticPassSession) return;
+        highlight.setPosition(target.x, target.y);
+      };
+      this.scene.events.on('update', uhH);
+      sceneUpdateHandlers.push(uhH);
+
       const nameLabel = this.scene.add
-        .text(target.x, target.y - 50, this.unitDisplayName(target), {
-          fontSize: '14px',
+        .text(target.x, target.y - 58, this.unitDisplayName(target), {
+          fontSize: '13px',
           color: '#ffffff',
           backgroundColor: isAlly ? '#10b981' : '#ef4444',
           padding: { x: 6, y: 3 },
+          align: 'center',
         })
         .setOrigin(0.5)
-        .setDepth(1501)
+        .setDepth(1502)
         .setScrollFactor(1);
 
-      labels.push(nameLabel);
+      nameLabels.push(nameLabel);
+
+      const uhN = () => {
+        if (!this.magneticPassSession) return;
+        nameLabel.setPosition(target.x, target.y - 58);
+      };
+      this.scene.events.on('update', uhN);
+      sceneUpdateHandlers.push(uhN);
+
+      const distanceLabel = this.scene.add
+        .text(target.x, target.y + 50, '0px', {
+          fontSize: '11px',
+          color: '#ffffff',
+          backgroundColor: '#000000',
+          padding: { x: 4, y: 2 },
+        })
+        .setOrigin(0.5)
+        .setDepth(1502)
+        .setScrollFactor(1)
+        .setAlpha(0.85);
+
+      distanceLabels.push(distanceLabel);
+
+      const uhD = () => {
+        if (!this.magneticPassSession) return;
+        const dist = Math.round(Phaser.Math.Distance.Between(ball.x, ball.y, target.x, target.y));
+        distanceLabel.setText(`${dist}px`);
+        distanceLabel.setPosition(target.x, target.y + 50);
+        let bg = '#10b981';
+        if (dist > passRadiusPx) bg = '#ef4444';
+        else if (dist > farRing) bg = '#f59e0b';
+        distanceLabel.setBackgroundColor(bg);
+      };
+      this.scene.events.on('update', uhD);
+      sceneUpdateHandlers.push(uhD);
     });
 
+    const radiusCircle = this.scene.add
+      .circle(ball.x, ball.y, passRadiusPx, 0x10b981, 0.08)
+      .setStrokeStyle(3, 0x10b981, 0.42)
+      .setDepth(1400)
+      .setScrollFactor(1);
+
+    const uhRadius = () => {
+      if (!this.magneticPassSession) return;
+      radiusCircle.setPosition(ball.x, ball.y);
+    };
+    this.scene.events.on('update', uhRadius);
+    sceneUpdateHandlers.push(uhRadius);
+
     const aimLine = this.scene.add
-      .line(0, 0, ball.x, ball.y, ball.x + 100, ball.y, 0x10b981, 0.85)
-      .setLineWidth(5)
+      .line(0, 0, ball.x, ball.y, ball.x + 120, ball.y, 0x10b981, 0.88)
+      .setLineWidth(6)
       .setDepth(1600)
       .setScrollFactor(1);
 
     const aimArrow = this.scene.add
-      .triangle(ball.x + 100, ball.y, 0, -12, 24, 0, 0, 12, 0x10b981, 1)
+      .triangle(ball.x + 120, ball.y, 0, -14, 26, 0, 0, 14, 0x10b981, 1)
       .setDepth(1601)
       .setScrollFactor(1);
 
     const cam = this.scene.cameras.main;
     const hint = this.scene.add
-      .text(cam.centerX, 96, 'Цельтесь и нажмите на поле — пас ближайшей фишке (можно ошибиться)', {
-        fontSize: '18px',
-        color: '#ffffff',
-        backgroundColor: '#10b981',
-        padding: { x: 14, y: 8 },
-        wordWrap: { width: Math.max(280, cam.width - 48) },
-        align: 'center',
-      })
+      .text(
+        cam.centerX,
+        88,
+        'Прицел 360°: цель на луче и в конусе\nЗелёные — свои, красные — враги. Точнее наведите и нажмите поле',
+        {
+          fontSize: '17px',
+          color: '#ffffff',
+          backgroundColor: '#10b981',
+          padding: { x: 14, y: 10 },
+          align: 'center',
+          wordWrap: { width: Math.max(280, cam.width - 48) },
+          stroke: '#000000',
+          strokeThickness: 2,
+        },
+      )
       .setOrigin(0.5)
       .setDepth(2000)
       .setScrollFactor(0);
 
     let nearestTarget: Unit | null = null;
 
-    const refreshNearest = (wx: number, wy: number) => {
+    const refreshTargeting = (pointer: Phaser.Input.Pointer) => {
+      const sess = this.magneticPassSession;
+      if (!sess || sess.passer !== passer) return;
+
+      const angle = Phaser.Math.Angle.Between(ball.x, ball.y, pointer.worldX, pointer.worldY);
+      const distCursor = Phaser.Math.Distance.Between(ball.x, ball.y, pointer.worldX, pointer.worldY);
+      const lineLength = Math.min(distCursor, passRadiusPx);
+      const endX = ball.x + Math.cos(angle) * lineLength;
+      const endY = ball.y + Math.sin(angle) * lineLength;
+
+      aimLine.setTo(ball.x, ball.y, endX, endY);
+      aimArrow.setPosition(endX, endY);
+      aimArrow.setRotation(angle);
+
       nearestTarget = null;
-      let best = Infinity;
-      for (const u of targets) {
-        const d = Phaser.Math.Distance.Between(wx, wy, u.x, u.y);
-        if (d < best) {
-          best = d;
-          nearestTarget = u;
+      let bestPriority = Infinity;
+
+      targets.forEach((target) => {
+        const distBallTarget = Phaser.Math.Distance.Between(ball.x, ball.y, target.x, target.y);
+        if (distBallTarget > passRadiusPx) return;
+
+        const dLine = this.distanceToLine(target.x, target.y, ball.x, ball.y, endX, endY);
+        const angleToTarget = Phaser.Math.Angle.Between(ball.x, ball.y, target.x, target.y);
+        const angleDiff = Math.abs(Phaser.Math.Angle.Wrap(angleToTarget - angle));
+
+        if (angleDiff < coneRad && dLine < maxLineDist) {
+          const priority = dLine + angleDiff * 100;
+          if (priority < bestPriority) {
+            bestPriority = priority;
+            nearestTarget = target;
+          }
         }
-      }
-      if (best > 80) nearestTarget = null;
+      });
 
       highlights.forEach((h, i) => {
-        const u = targets[i];
-        const sel = u === nearestTarget;
-        h.setScale(sel ? 1.3 : 1);
-        h.setAlpha(sel ? 0.72 : 0.3);
+        const t = targets[i];
+        const sel = t === nearestTarget;
+        const isAlly = t.owner === passer.owner;
+        const strokeCol = isAlly ? 0x10b981 : 0xef4444;
+        if (sel) {
+          h.setScale(1.45);
+          h.setAlpha(0.82);
+          h.setStrokeStyle(5, 0xffffff);
+        } else {
+          h.setScale(1);
+          h.setAlpha(0.28);
+          h.setStrokeStyle(3, strokeCol);
+        }
       });
+
+      nameLabels.forEach((lbl, i) => {
+        const t = targets[i];
+        const sel = t === nearestTarget;
+        const isAlly = t.owner === passer.owner;
+        lbl.setStyle({
+          fontSize: sel ? '15px' : '13px',
+          fontStyle: sel ? 'bold' : 'normal',
+          color: '#ffffff',
+          backgroundColor: isAlly ? (sel ? '#22c55e' : '#10b981') : sel ? '#dc2626' : '#ef4444',
+          padding: { x: 6, y: 3 },
+          align: 'center',
+        });
+        lbl.setScale(sel ? 1.08 : 1);
+      });
+
+      this.syncMagneticPassTargetLine(sess, ball, nearestTarget, passer);
     };
 
     const pointerMove = (pointer: Phaser.Input.Pointer) => {
       if (!this.magneticPassSession) return;
       if (this.interactiveDribbleHudBlock?.(pointer.x, pointer.y)) return;
-
-      const angle = Phaser.Math.Angle.Between(ball.x, ball.y, pointer.worldX, pointer.worldY);
-      const length = 300;
-      const endX = ball.x + Math.cos(angle) * length;
-      const endY = ball.y + Math.sin(angle) * length;
-      aimLine.setTo(ball.x, ball.y, endX, endY);
-      aimArrow.setPosition(endX, endY);
-      aimArrow.setRotation(angle);
-
-      refreshNearest(pointer.worldX, pointer.worldY);
-
-      highlights.forEach((h, i) => {
-        const t = targets[i];
-        h.setPosition(t.x, t.y);
-      });
-      labels.forEach((lbl, i) => {
-        const t = targets[i];
-        lbl.setPosition(t.x, t.y - 50);
-      });
+      refreshTargeting(pointer);
     };
 
     const pointerDown = (pointer: Phaser.Input.Pointer) => {
@@ -710,15 +933,17 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       if (!sess || sess.passer !== passer) return;
       if (this.interactiveDribbleHudBlock?.(pointer.x, pointer.y)) return;
 
-      const receiver = nearestTarget;
-      if (!receiver) {
-        this.scene.events.emit('magnetic-pass-failed', { reason: 'no_target' });
-        this.cancelMagneticPassSession();
+      if (!nearestTarget) {
+        this.scene.events.emit('magnetic-pass-failed', {
+          reason: 'no_target',
+          message: 'Наведите точнее на цель!',
+        });
         return;
       }
 
       const b = sess.ball;
       const ps = sess.passive;
+      const receiver = nearestTarget;
       this.cancelMagneticPassSession();
       this.tweenDeliverMagneticPass(passer, receiver, b, ps, receiver.owner === passer.owner);
     };
@@ -726,23 +951,26 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     this.scene.input.on('pointermove', pointerMove);
     this.scene.input.on('pointerdown', pointerDown);
 
-    refreshNearest(ball.x, ball.y);
-
     this.magneticPassSession = {
       passer,
       ball,
       passive,
       targets,
       highlights,
-      labels,
+      nameLabels,
+      distanceLabels,
       aimLine,
       aimArrow,
       hint,
+      radiusCircle,
+      passTargetLine: null,
+      passTargetLineTween: null,
+      sceneUpdateHandlers,
       pointerMove,
       pointerDown,
     };
 
-    pointerMove(this.scene.input.activePointer);
+    refreshTargeting(this.scene.input.activePointer);
   }
 
   private cancelMagneticPassSession(): void {
@@ -757,11 +985,29 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     this.scene.input.off('pointermove', sess.pointerMove);
     this.scene.input.off('pointerdown', sess.pointerDown);
 
+    sess.sceneUpdateHandlers.forEach((h) => this.scene.events.off('update', h));
+    sess.sceneUpdateHandlers.length = 0;
+
+    if (sess.passTargetLineTween) {
+      try {
+        this.scene.tweens.killTweensOf(sess.passTargetLine!);
+      } catch {
+        /* ignore */
+      }
+      sess.passTargetLineTween = null;
+    }
+    if (sess.passTargetLine) {
+      sess.passTargetLine.destroy();
+      sess.passTargetLine = null;
+    }
+
     sess.highlights.forEach((h) => {
       this.scene.tweens.killTweensOf(h);
       h.destroy();
     });
-    sess.labels.forEach((t) => t.destroy());
+    sess.nameLabels.forEach((t) => t.destroy());
+    sess.distanceLabels.forEach((t) => t.destroy());
+    sess.radiusCircle.destroy();
     sess.aimLine.destroy();
     sess.aimArrow.destroy();
     sess.hint.destroy();
@@ -785,8 +1031,8 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   }
 
   /**
-   * Maestro: упрощённый дриблинг — притягивание мяча к «передней» точке к чужим воротам,
-   * орбита мяча вокруг фишки, прицел от мяча к курсору; отпускание — удар по силе «растяжки».
+   * Maestro: притягивание мяча, связь Matter, медленное движение при удержании;
+   * короткий отпуск (<200 мс) — без удара; длинное удержание и отпуск — удар по длительности; таймаут — автоудар.
    */
   public startMagneticDribble(unit: Unit, ball: Ball): boolean {
     const passive = this.getUnitPassive(unit.getUnitId());
@@ -842,33 +1088,50 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
   private enterInteractiveDribble(unit: Unit, ball: Ball, passive: PassiveAbility): void {
     const uid = unit.id;
     const matter = this.scene.matter;
+    const MatterNative = (Phaser.Physics.Matter as any).Matter;
 
     const duration = passive.params.dribbleDuration ?? 2500;
-    const orbitR = 40;
-    const aimLen = 150;
+    const speedPenalty = passive.params.speedPenalty ?? 0.4;
+    const moveSpeed = Phaser.Math.Clamp(2.35 * (1 - speedPenalty * 0.58), 0.52, 2.85);
+
     const goal = this.enemyGoalPoint(unit);
     const angleRef = { v: Phaser.Math.Angle.Between(unit.x, unit.y, goal.x, goal.y) };
+    const aimLen = 140;
 
-    const repositionBallToOrbit = () => {
-      const bx = unit.body.position.x + Math.cos(angleRef.v) * orbitR;
-      const by = unit.body.position.y + Math.sin(angleRef.v) * orbitR;
-      matter.body.setVelocity(ball.body, { x: 0, y: 0 });
-      matter.body.setAngularVelocity(ball.body, 0);
-      matter.body.setPosition(ball.body, { x: bx, y: by });
-    };
+    let constraint: MatterJS.Constraint | null = null;
+    try {
+      constraint = MatterNative.Constraint.create({
+        bodyA: unit.body as MatterJS.BodyType,
+        bodyB: ball.body as MatterJS.BodyType,
+        length: 40,
+        stiffness: 0.94,
+        damping: 0.09,
+      }) as MatterJS.Constraint;
+      this.scene.matter.world.add(constraint);
+    } catch (e) {
+      console.warn('[PassiveManager] Constraint дриблинга не создан:', e);
+    }
 
-    repositionBallToOrbit();
+    matter.body.setVelocity(ball.body, { x: 0, y: 0 });
+    matter.body.setAngularVelocity(ball.body, 0);
 
-    const startBx = ball.x;
-    const startBy = ball.y;
     const aimLine = this.scene.add
-      .line(0, 0, startBx, startBy, startBx + Math.cos(angleRef.v) * aimLen, startBy + Math.sin(angleRef.v) * aimLen, 0xfbbf24, 0.92)
+      .line(
+        0,
+        0,
+        ball.x,
+        ball.y,
+        ball.x + Math.cos(angleRef.v) * aimLen,
+        ball.y + Math.sin(angleRef.v) * aimLen,
+        0xfbbf24,
+        0.92,
+      )
       .setLineWidth(5)
       .setDepth(1500)
       .setScrollFactor(1);
 
-    const ax = startBx + Math.cos(angleRef.v) * aimLen;
-    const ay = startBy + Math.sin(angleRef.v) * aimLen;
+    const ax = ball.x + Math.cos(angleRef.v) * aimLen;
+    const ay = ball.y + Math.sin(angleRef.v) * aimLen;
     const aimArrow = this.scene.add
       .triangle(ax, ay, 0, -12, 24, 0, 0, 12, 0xfbbf24, 1)
       .setDepth(1501)
@@ -892,7 +1155,8 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     unit.setDribblingCooldownTurns(PASSIVE_SKILL_COOLDOWN.DRIBBLE_TURNS);
     this.showPassiveActivation(unit, passive.name, 0xfbbf24);
 
-    const dragging = { v: false };
+    const holding = { v: false };
+    const gesture = { sawDown: false };
 
     const refreshAimGraphics = () => {
       const bx = ball.x;
@@ -905,47 +1169,71 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       linkLine.setTo(unit.x, unit.y, bx, by);
     };
 
-    const pointerMove = (pointer: Phaser.Input.Pointer) => {
-      const meta = this.interactiveDribble.get(uid);
-      if (!meta || !meta.unit.isMagneticDribbleActive()) return;
-      if (this.interactiveDribbleHudBlock?.(pointer.x, pointer.y)) return;
-
-      angleRef.v = Phaser.Math.Angle.Between(ball.x, ball.y, pointer.worldX, pointer.worldY);
-      repositionBallToOrbit();
-      refreshAimGraphics();
-    };
-
     const pointerDown = (pointer: Phaser.Input.Pointer) => {
       const meta = this.interactiveDribble.get(uid);
       if (!meta || !meta.unit.isMagneticDribbleActive()) return;
       if (this.interactiveDribbleHudBlock?.(pointer.x, pointer.y)) return;
-      dragging.v = true;
+      gesture.sawDown = true;
+      holding.v = true;
     };
 
     const pointerUp = (pointer: Phaser.Input.Pointer) => {
       const meta = this.interactiveDribble.get(uid);
       if (!meta || !meta.unit.isMagneticDribbleActive()) return;
       if (this.interactiveDribbleHudBlock?.(pointer.x, pointer.y)) return;
-      if (!dragging.v) return;
-      dragging.v = false;
 
-      const dragDist = Phaser.Math.Distance.Between(ball.x, ball.y, pointer.worldX, pointer.worldY);
-      const kickPower = Phaser.Math.Clamp(dragDist / 100, 0.12, 1);
-      this.teardownInteractiveDribble(uid, 'kick', { angle: angleRef.v, power: kickPower });
+      if (!gesture.sawDown) return;
+      gesture.sawDown = false;
+
+      holding.v = false;
+      matter.body.setVelocity(unit.body, { x: 0, y: 0 });
+
+      let pressMs = 0;
+      try {
+        pressMs = pointer.getDuration();
+      } catch {
+        pressMs = 0;
+      }
+
+      if (pressMs >= 200) {
+        const kickPower = Phaser.Math.Clamp((pressMs - 200) / 800, 0.14, 1);
+        this.teardownInteractiveDribble(uid, 'kick', { angle: angleRef.v, power: kickPower });
+      }
     };
 
-    const linkUpdater = () => {
+    const updateCtrl = () => {
       const meta = this.interactiveDribble.get(uid);
       if (!meta || !meta.unit.isMagneticDribbleActive()) return;
+
+      const ptr = this.scene.input.activePointer;
+      const hudBlock = this.interactiveDribbleHudBlock?.(ptr.x, ptr.y) ?? false;
+
+      if (!hudBlock) {
+        angleRef.v = Phaser.Math.Angle.Between(ball.x, ball.y, ptr.worldX, ptr.worldY);
+      }
+
+      if (holding.v && !hudBlock) {
+        matter.body.setVelocity(unit.body, {
+          x: Math.cos(angleRef.v) * moveSpeed,
+          y: Math.sin(angleRef.v) * moveSpeed,
+        });
+        matter.body.setAngularVelocity(unit.body, 0);
+        unit.sprite.setRotation(angleRef.v);
+      } else {
+        matter.body.setVelocity(unit.body, { x: 0, y: 0 });
+        matter.body.setAngularVelocity(unit.body, 0);
+      }
+
+      matter.body.setAngularVelocity(ball.body, 0);
+
       refreshAimGraphics();
     };
 
     const timer = this.scene.time.delayedCall(duration, () =>
-      this.teardownInteractiveDribble(uid, 'timeout', { angle: angleRef.v, power: 0.42 }),
+      this.teardownInteractiveDribble(uid, 'timeout', { angle: angleRef.v, power: 0.38 }),
     );
 
-    this.scene.events.on('update', linkUpdater);
-    this.scene.input.on('pointermove', pointerMove);
+    this.scene.events.on('update', updateCtrl);
     this.scene.input.on('pointerdown', pointerDown);
     this.scene.input.on('pointerup', pointerUp);
 
@@ -953,12 +1241,13 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
       unit,
       ball,
       passive,
+      constraint,
       angleRef,
-      dragging,
-      pointerMove,
+      moveSpeed,
+      holding,
       pointerDown,
       pointerUp,
-      linkUpdater,
+      updateCtrl,
       aimLine,
       aimArrow,
       linkLine,
@@ -970,6 +1259,23 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     this.scene.events.emit('dribbling-started', { unit, ball, duration });
   }
 
+  private removeDribbleConstraint(constraint: MatterJS.Constraint | null): void {
+    if (!constraint) return;
+    const MatterNative = (Phaser.Physics.Matter as any).Matter;
+    try {
+      this.scene.matter.world.remove(constraint as MatterJS.Constraint);
+    } catch {
+      try {
+        const engine = (this.scene.matter.world as unknown as { engine?: { world: MatterJS.World } }).engine;
+        if (engine?.world) {
+          MatterNative.World.remove(engine.world, constraint as MatterJS.Constraint);
+        }
+      } catch (e2) {
+        console.warn('[PassiveManager] Не удалось удалить constraint дриблинга:', e2);
+      }
+    }
+  }
+
   private teardownInteractiveDribble(
     uid: string,
     kind: 'kick' | 'timeout' | 'external_clean' | 'external_release',
@@ -978,13 +1284,12 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     const meta = this.interactiveDribble.get(uid);
     if (!meta) return;
 
-    const { unit, ball, passive, pointerMove, pointerDown, pointerUp, linkUpdater, aimLine, aimArrow, linkLine, timer, angleRef } =
+    const { unit, ball, passive, constraint, pointerDown, pointerUp, updateCtrl, aimLine, aimArrow, linkLine, timer, angleRef } =
       meta;
 
     const matter = this.scene.matter;
 
-    this.scene.events.off('update', linkUpdater);
-    this.scene.input.off('pointermove', pointerMove);
+    this.scene.events.off('update', updateCtrl);
     this.scene.input.off('pointerdown', pointerDown);
     this.scene.input.off('pointerup', pointerUp);
     timer?.remove(false);
@@ -993,6 +1298,8 @@ export class PassiveManager extends Phaser.Events.EventEmitter {
     aimLine.destroy();
     aimArrow.destroy();
     linkLine.destroy();
+
+    this.removeDribbleConstraint(constraint);
 
     matter.body.setVelocity(unit.body, { x: 0, y: 0 });
     matter.body.setAngularVelocity(unit.body, 0);

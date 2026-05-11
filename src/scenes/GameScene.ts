@@ -3006,8 +3006,10 @@ export class GameScene extends Phaser.Scene {
     this.events.on('magnetic-pass-failed', this.onMagneticPassFailedHud, this);
     this.events.on('pass-intercepted', this.onPassInterceptedHud, this);
     this.events.on('magnetic-pass-finished', this.onMagneticPassFinishedHud, this);
+    this.events.on('pass-successful', this.onPassSuccessfulHud, this);
 
-    console.log('[GameScene] Упрощённые способности: дриблинг ~180 px к мячу; магнитный пас без меню (можно во врага)');
+    console.log('[GameScene] Способности v3: дриблинг — медленное движение + долгое нажатие = удар');
+    console.log('[GameScene] Магнитный пас 360°: конус 45°, линия прицела, радиус с подсказками');
   }
 
   private clearMaestroRangePreview(): void {
@@ -3085,7 +3087,7 @@ export class GameScene extends Phaser.Scene {
       this,
       this.scale.width / 2,
       96,
-      '🎮 Наведите направление от мяча\n⭐ Удержите и отпустите на поле — удар (сила по растяжению)',
+      '🎮 Удерживайте на поле — фишка движется к прицелу от мяча\n⭐ Отпускание после долгого нажатия (≥200 мс) — удар по времени удержания',
       { size: 'sm', color: '#fffbeb', stroke: true, align: 'center' },
     )
       .setScrollFactor(0)
@@ -3125,17 +3127,83 @@ export class GameScene extends Phaser.Scene {
     this.passiveSkillButton?.refresh();
   }
 
-  private onMagneticPassFailedHud(data: { reason: string; distance?: number }): void {
+  private onMagneticPassFailedHud(data: {
+    reason: string;
+    distance?: number;
+    maxDistance?: number;
+    message?: string;
+  }): void {
     this.passiveSkillButton?.refresh();
     if (data.reason === 'too_far' && data.distance !== undefined) {
-      this.showPassiveToast(`Мяч далеко для паса (${Math.round(data.distance)} px, макс ${PLAYMAKER_PASS_RADIUS})`);
+      const max =
+        data.maxDistance !== undefined ? Math.round(data.maxDistance) : PLAYMAKER_PASS_RADIUS;
+      this.showPassiveCenterMessage(`Мяч слишком далеко!\n${Math.round(data.distance)} px / ${max} px`, 0xf59e0b);
     } else if (data.reason === 'no_target') {
-      this.showPassiveToast('Нет фишки рядом с указателем');
+      this.showPassiveCenterMessage(data.message ?? 'Наведите точнее на цель!', 0xf59e0b);
     } else if (data.reason === 'no_targets') {
       this.showPassiveToast('Нет доступных целей для паса');
     } else {
       this.showPassiveToast('Магнитный пас не выполнен');
     }
+  }
+
+  private onPassSuccessfulHud(data: { passer: Unit; receiver: Unit }): void {
+    const pn =
+      getCatalogUnitById(data.passer.getUnitId())?.nameRu ??
+      getCatalogUnitById(data.passer.getUnitId())?.name ??
+      data.passer.getUnitId();
+    const rn =
+      getCatalogUnitById(data.receiver.getUnitId())?.nameRu ??
+      getCatalogUnitById(data.receiver.getUnitId())?.name ??
+      data.receiver.getUnitId();
+
+    const msg = this.add
+      .text(this.scale.width / 2, 120, `Пас: ${pn} → ${rn}`, {
+        fontSize: '20px',
+        color: '#ffffff',
+        backgroundColor: '#10b981',
+        padding: { x: 18, y: 10 },
+        stroke: '#000000',
+        strokeThickness: 3,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setDepth(2000)
+      .setScrollFactor(0);
+
+    this.tweens.add({
+      targets: msg,
+      alpha: 0,
+      y: msg.y - 40,
+      duration: 1800,
+      onComplete: () => msg.destroy(),
+    });
+  }
+
+  /** Короткое сообщение по центру экрана (ошибки прицела паса и т.п.) */
+  private showPassiveCenterMessage(text: string, bgHex: number): void {
+    const rgba = Phaser.Display.Color.IntegerToColor(bgHex).rgba;
+    const msg = this.add
+      .text(this.scale.width / 2, this.scale.height / 2, text, {
+        fontSize: '20px',
+        color: '#ffffff',
+        backgroundColor: rgba,
+        padding: { x: 18, y: 10 },
+        stroke: '#000000',
+        strokeThickness: 2,
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setDepth(2000)
+      .setScrollFactor(0);
+
+    this.tweens.add({
+      targets: msg,
+      alpha: 0,
+      y: msg.y - 50,
+      duration: 1500,
+      onComplete: () => msg.destroy(),
+    });
   }
 
   private onPassInterceptedHud(data: { passer: Unit; interceptor: Unit }): void {
