@@ -2,14 +2,14 @@
 
 import Phaser from 'phaser';
 import { Ball } from '../entities/Ball';
-import { AIDifficulty, PlayerNumber, normalizeGameAIDifficulty, AIDifficultyInput } from '../types';
+import { AIDifficulty, normalizeGameAIDifficulty, AIDifficultyInput } from '../types';
 import { FIELD, GOAL, FactionId, LASSO_CONFIG } from '../constants/gameConstants';
 import {
   AIMatchContext,
   getContextDifficultyModifier,
   getContextReactionModifier,
 } from './MatchContext';
-import { Formation, playerData } from '../data/PlayerData';
+import { Formation } from '../data/PlayerData';
 import { AudioManager } from '../managers/AudioManager';
 import { AbilityScorer, AIUnit, CardScore, GameState } from './scoring/AbilityScorer';
 import { CardDefinition, getCardsByFaction } from '../data/CardsCatalog';
@@ -17,6 +17,21 @@ import { getAIFormationsForTeamSize, getDefaultAIFormation } from './AIFormation
 import { AIUtils } from './AIUtils';
 import type { AIOpponentProfile } from './AIProfile';
 import { getProfileCardModifiers, getProfilePlaystyleNoise } from './AIProfile';
+import type {
+  AISkillLevel,
+  ComebackState,
+  CounterStrategy,
+  OpponentAnalysis,
+  PassChainPlan,
+  PlayerPattern,
+  UnitSynergy,
+} from './types/AITypes';
+import { PreMatchAnalyzer } from './analysis/PreMatchAnalyzer';
+import { PatternRecognizer } from './patterns/PatternRecognizer';
+import { ComebackPlanner } from './comeback/ComebackPlanner';
+import { SynergyAnalyzer } from './synergy/SynergyAnalyzer';
+import { PassChainPlanner } from './passes/PassChainPlanner';
+import { MatchAdapter } from './adaptation/MatchAdapter';
 
 // === ТИПЫ ===
 
@@ -24,9 +39,10 @@ interface ShotCandidate {
   unit: AIUnit;
   target: { x: number; y: number };
   score: number;
-  type: 'goal' | 'pass' | 'defend' | 'clear' | 'pressure' | 'lasso';
+  type: 'goal' | 'pass' | 'defend' | 'clear' | 'pressure' | 'lasso' | 'pass_chain';
   force: { x: number; y: number };
   description: string;
+  passChain?: PassChainPlan;
 }
 
 interface AIState {
@@ -37,6 +53,10 @@ interface AIState {
   turnsSinceLastGoal: number;
   currentFormation: Formation;
   aggression: number;
+  /** Номер завершённого хода AI (инкремент в startTurn). */
+  turnNumber: number;
+  /** Оценка оставшихся ходов до конца матча (если неизвестно — большое число). */
+  turnsRemaining: number;
 }
 
 interface DifficultySettings {
@@ -51,6 +71,12 @@ interface DifficultySettings {
   cardUsageChance: number;      // Шанс попытаться использовать карту
   minCardScore: number;         // Минимальный score для использования карты
   maxCardsPerMatch: number;     // Макс. карт за матч
+  usePassChains: boolean;
+  useSynergyAnalysis: boolean;
+  usePatternRecognition: boolean;
+  adaptDuringMatch: boolean;
+  comebackAggression: number;
+  usePreMatchAnalysis: boolean;
 }
 
 // ✅ ДОБАВЛЕНО: Локальный интерфейс для юнитов со stats
@@ -82,6 +108,12 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
     cardUsageChance: 0,    // ✅ No cards on easy
     minCardScore: 80,
     maxCardsPerMatch: 0,   // ✅ No cards per match
+    usePassChains: false,
+    useSynergyAnalysis: false,
+    usePatternRecognition: false,
+    adaptDuringMatch: false,
+    comebackAggression: 0.35,
+    usePreMatchAnalysis: false,
   },
   medium: {
     reactionTime: { min: 700, max: 1000 },
@@ -94,6 +126,12 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
     cardUsageChance: 0.42,
     minCardScore: 38,
     maxCardsPerMatch: 3,
+    usePassChains: true,
+    useSynergyAnalysis: true,
+    usePatternRecognition: false,
+    adaptDuringMatch: true,
+    comebackAggression: 0.55,
+    usePreMatchAnalysis: true,
   },
   hard: {
     reactionTime: { min: 300, max: 500 },
@@ -106,6 +144,12 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
     cardUsageChance: 0.58,
     minCardScore: 26,
     maxCardsPerMatch: 4,
+    usePassChains: true,
+    useSynergyAnalysis: true,
+    usePatternRecognition: true,
+    adaptDuringMatch: true,
+    comebackAggression: 0.75,
+    usePreMatchAnalysis: true,
   },
   impossible: {
     reactionTime: { min: 100, max: 300 },
@@ -118,6 +162,12 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
     cardUsageChance: 0.82,
     minCardScore: 12,
     maxCardsPerMatch: 8,
+    usePassChains: true,
+    useSynergyAnalysis: true,
+    usePatternRecognition: true,
+    adaptDuringMatch: true,
+    comebackAggression: 1.0,
+    usePreMatchAnalysis: true,
   },
 };
 
@@ -126,6 +176,7 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
 export class AIController {
   private scene: Phaser.Scene;
   private difficulty: AIDifficulty;
+  private skillLevel: AISkillLevel;
   private settings: DifficultySettings;
   
   private aiUnits: AIUnit[] = [];
@@ -154,6 +205,8 @@ export class AIController {
     turnsSinceLastGoal: 0,
     currentFormation: getDefaultAIFormation(3),
     aggression: 0.5,
+    turnNumber: 0,
+    turnsRemaining: 999,
   };
 
   // ⭐ NEW: Карточная система AI
@@ -186,6 +239,15 @@ export class AIController {
   /** Режим матча (лига / турнир / PvP-бот и т.д.) — задаётся после init через setMatchContext */
   private aiMatchContext: AIMatchContext = { mode: 'friendly' };
 
+  private opponentAnalysis?: OpponentAnalysis;
+  private counterStrategy?: CounterStrategy;
+  private patternRecognizer!: PatternRecognizer;
+  private passChainPlanner!: PassChainPlanner;
+  private matchAdapter = new MatchAdapter();
+  private teamSynergies: UnitSynergy[] = [];
+  private comebackState?: ComebackState;
+  private hasAppliedInitialCounterFormation = false;
+
   // ЗАЩИТА ОТ ДВОЙНОГО ХОДА
   public isThinking = false;
   private lastMoveTime = 0;
@@ -194,6 +256,7 @@ export class AIController {
   constructor(scene: Phaser.Scene, difficulty: AIDifficultyInput = 'medium', profile?: AIOpponentProfile) {
     this.scene = scene;
     this.difficulty = normalizeGameAIDifficulty(difficulty);
+    this.skillLevel = this.mapDifficultyToSkillLevel(this.difficulty);
     this.settings = { ...DIFFICULTY_SETTINGS[this.difficulty] };
 
     this.profile = profile ?? { tier: 'standard', seed: 0 };
@@ -201,8 +264,25 @@ export class AIController {
     this.profileNoise = getProfilePlaystyleNoise(this.profile.seed);
 
     this.calculateFieldBounds();
+    this.patternRecognizer = new PatternRecognizer(this.fieldBounds);
+    this.passChainPlanner = new PassChainPlanner(this.fieldBounds);
 
-    console.log(`[AI] 🤖 Created: ${this.difficulty}, profile=${this.profile.tier}`);
+    console.log(`[AI] 🤖 Created: ${this.difficulty} (${this.skillLevel}), profile=${this.profile.tier}`);
+  }
+
+  private mapDifficultyToSkillLevel(d: AIDifficulty): AISkillLevel {
+    switch (d) {
+      case 'easy':
+        return 'easy';
+      case 'medium':
+        return 'medium';
+      case 'hard':
+        return 'hard';
+      case 'impossible':
+        return 'expert';
+      default:
+        return 'medium';
+    }
   }
 
   setCaptainShotGate(fn: ((unit: AIUnit) => boolean) | undefined): void {
@@ -255,6 +335,7 @@ export class AIController {
     console.log(
       `[AI] ⚙️ Settings after context: acc=${this.settings.accuracy.toFixed(2)}, react=${this.settings.reactionTime.min}-${this.settings.reactionTime.max}ms`,
     );
+    this.updateComebackState();
   }
 
   private calculateFieldBounds(): void {
@@ -326,17 +407,74 @@ export class AIController {
         this.settings.maxCardsPerMatch = 9999;
         this.settings.cardUsageChance = 0.85; // 85% chance to try using a card every turn
         this.settings.minCardScore = 10; // Use cards even if they are only slightly useful
+        this.settings.usePassChains = true;
+        this.settings.useSynergyAnalysis = true;
+        this.settings.usePatternRecognition = true;
+        this.settings.adaptDuringMatch = true;
+        this.settings.usePreMatchAnalysis = false;
+        this.settings.comebackAggression = 0.85;
       }
     }
     
+    this.hasAppliedInitialCounterFormation = false;
+
     // Генерируем виртуальную руку карт
     this.generateCardHand();
-    
+
+    if (!this.bossId) {
+      this.performPreMatchAnalysis();
+    }
+    this.updateComebackState();
+
     // ✅ ИЗМЕНЕНО: Выбираем формацию с учётом размера команды
     this.selectFormation();
-    
+
     console.log(`[AI] Initialized: ${aiUnits.length} AI (${this.factionId}), ${playerUnits.length} player units, teamSize: ${this.teamSize}`);
     console.log(`[AI] Card hand: ${this.availableCards.map(c => c.id).join(', ')}`);
+    if (this.opponentAnalysis) {
+      console.log(`[AI] 🔍 Opponent strategy hint: ${this.opponentAnalysis.likelyStrategy}`);
+    }
+  }
+
+  private performPreMatchAnalysis(): void {
+    if (!this.settings.usePreMatchAnalysis || this.playerUnits.length === 0) return;
+
+    let playerFaction: FactionId = 'magma';
+    if (typeof this.playerUnits[0].getFactionId === 'function') {
+      playerFaction = this.playerUnits[0].getFactionId!() || 'magma';
+    }
+
+    this.opponentAnalysis = PreMatchAnalyzer.analyzeOpponent(this.playerUnits, playerFaction);
+    this.counterStrategy = PreMatchAnalyzer.createCounterStrategy(
+      this.opponentAnalysis,
+      this.aiUnits,
+      this.skillLevel,
+    );
+
+    if (this.counterStrategy) {
+      this.settings.passChance = Math.min(
+        0.8,
+        this.settings.passChance * (0.8 + this.counterStrategy.playStyle.passFrequency * 0.4),
+      );
+      this.settings.cardUsageChance = Math.min(
+        0.95,
+        this.settings.cardUsageChance * (0.8 + this.counterStrategy.playStyle.cardUsage * 0.35),
+      );
+    }
+
+    if (this.settings.useSynergyAnalysis) {
+      this.teamSynergies = SynergyAnalyzer.findTeamSynergies(this.aiUnits);
+    }
+  }
+
+  private updateComebackState(): void {
+    this.comebackState = ComebackPlanner.createComebackPlan(
+      this.state.aiScore,
+      this.state.playerScore,
+      this.state.turnsRemaining,
+      this.teamSize,
+      this.skillLevel,
+    );
   }
 
   // ⭐ NEW: Генерация карт для AI
@@ -445,7 +583,7 @@ export class AIController {
     this.state.playerScore = playerScore;
     this.state.aiScore = aiScore;
     this.updateAggression();
-    // Смена схемы: только в recordGoal при formationAdaptation (как у игрока после гола).
+    this.updateComebackState();
   }
 
   recordGoal(scoredBy: 'player' | 'ai'): void {
@@ -460,6 +598,13 @@ export class AIController {
 
     if (this.settings.formationAdaptation) {
       this.selectFormation();
+    }
+
+    if (this.settings.adaptDuringMatch) {
+      const trigger = scoredBy === 'player' ? 'goal_conceded' : 'goal_scored';
+      const action = this.settings.formationAdaptation ? 'changed_formation' : 'maintained_strategy';
+      const result = scoredBy === 'ai' ? 'positive' : 'negative';
+      this.matchAdapter.recordAdaptation(trigger, action, result);
     }
   }
 
@@ -483,6 +628,10 @@ export class AIController {
       baseAggr = Math.max(0.20, baseAggr - 0.20);
     }
 
+    if (this.comebackState && this.comebackState.desperationLevel !== 'none') {
+      baseAggr = Math.min(1, baseAggr * (1 + this.settings.comebackAggression * 0.28));
+    }
+
     this.state.aggression = Phaser.Math.Clamp(baseAggr, 0.15, 0.97);
   }
 
@@ -495,6 +644,23 @@ export class AIController {
 
   private selectFormation(): void {
     const formations = this.getFormationsForTeamSize();
+
+    if (this.counterStrategy && !this.hasAppliedInitialCounterFormation && !this.bossId) {
+      this.state.currentFormation = this.counterStrategy.recommendedFormation;
+      this.hasAppliedInitialCounterFormation = true;
+      console.log(`[AI] 📐 Initial formation (counter-setup): ${this.counterStrategy.recommendedFormation.name}`);
+      return;
+    }
+
+    if (this.comebackState && this.comebackState.desperationLevel !== 'none') {
+      const comebackFormation = ComebackPlanner.getComebackFormation(this.comebackState, this.teamSize);
+      if (comebackFormation.id !== this.state.currentFormation.id) {
+        console.log(`[AI] 🔥 Comeback formation → ${comebackFormation.name}`);
+        this.state.currentFormation = comebackFormation;
+        return;
+      }
+    }
+
     const diff = this.state.aiScore - this.state.playerScore;
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
 
@@ -556,16 +722,19 @@ export class AIController {
     
     this.isThinking = true;
     this.state.turnsSinceLastGoal++;
+    this.state.turnNumber++;
 
-    // Схема ИИ меняется только после гола (recordGoal → selectFormation), как у игрока после сброса позиций —
-    // не переставляем фишки посреди матча.
+    if (this.settings.adaptDuringMatch) {
+      this.matchAdapter.updateTurn(this.state.turnNumber);
+      this.checkAndApplyAdaptation();
+    }
 
     const delay = Phaser.Math.Between(
       this.settings.reactionTime.min,
       this.settings.reactionTime.max
     );
     
-    console.log(`[AI] 🧠 Thinking... (${delay}ms)`);
+    console.log(`[AI] 🧠 Thinking... (${delay}ms, aiTurn ${this.state.turnNumber})`);
     
     this.thinkingTimer = this.scene.time.delayedCall(delay, () => {
       this.executeMove();
@@ -578,6 +747,44 @@ export class AIController {
       this.thinkingTimer = undefined;
     }
     this.isThinking = false;
+  }
+
+  private checkAndApplyAdaptation(): void {
+    if (!this.settings.adaptDuringMatch) return;
+
+    const playerPattern = this.settings.usePatternRecognition
+      ? this.patternRecognizer.analyzePatterns()
+      : this.patternRecognizer.getDefaultPattern();
+
+    const adaptation = this.matchAdapter.shouldAdapt(
+      this.state.aiScore,
+      this.state.playerScore,
+      playerPattern,
+      this.state.turnsRemaining,
+      this.skillLevel,
+    );
+
+    if (adaptation.actions.changeFormation) {
+      const newFormation = this.matchAdapter.getAdaptiveFormation(
+        this.state.currentFormation,
+        adaptation,
+        this.teamSize,
+        this.state.aiScore,
+        this.state.playerScore,
+      );
+      if (newFormation.id !== this.state.currentFormation.id) {
+        console.log(`[AI] 🔄 Adaptive formation → ${newFormation.name}`);
+        this.state.currentFormation = newFormation;
+      }
+    }
+
+    if (adaptation.actions.switchPlayStyle) {
+      if (playerPattern.detected.positioning === 'offensive') {
+        this.settings.defenseZone = Math.min(600, this.settings.defenseZone * 1.15);
+      } else if (playerPattern.detected.positioning === 'defensive') {
+        this.settings.passChance = Math.min(0.85, this.settings.passChance * 1.12);
+      }
+    }
   }
 
   // === ЛОГИКА ХОДА ===
@@ -651,6 +858,10 @@ export class AIController {
       return Math.random() < 0.7;
     }
 
+    if (this.comebackState && ComebackPlanner.shouldUseCardForComeback(this.comebackState)) {
+      return true;
+    }
+
     let chance = this.settings.cardUsageChance * this.profileCardMods.cardUsageMultiplier;
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
     if (bunker > 0.58) {
@@ -665,10 +876,15 @@ export class AIController {
     const gameState = this.buildGameState();
 
     const bunker = AIUtils.evaluatePlayerBunkerLevel(this.playerUnits, this.ball, this.fieldBounds);
-    const preferred = Math.max(
+    let preferred = Math.max(
       6,
-      Math.floor(this.settings.minCardScore * this.profileCardMods.minScoreMultiplier * (bunker > 0.55 ? 0.85 : 1))
+      Math.floor(this.settings.minCardScore * this.profileCardMods.minScoreMultiplier * (bunker > 0.55 ? 0.85 : 1)),
     );
+
+    const prio = this.counterStrategy?.abilityPriority ?? [];
+    if (prio.length > 0 && Math.random() < 0.35) {
+      preferred = Math.max(5, Math.floor(preferred * 0.88));
+    }
 
     const bestCard = AbilityScorer.pickBestExecutableCardForAI(
       this.availableCards,
@@ -719,11 +935,78 @@ export class AIController {
     const goalOpenness = this.evaluateGoalOpenness();
     const bunkerAttackBoost = (1 + bunker * 0.62) * (1 + this.profileNoise.bunkerOffset * 0.35);
 
+    const pushPassChainCandidate = (chain: PassChainPlan, scoreBoost: number, description: string) => {
+      const pass = chain.passes[0];
+      const force = this.calculatePassChainForce(chain.initiator, pass);
+      candidates.push({
+        unit: chain.initiator,
+        target: { x: pass.targetX, y: pass.targetY },
+        score: chain.totalScore + scoreBoost,
+        type: 'pass_chain',
+        force,
+        description,
+        passChain: chain,
+      });
+    };
+
+    if (this.settings.usePassChains && this.aiUnits.length >= 2) {
+      const passChain = this.passChainPlanner.planBestPassChain(
+        this.aiUnits,
+        this.ball,
+        this.fieldBounds.bottom,
+        58,
+      );
+      if (passChain) {
+        pushPassChainCandidate(
+          passChain,
+          0,
+          `Pass chain ${passChain.passes.length + 1}-step (${passChain.expectedOutcome})`,
+        );
+      }
+
+      if (this.skillLevel === 'hard' || this.skillLevel === 'expert') {
+        const tiki = this.passChainPlanner.planSpecialCombo(this.aiUnits, this.ball, this.fieldBounds.bottom, 'tiki-taka');
+        if (tiki && tiki.totalScore >= 68) {
+          pushPassChainCandidate(tiki, 14, '⚡ Tiki-taka setup');
+        }
+        const dribSnipe = this.passChainPlanner.planSpecialCombo(
+          this.aiUnits,
+          this.ball,
+          this.fieldBounds.bottom,
+          'dribble-snipe',
+        );
+        if (dribSnipe && dribSnipe.totalScore >= 62) {
+          pushPassChainCandidate(dribSnipe, 11, '🎯 Dribble → sniper lane');
+        }
+        if (this.state.aiScore < this.state.playerScore) {
+          const outlet = this.passChainPlanner.planSpecialCombo(
+            this.aiUnits,
+            this.ball,
+            this.fieldBounds.bottom,
+            'tank-outlet',
+          );
+          if (outlet && outlet.totalScore >= 52) {
+            pushPassChainCandidate(outlet, 9, '🛡️ Outlet pass');
+          }
+        }
+        if (this.skillLevel === 'expert' && this.state.aiScore < this.state.playerScore) {
+          const chaos = this.passChainPlanner.planSpecialCombo(this.aiUnits, this.ball, this.fieldBounds.bottom, 'chaos');
+          if (chaos && chaos.totalScore >= 58) {
+            pushPassChainCandidate(chaos, 16, '🌀 Chaos link-up');
+          }
+        }
+      }
+    }
+
     for (const unit of this.aiUnits) {
       if (unit.isStunned?.()) continue;
       if (!this.allowedByCaptainGate(unit)) continue;
+
+      const synergyBonus = this.calculateSynergyBonus(unit);
+
       const goal = this.evaluateGoalShot(unit);
       if (goal) {
+        goal.score += synergyBonus;
         if (attackOpportunity > 0.6) {
           goal.score *= 1.2;
         }
@@ -732,6 +1015,9 @@ export class AIController {
         }
         if (goalOpenness > 0.6) {
           goal.score *= 1.0 + goalOpenness * 0.3;
+        }
+        if (this.comebackState?.tactics.allowLongShots) {
+          goal.score *= 1.12;
         }
         candidates.push(goal);
       }
@@ -755,9 +1041,15 @@ export class AIController {
         candidates.push(defend);
       }
 
-      if (Math.random() < Phaser.Math.Clamp(this.settings.passChance + this.profileNoise.passOffset, 0, 0.92)) {
+      let effectivePassChance = Phaser.Math.Clamp(this.settings.passChance + this.profileNoise.passOffset, 0, 0.92);
+      if (this.comebackState?.tactics.allowRiskyPasses) {
+        effectivePassChance = Math.min(0.92, effectivePassChance * 1.22);
+      }
+
+      if (Math.random() < effectivePassChance) {
         const pass = this.evaluatePass(unit);
         if (pass) {
+          pass.score += synergyBonus * 0.55;
           if (danger > 0.8) {
             pass.score *= 0.45;
           }
@@ -806,7 +1098,11 @@ export class AIController {
       maestro: 310,
       enforcer: 260,
     };
-    if (distToBall > (maxHitDist[unit.getCapClass()] ?? 320)) return null;
+    let effectiveMax = maxHitDist[unit.getCapClass()] ?? 320;
+    if (this.comebackState?.tactics.allowLongShots) {
+      effectiveMax *= 1.35;
+    }
+    if (distToBall > effectiveMax) return null;
 
     const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y);
     const toGoal = new Phaser.Math.Vector2(goalCenter.x - bPos.x, goalCenter.y - bPos.y);
@@ -1001,53 +1297,92 @@ export class AIController {
   private evaluatePass(unit: AIUnit): ShotCandidate | null {
     const uPos = unit.body.position;
     const bPos = this.ball.body.position;
-    
+
     let bestTeammate: AIUnit | null = null;
     let bestScore = 0;
-    
-    // ✅ Универсальный цикл для любого количества тиммейтов
+
     for (const tm of this.aiUnits) {
       if (tm === unit) continue;
-      
+
       const tmPos = tm.body.position;
-      const distToGoal = Phaser.Math.Distance.Between(
-        tmPos.x, tmPos.y,
-        this.fieldBounds.centerX, this.fieldBounds.bottom
-      );
-      
-      let posScore = (this.fieldBounds.height - distToGoal) / this.fieldBounds.height * 50;
-      
-      // ✅ IMPROVED: Extra weight if teammate is a sniper (especially when closer to opponent goal)
       const tmClass = tm.getCapClass();
+      const unitClass = unit.getCapClass();
+
+      const distToGoal = Phaser.Math.Distance.Between(
+        tmPos.x,
+        tmPos.y,
+        this.fieldBounds.centerX,
+        this.fieldBounds.bottom,
+      );
+
+      let posScore = ((this.fieldBounds.height - distToGoal) / this.fieldBounds.height) * 50;
+
       if (tmClass === 'sniper') {
-        posScore += 20; // Prefer passing to snipers
-        // Additional bonus if sniper is in good position
-        if (distToGoal < this.fieldBounds.height * 0.6) {
-          posScore += 15;
-        }
+        posScore += 28;
+        if (distToGoal < this.fieldBounds.height * 0.6) posScore += 18;
       }
-      
+      if (tmClass === 'maestro') {
+        posScore += 22;
+        const centerDist = Math.abs(tmPos.x - this.fieldBounds.centerX);
+        if (centerDist < this.fieldBounds.width * 0.25) posScore += 14;
+      }
+      if (tmClass === 'playmaker') {
+        posScore += 20;
+        if (distToGoal < this.fieldBounds.height * 0.5) posScore += 11;
+      }
+      if (tmClass === 'trickster') {
+        posScore += 16;
+        const angleFromCenter = Math.abs(tmPos.x - this.fieldBounds.centerX);
+        if (angleFromCenter > this.fieldBounds.width * 0.2) posScore += 9;
+      }
+      if (tmClass === 'balanced') posScore += 10;
+      if (tmClass === 'tank' || tmClass === 'enforcer') posScore -= 18;
+
+      if (unitClass === 'maestro') posScore *= 1.28;
+      else if (unitClass === 'playmaker') posScore *= 1.14;
+      else if (unitClass === 'sniper') posScore *= 0.72;
+      else if (unitClass === 'tank' || unitClass === 'enforcer') posScore *= 0.52;
+
+      if (this.settings.useSynergyAnalysis) {
+        posScore += SynergyAnalyzer.evaluatePairSynergy(unit, tm) * 0.26;
+      }
+
+      if (unitClass === 'maestro' && tmClass === 'sniper') posScore += 32;
+      if (unitClass === 'playmaker' && tmClass === 'maestro') posScore += 26;
+      if (
+        (unitClass === 'playmaker' || unitClass === 'trickster') &&
+        tmClass === 'sniper'
+      ) {
+        posScore += 23;
+      }
+      if (
+        (unitClass === 'tank' || unitClass === 'enforcer') &&
+        (tmClass === 'sniper' || tmClass === 'playmaker' || tmClass === 'maestro')
+      ) {
+        posScore += 28;
+      }
+
       if (posScore > bestScore) {
         bestScore = posScore;
         bestTeammate = tm;
       }
     }
-    
+
     if (!bestTeammate) return null;
-    
+
     const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
     const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
-    
+
     const power = this.calculatePower(unit, distToBall) * 0.7;
     const force = this.applyError(toBall, power, unit);
-    
+
     return {
       unit,
       target: bestTeammate.body.position,
       score: bestScore * 0.6,
       type: 'pass',
       force,
-      description: `Pass by ${unit.getCapClass()} to ${bestTeammate.getCapClass()}`,
+      description: `Pass: ${unit.getCapClass()} → ${bestTeammate.getCapClass()}`,
     };
   }
 
@@ -1073,6 +1408,55 @@ export class AIController {
       force,
       description: `Micro-press by ${unit.getCapClass()} dist:${distToBall.toFixed(0)}`,
     };
+  }
+
+  private calculateSynergyBonus(unit: AIUnit): number {
+    if (!this.settings.useSynergyAnalysis || this.teamSynergies.length === 0) return 0;
+    let bonus = 0;
+    for (const synergy of this.teamSynergies) {
+      if (synergy.units.includes(unit.id)) bonus += synergy.strength * 0.14;
+    }
+    return Math.min(18, bonus);
+  }
+
+  private calculatePassChainForce(
+    initiator: AIUnit,
+    pass: PassChainPlan['passes'][0],
+  ): { x: number; y: number } {
+    const from = initiator.body.position;
+    const dx = pass.targetX - from.x;
+    const dy = pass.targetY - from.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const dir = new Phaser.Math.Vector2(dx / len, dy / len);
+    const distToBall = Phaser.Math.Distance.Between(
+      from.x,
+      from.y,
+      this.ball.body.position.x,
+      this.ball.body.position.y,
+    );
+    const power = this.calculatePower(initiator, distToBall) * 0.72;
+    return this.applyError(dir, power, initiator);
+  }
+
+  private executePassChain(chain: PassChainPlan): void {
+    const firstPass = chain.passes[0];
+    const initiator = this.aiUnits.find((u) => u.id === firstPass.from);
+    if (!initiator) {
+      console.warn('[AI] Pass chain initiator not found');
+      this.finishMove();
+      return;
+    }
+
+    const force = this.calculatePassChainForce(initiator, firstPass);
+
+    this.scene.matter.body.applyForce(initiator.body, initiator.body.position, force);
+
+    if (typeof (initiator as unknown as { playHitEffect?: () => void }).playHitEffect === 'function') {
+      (initiator as unknown as { playHitEffect: () => void }).playHitEffect();
+    }
+
+    AudioManager.getInstance().playSFX('sfx_kick');
+    this.finishMove();
   }
 
   // === ВСПОМОГАТЕЛЬНЫЕ ===
@@ -1134,6 +1518,11 @@ export class AIController {
     if (!this.scene.matter.world.enabled) {
       console.warn('[AI] ⚠️ Physics paused, aborting shot execution. Will retry next frame.');
       this.finishMove(); // Reset flags so GameScene can retry
+      return;
+    }
+
+    if (candidate.type === 'pass_chain' && candidate.passChain) {
+      this.executePassChain(candidate.passChain);
       return;
     }
 
@@ -1215,11 +1604,34 @@ export class AIController {
     return this.cardsUsedThisMatch;
   }
 
+  public recordPlayerMove(
+    unitId: string,
+    targetX: number,
+    targetY: number,
+    wasPass: boolean = false,
+    usedAbility: boolean = false,
+  ): void {
+    if (!this.settings.usePatternRecognition) return;
+    this.patternRecognizer.recordMove(unitId, targetX, targetY, wasPass, usedAbility);
+  }
+
+  public getPlayerPattern(): PlayerPattern | null {
+    if (!this.settings.usePatternRecognition) return null;
+    return this.patternRecognizer.analyzePatterns();
+  }
+
+  public setTurnsRemaining(turns: number): void {
+    this.state.turnsRemaining = Math.max(0, turns);
+    this.updateComebackState();
+  }
+
   destroy(): void {
     this.stop();
     this.moveCompleteCallback = undefined;
     this.tricksterLassoRunner = undefined;
     this.onCardUsed = undefined;
     this.availableCards = [];
+    this.patternRecognizer.reset();
+    this.matchAdapter.reset();
   }
 }

@@ -3383,9 +3383,28 @@ export class GameScene extends Phaser.Scene {
 
     this.lastShootingCap = data.cap as any;
     this.abilityManager.setLastActiveUnit(this.lastShootingCap);
-    
+
+    if (
+      this.aiController &&
+      this.isAIEnabled &&
+      !this.isRealtimePvP &&
+      this.matchDirector.getCurrentPlayer() === 1
+    ) {
+      const bp = this.ball.getPosition();
+      const v = data.velocity;
+      const len = Math.hypot(v.x, v.y) || 1;
+      const reach = 140;
+      this.aiController.recordPlayerMove(
+        data.cap.id,
+        bp.x + (v.x / len) * reach,
+        bp.y + (v.y / len) * reach,
+        false,
+        false,
+      );
+    }
+
     // OLD PVP system removed - shooting handled by ShootingController + pvpHelper
-    
+
     this.matchDirector.onShot(data.cap.id);
   }
 
