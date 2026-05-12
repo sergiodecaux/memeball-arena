@@ -24,6 +24,7 @@ import { UNITS_REPOSITORY, UnitRarity, getUnitById as getRepositoryUnit, getUnit
 import { applyCaptainSlotToAiUnitIds } from '../../utils/aiCaptainRoster';
 import { TeamBalancer } from '../../ai/team/TeamBalancer';
 import { ArchetypeSelector, type TeamArchetype } from '../../ai/team/TeamArchetypes';
+import { TeamBuilder } from '../../ai/team/TeamBuilder';
 
 export type EntityCapsSpawnResult = {
   caps: GameUnit[];
@@ -146,10 +147,11 @@ export class EntityFactory {
         aiTeamSize,
         aiDifficulty,
       );
-      opponentTeam = ArchetypeSelector.buildTeamFromArchetype(
+      opponentTeam = TeamBuilder.buildRosterFromArchetype(
         aiArchetype,
-        aiTeamSize,
         this.config.opponentFaction,
+        aiTeamSize,
+        aiDifficulty,
       );
       const capPick = ArchetypeSelector.selectCaptain(opponentTeam, aiArchetype);
       if (capPick) {

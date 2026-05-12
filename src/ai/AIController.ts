@@ -103,10 +103,10 @@ const DIFFICULTY_SETTINGS: Record<AIDifficulty, DifficultySettings> = {
   easy: {
     reactionTime: { min: 1200, max: 1800 },
     accuracy: 0.35,        // ✅ Reduced from 0.4
-    passChance: 0,         // No passes on easy
+    passChance: 0.12,      // редкие пасы, но не ноль — маэстро/цепочки могут сработать
     defenseZone: 0,        // No anticipatory defense
     shotPower: { min: 0.5, max: 0.75 },
-    formationAdaptation: false,
+    formationAdaptation: true,
     useClassAbilities: false,
     cardUsageChance: 0,    // ✅ No cards on easy
     minCardScore: 80,
@@ -678,23 +678,33 @@ export class AIController {
     if (scoredBy === 'player') {
       this.state.consecutiveGoalsAgainst++;
       this.concedeReactionTurnsLeft = 3;
-      this.state.aggression = Math.min(1, this.state.aggression + 0.28);
+      const diff = this.state.aiScore - this.state.playerScore;
+      if (diff <= -2) {
+        this.state.aggression = Math.max(this.state.aggression, 0.94);
+        console.log('[AI] ⚠️ GOAL CONCEDED — ULTRA ATTACK tilt (score deficit)');
+      } else if (diff === -1) {
+        this.state.aggression = Math.max(this.state.aggression, 0.86);
+        console.log('[AI] ⚔️ GOAL CONCEDED — attack tilt');
+      } else {
+        this.state.aggression = Math.min(1, this.state.aggression + 0.28);
+      }
       console.log(
         `[AI] Goal conceded — comeback pulse (${this.concedeReactionTurnsLeft} AI turns): aggression ${(
           this.state.aggression * 100
         ).toFixed(0)}%`,
       );
+      this.selectFormation({ concede: true });
     } else {
       this.state.consecutiveGoalsAgainst = 0;
-    }
-
-    if (this.settings.formationAdaptation) {
-      this.selectFormation();
+      if (this.settings.formationAdaptation) {
+        this.selectFormation();
+      }
     }
 
     if (this.settings.adaptDuringMatch) {
       const trigger = scoredBy === 'player' ? 'goal_conceded' : 'goal_scored';
-      const action = this.settings.formationAdaptation ? 'changed_formation' : 'maintained_strategy';
+      const action =
+        scoredBy === 'player' || this.settings.formationAdaptation ? 'changed_formation' : 'maintained_strategy';
       const result = scoredBy === 'ai' ? 'positive' : 'negative';
       this.matchAdapter.recordAdaptation(trigger, action, result);
     }
@@ -734,8 +744,34 @@ export class AIController {
     return getAIFormationsForTeamSize(this.teamSize);
   }
 
-  private selectFormation(): void {
+  private selectFormation(opts?: { concede?: boolean }): void {
     const formations = this.getFormationsForTeamSize();
+
+    if (opts?.concede && !this.bossId) {
+      const diff = this.state.aiScore - this.state.playerScore;
+      const prefer: Formation[] = [];
+      if (diff <= -2) {
+        if (formations.aggressive) prefer.push(formations.aggressive);
+        if (formations.counter) prefer.push(formations.counter);
+        if (formations.balanced) prefer.push(formations.balanced);
+      } else if (diff === -1) {
+        if (formations.aggressive) prefer.push(formations.aggressive);
+        if (formations.counter) prefer.push(formations.counter);
+        if (formations.balanced) prefer.push(formations.balanced);
+      } else {
+        if (formations.counter) prefer.push(formations.counter);
+        if (formations.defensive) prefer.push(formations.defensive);
+        if (formations.balanced) prefer.push(formations.balanced);
+      }
+      const next =
+        prefer.find((f) => f.id !== this.state.currentFormation.id) ?? prefer[0] ?? formations.balanced;
+      if (next && next.id !== this.state.currentFormation.id) {
+        console.log(`[AI] 📐 Formation (concede): ${this.state.currentFormation.name} → ${next.name}`);
+        this.state.currentFormation = next;
+      }
+      this.snapFormationSlotsToTeamSize();
+      return;
+    }
 
     if (this.counterStrategy && !this.hasAppliedInitialCounterFormation && !this.bossId) {
       this.state.currentFormation = this.counterStrategy.recommendedFormation;
@@ -1291,8 +1327,8 @@ export class AIController {
         candidates.push(goal);
       }
 
-      if (role === 'opportunist' && unit.getCapClass() === 'trickster') {
-        const finisher = this.evaluateTricksterFinisher(unit);
+      if (role === 'opportunist' && (unit.getCapClass() === 'trickster' || unit.getCapClass() === 'playmaker')) {
+        const finisher = this.evaluateDribblerFinisherShot(unit);
         if (finisher) {
           finisher.score = RoleBasedScoring.modifyScoreByRole(
             finisher.score,
@@ -1326,29 +1362,45 @@ export class AIController {
         candidates.push(defend);
       }
 
-      let effectivePassChance = Phaser.Math.Clamp(
-        this.settings.passChance * (0.38 + 0.72 * passStyle) + this.profileNoise.passOffset,
-        0,
-        0.94,
-      );
-      effectivePassChance *= 0.38 + 0.62 * roleBehavior.priorities.createChances;
-      effectivePassChance = Phaser.Math.Clamp(effectivePassChance, 0.06, 0.95);
-      if (this.comebackState?.tactics.allowRiskyPasses) {
-        effectivePassChance = Math.min(0.92, effectivePassChance * 1.22);
-      }
-
-      if (Math.random() < effectivePassChance) {
-        const pass = this.evaluatePass(unit);
-        if (pass) {
-          pass.score += synergyBonus * 0.55;
-          if (danger > 0.8) {
-            pass.score *= 0.45;
-          }
-          if (bunker > 0.48) {
-            pass.score *= 1.15;
-          }
+      const capClass = unit.getCapClass();
+      if (capClass === 'maestro' || role === 'playmaker') {
+        const maestroPasses = this.generateMultiplePasses(unit, capClass === 'maestro' ? 3 : 2);
+        for (const pass of maestroPasses) {
+          pass.score += capClass === 'maestro' ? 38 : 22;
           pass.score = RoleBasedScoring.modifyScoreByRole(pass.score, 'pass', unit, role, roleCtx);
+          if (import.meta.env.DEV) {
+            console.log(`[AI] 🎼 MAESTRO/PLAYMAKER PASS: ${pass.description} (score: ${pass.score.toFixed(1)})`);
+          }
           candidates.push(pass);
+        }
+      } else {
+        let effectivePassChance = Phaser.Math.Clamp(
+          this.settings.passChance * (0.38 + 0.72 * passStyle) + this.profileNoise.passOffset,
+          0,
+          0.94,
+        );
+        effectivePassChance *= 0.38 + 0.62 * roleBehavior.priorities.createChances;
+        effectivePassChance = Phaser.Math.Clamp(effectivePassChance, 0.06, 0.95);
+        if (this.comebackState?.tactics.allowRiskyPasses) {
+          effectivePassChance = Math.min(0.92, effectivePassChance * 1.22);
+        }
+        if (this.concedeReactionTurnsLeft > 0) {
+          effectivePassChance = Math.min(0.95, effectivePassChance * 1.18);
+        }
+
+        if (Math.random() < effectivePassChance) {
+          const pass = this.evaluatePass(unit);
+          if (pass) {
+            pass.score += synergyBonus * 0.55;
+            if (danger > 0.8) {
+              pass.score *= 0.45;
+            }
+            if (bunker > 0.48) {
+              pass.score *= 1.15;
+            }
+            pass.score = RoleBasedScoring.modifyScoreByRole(pass.score, 'pass', unit, role, roleCtx);
+            candidates.push(pass);
+          }
         }
       }
 
@@ -1406,21 +1458,86 @@ export class AIController {
 
   // === ОЦЕНКА УДАРОВ ===
 
-  /** Трикстер у линии ворот игрока — высокий приоритет добивания. */
-  private evaluateTricksterFinisher(unit: AIUnit): ShotCandidate | null {
-    if (unit.getCapClass() !== 'trickster') return null;
+  /** Несколько направленных пасов для маэстро / плеймейкера (не завязаны на один random-roll). */
+  private generateMultiplePasses(unit: AIUnit, count: number): ShotCandidate[] {
+    const out: ShotCandidate[] = [];
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+
+    const teammates = this.aiUnits
+      .filter((tm) => tm.id !== unit.id)
+      .map((tm) => {
+        const tmPos = tm.body.position;
+        const tmClass = tm.getCapClass();
+        const distToGoal = Phaser.Math.Distance.Between(
+          tmPos.x,
+          tmPos.y,
+          this.fieldBounds.centerX,
+          this.fieldBounds.bottom,
+        );
+        let priority = ((this.fieldBounds.height - distToGoal) / Math.max(1, this.fieldBounds.height)) * 50;
+        if (tmClass === 'sniper') priority += 35;
+        if (tmClass === 'playmaker') priority += 25;
+        if (tmClass === 'trickster') priority += 20;
+        if (tmClass === 'maestro') priority += 15;
+        return { unit: tm, priority };
+      })
+      .sort((a, b) => b.priority - a.priority);
+
+    for (let i = 0; i < Math.min(count, teammates.length); i++) {
+      const tm = teammates[i].unit;
+      const tmPos = tm.body.position;
+      const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+      if (distToBall > 340) continue;
+      const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
+      const power = this.calculatePower(unit, distToBall) * 0.72;
+      const force = this.applyError(toBall, power, unit);
+      out.push({
+        unit,
+        target: { x: tmPos.x, y: tmPos.y },
+        score: teammates[i].priority * 0.75 + 18,
+        type: 'pass',
+        force,
+        description: `MAESTRO → ${tm.getCapClass()} (prio ${teammates[i].priority.toFixed(0)})`,
+      });
+    }
+    return out;
+  }
+
+  /** Трикстер / плеймейкер у ворот игрока — добивание и кривые удары. */
+  private evaluateDribblerFinisherShot(unit: AIUnit): ShotCandidate | null {
+    const cls = unit.getCapClass();
+    if (cls !== 'trickster' && cls !== 'playmaker') return null;
 
     const uPos = unit.body.position;
     const bPos = this.ball.body.position;
     const goalPos = { x: this.fieldBounds.centerX, y: this.fieldBounds.bottom };
 
     const distBallToGoal = Phaser.Math.Distance.Between(bPos.x, bPos.y, goalPos.x, goalPos.y);
-    if (distBallToGoal > 200) return null;
+    if (distBallToGoal > 350) return null;
 
     const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
-    if (distToBall > 250) return null;
+    if (distToBall > 280) return null;
 
-    const targetX = bPos.x < this.fieldBounds.centerX ? goalPos.x - 44 : goalPos.x + 44;
+    const goalOpenness = this.evaluateGoalOpenness();
+    if (goalOpenness > 0.5) {
+      const toGoal = new Phaser.Math.Vector2(goalPos.x - bPos.x, goalPos.y - bPos.y).normalize();
+      const power = 0.86;
+      const force = this.applyError(toGoal, power, unit);
+      let score = cls === 'trickster' ? 96 : 88;
+      score += Math.max(0, 40 - distBallToGoal / 6);
+      score -= distToBall * 0.08;
+      return {
+        unit,
+        target: goalPos,
+        score,
+        type: 'goal',
+        force,
+        description: `🌀 OPEN GOAL ${cls} (${(goalOpenness * 100).toFixed(0)}% open, ${distBallToGoal.toFixed(0)}px)`,
+      };
+    }
+
+    const targetX = bPos.x < this.fieldBounds.centerX ? goalPos.x - 46 : goalPos.x + 46;
     const target = { x: targetX, y: goalPos.y };
 
     let vx = target.x - bPos.x;
@@ -1428,18 +1545,18 @@ export class AIController {
     const len = Math.sqrt(vx * vx + vy * vy) || 1;
     vx /= len;
     vy /= len;
-    const curveAngle = (Math.random() - 0.5) * 0.32;
+    const curveAngle = (Math.random() - 0.5) * (cls === 'trickster' ? 0.36 : 0.28);
     const cos = Math.cos(curveAngle);
     const sin = Math.sin(curveAngle);
     const rx = vx * cos - vy * sin;
     const ry = vx * sin + vy * cos;
     const toTarget = new Phaser.Math.Vector2(rx, ry).normalize();
 
-    const power = this.calculatePower(unit, distToBall) * 0.94;
+    const power = this.calculatePower(unit, distToBall) * 0.92;
     const force = this.applyError(toTarget, power, unit);
 
-    let score = 76;
-    score += Math.max(0, 30 - distBallToGoal / 5);
+    let score = cls === 'trickster' ? 78 : 70;
+    score += Math.max(0, 32 - distBallToGoal / 5);
     score -= distToBall * 0.09;
 
     return {
@@ -1448,7 +1565,7 @@ export class AIController {
       score,
       type: 'goal',
       force,
-      description: `TRICKSTER FINISHER near goal (${distBallToGoal.toFixed(0)}px)`,
+      description: `🌀 ${cls.toUpperCase()} curve (${distBallToGoal.toFixed(0)}px)`,
     };
   }
 

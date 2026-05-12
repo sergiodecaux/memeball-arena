@@ -3656,16 +3656,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * вњ… РќРћР’РћР•: РџСЂРµРѕР±СЂР°Р·СѓРµС‚ РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅС‹Рµ РєРѕРѕСЂРґРёРЅР°С‚С‹ С„РѕСЂРјР°С†РёРё РІ Р°Р±СЃРѕР»СЋС‚РЅС‹Рµ РєРѕРѕСЂРґРёРЅР°С‚С‹ РїРѕР»СЏ
+   * Преобразует относительные координаты формации в абсолютные координаты поля
    */
   private relativeToAbsolute(relX: number, relY: number): { x: number; y: number } {
     const bounds = this.fieldBounds;
     const x = bounds.left + relX * (bounds.right - bounds.left);
-    // вњ… РРЎРџР РђР’Р›Р•РќРћ: РРіСЂРѕРє РёРіСЂР°РµС‚ РІ РЅРёР¶РЅРµР№ РїРѕР»РѕРІРёРЅРµ РїРѕР»СЏ
-    // relY РІ С„РѕСЂРјР°С†РёРё: 0.5 = С†РµРЅС‚СЂ РїРѕР»СЏ, 1.0 = РЅРёР· (РІРѕСЂРѕС‚Р° РёРіСЂРѕРєР°)
-    // РџСЂРµРѕР±СЂР°Р·СѓРµРј: relY РѕС‚ 0.5 РґРѕ 1.0 -> y РѕС‚ centerY РґРѕ bottom
+    // relY: 0.5 = центр поля, 1.0 = низ (ворота игрока)
     const y = bounds.top + relY * (bounds.bottom - bounds.top);
     return { x, y };
+  }
+
+  /** Слоты AI-расстановки: малый y — у верхних ворот (бот), большой — у ворот игрока. */
+  private aiFormationSlotToWorld(slot: { x: number; y: number }): { x: number; y: number } {
+    return this.relativeToAbsolute(slot.x, slot.y);
   }
 
   /** Выставляет фишки AI по текущей тактической схеме AIController (те же относительные координаты, что у игрока). */
@@ -3684,7 +3687,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     formation.slots.forEach((slot, index) => {
-      const absPos = this.relativeToAbsolute(slot.x, slot.y);
+      const absPos = this.aiFormationSlotToWorld(slot);
       const cap = aiCaps[index];
       if (!cap) return;
 
@@ -3693,8 +3696,8 @@ export class GameScene extends Phaser.Scene {
       let y = absPos.y;
       if (role !== 'flex') {
         const roleAnchor = RoleManager.getTargetPosition(role, this.fieldBounds, slot.x);
-        const blend = role === 'goalkeeper' || role === 'defender' ? 0.48 : 0.26;
-        x = Phaser.Math.Linear(absPos.x, roleAnchor.x, blend * 0.4);
+        const blend = role === 'goalkeeper' || role === 'defender' ? 0.22 : 0.14;
+        x = Phaser.Math.Linear(absPos.x, roleAnchor.x, blend * 0.35);
         y = Phaser.Math.Linear(absPos.y, roleAnchor.y, blend);
       }
       cap.reset(x, y);

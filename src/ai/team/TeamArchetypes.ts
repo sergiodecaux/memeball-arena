@@ -1,9 +1,9 @@
 // src/ai/team/TeamArchetypes.ts — мета-составы AI и контр-пики под классы игрока
 
-import type { CapClass, FactionId } from '../../constants/gameConstants';
+import type { CapClass } from '../../constants/gameConstants';
 import type { AIDifficulty } from '../../types';
 import type { UnitData } from '../../data/UnitsRepository';
-import { getUnitById, getUnitsByFaction } from '../../data/UnitsRepository';
+import { getUnitById } from '../../data/UnitsRepository';
 
 /** Порог доступности архетипа (expert = только impossible в игре). */
 export type ArchetypeSkillFloor = 'easy' | 'medium' | 'hard' | 'expert';
@@ -216,22 +216,7 @@ function gameDifficultyRank(d: AIDifficulty): number {
   }
 }
 
-function rarityRank(r: UnitData['rarity']): number {
-  switch (r) {
-    case 'common':
-      return 1;
-    case 'rare':
-      return 2;
-    case 'epic':
-      return 3;
-    case 'legendary':
-      return 4;
-    default:
-      return 1;
-  }
-}
-
-function flattenComposition(archetype: TeamArchetype, teamSize: number): CapClass[] {
+export function flattenArchetypeComposition(archetype: TeamArchetype, teamSize: number): CapClass[] {
   const rows = [...archetype.composition].sort(
     (a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority],
   );
@@ -281,51 +266,6 @@ export class ArchetypeSelector {
     if (composition.maestro >= 2) return 'maestro_control';
     if (composition.playmaker >= 2 && composition.trickster >= 1) return 'pressure_swarm';
     return 'balanced_flex';
-  }
-
-  public static buildTeamFromArchetype(
-    archetype: TeamArchetype,
-    teamSize: number,
-    faction: FactionId,
-  ): string[] {
-    const slots = flattenComposition(archetype, teamSize);
-    const pool = getUnitsByFaction(faction).filter(
-      (u) => !u.id.startsWith('boss_') && !u.isCaptain,
-    );
-
-    const sortByRarity = (units: UnitData[]) =>
-      [...units].sort((a, b) => rarityRank(b.rarity) - rarityRank(a.rarity));
-
-    const used = new Set<string>();
-    const unitIds: string[] = [];
-    const pickStrong = archetype.playStyle.aggression >= 0.75;
-
-    for (const role of slots) {
-      let candidates = pool.filter((u) => u.role === role && !used.has(u.id));
-      if (candidates.length === 0) {
-        candidates = pool.filter((u) => !used.has(u.id));
-      }
-      if (candidates.length === 0) break;
-
-      const sorted = sortByRarity(candidates);
-      const tierIndex = pickStrong
-        ? 0
-        : Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * 0.22)));
-      const pick = sorted[tierIndex] ?? sorted[0];
-      used.add(pick.id);
-      unitIds.push(pick.id);
-    }
-
-    while (unitIds.length < teamSize) {
-      const rest = pool.filter((u) => !used.has(u.id));
-      if (rest.length === 0) break;
-      const pick = sortByRarity(rest)[0];
-      used.add(pick.id);
-      unitIds.push(pick.id);
-    }
-
-    console.log(`[ArchetypeSelector] Built roster for ${archetype.id}:`, unitIds);
-    return unitIds.slice(0, teamSize);
   }
 
   public static selectCaptain(unitIds: string[], archetype: TeamArchetype): string | null {

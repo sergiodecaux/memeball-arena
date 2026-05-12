@@ -1,5 +1,6 @@
 // src/ai/AIFormations.ts
 // AI tactical formations for 3, 4, and 5 unit teams
+// Координаты: малый slot.y — у верхних ворот (AI), большой — у ворот игрока (низ поля).
 
 import { Formation } from '../data/PlayerData';
 
@@ -8,7 +9,7 @@ import { Formation } from '../data/PlayerData';
 export const AI_FORMATIONS_3: Record<string, Formation> = {
   defensive: {
     id: 'ai_defensive_3',
-    name: '1-2 Defense',
+    name: '🛡️ 1-2 Defense',
     teamSize: 3,
     slots: [
       { id: 's0', x: 0.5, y: 0.15 },
@@ -19,34 +20,34 @@ export const AI_FORMATIONS_3: Record<string, Formation> = {
   },
   balanced: {
     id: 'ai_balanced_3',
-    name: '1-2 Press',
+    name: '⚖️ 1-1-1 Balanced',
     teamSize: 3,
     slots: [
-      { id: 's0', x: 0.5, y: 0.2 },
-      { id: 's1', x: 0.3, y: 0.42 },
-      { id: 's2', x: 0.7, y: 0.42 },
+      { id: 's0', x: 0.5, y: 0.25 },
+      { id: 's1', x: 0.35, y: 0.5 },
+      { id: 's2', x: 0.65, y: 0.5 },
     ],
     isCustom: true,
   },
   aggressive: {
     id: 'ai_aggressive_3',
-    name: '3-0 Attack Press',
+    name: '⚔️ 1-2 Attack',
     teamSize: 3,
     slots: [
-      { id: 's0', x: 0.5, y: 0.55 },
-      { id: 's1', x: 0.25, y: 0.48 },
-      { id: 's2', x: 0.75, y: 0.48 },
+      { id: 's0', x: 0.5, y: 0.3 },
+      { id: 's1', x: 0.3, y: 0.7 },
+      { id: 's2', x: 0.7, y: 0.7 },
     ],
     isCustom: true,
   },
   counter: {
     id: 'ai_counter_3',
-    name: '1-1-1 Counter',
+    name: '↔️ 1-1-1 Line',
     teamSize: 3,
     slots: [
-      { id: 's0', x: 0.5, y: 0.12 },
-      { id: 's1', x: 0.5, y: 0.3 },
-      { id: 's2', x: 0.5, y: 0.48 },
+      { id: 's0', x: 0.5, y: 0.2 },
+      { id: 's1', x: 0.5, y: 0.5 },
+      { id: 's2', x: 0.5, y: 0.75 },
     ],
     isCustom: true,
   },
@@ -57,49 +58,49 @@ export const AI_FORMATIONS_3: Record<string, Formation> = {
 export const AI_FORMATIONS_4: Record<string, Formation> = {
   defensive: {
     id: 'ai_defensive_4',
-    name: 'Box Defense 2-2',
+    name: '🛡️ 2-2 Box',
     teamSize: 4,
     slots: [
-      { id: 's0', x: 0.35, y: 0.15 },
-      { id: 's1', x: 0.65, y: 0.15 },
-      { id: 's2', x: 0.3, y: 0.35 },
-      { id: 's3', x: 0.7, y: 0.35 },
+      { id: 's0', x: 0.35, y: 0.18 },
+      { id: 's1', x: 0.65, y: 0.18 },
+      { id: 's2', x: 0.3, y: 0.45 },
+      { id: 's3', x: 0.7, y: 0.45 },
     ],
     isCustom: true,
   },
   balanced: {
     id: 'ai_balanced_4',
-    name: 'Diamond 1-2-1',
+    name: '⚖️ 1-2-1 Diamond',
     teamSize: 4,
     slots: [
-      { id: 's0', x: 0.5, y: 0.12 },
-      { id: 's1', x: 0.3, y: 0.28 },
-      { id: 's2', x: 0.7, y: 0.28 },
-      { id: 's3', x: 0.5, y: 0.45 },
+      { id: 's0', x: 0.5, y: 0.2 },
+      { id: 's1', x: 0.3, y: 0.45 },
+      { id: 's2', x: 0.7, y: 0.45 },
+      { id: 's3', x: 0.5, y: 0.7 },
     ],
     isCustom: true,
   },
   aggressive: {
     id: 'ai_aggressive_4',
-    name: 'Wide Press 1-3',
+    name: '⚔️ 1-3 Attack',
     teamSize: 4,
     slots: [
-      { id: 's0', x: 0.5, y: 0.18 },
-      { id: 's1', x: 0.2, y: 0.5 },
-      { id: 's2', x: 0.5, y: 0.55 },
-      { id: 's3', x: 0.8, y: 0.5 },
+      { id: 's0', x: 0.5, y: 0.25 },
+      { id: 's1', x: 0.2, y: 0.65 },
+      { id: 's2', x: 0.5, y: 0.75 },
+      { id: 's3', x: 0.8, y: 0.65 },
     ],
     isCustom: true,
   },
   counter: {
     id: 'ai_counter_4',
-    name: 'Y-Formation',
+    name: '↔️ Y-Formation',
     teamSize: 4,
     slots: [
-      { id: 's0', x: 0.5, y: 0.1 },
-      { id: 's1', x: 0.5, y: 0.28 },
-      { id: 's2', x: 0.3, y: 0.45 },
-      { id: 's3', x: 0.7, y: 0.45 },
+      { id: 's0', x: 0.5, y: 0.15 },
+      { id: 's1', x: 0.5, y: 0.4 },
+      { id: 's2', x: 0.3, y: 0.7 },
+      { id: 's3', x: 0.7, y: 0.7 },
     ],
     isCustom: true,
   },
@@ -110,53 +111,53 @@ export const AI_FORMATIONS_4: Record<string, Formation> = {
 export const AI_FORMATIONS_5: Record<string, Formation> = {
   defensive: {
     id: 'ai_defensive_5',
-    name: 'Wall 3-2',
+    name: '🛡️ 3-2 Wall',
     teamSize: 5,
     slots: [
-      { id: 's0', x: 0.25, y: 0.12 },
-      { id: 's1', x: 0.5, y: 0.12 },
-      { id: 's2', x: 0.75, y: 0.12 },
-      { id: 's3', x: 0.35, y: 0.32 },
-      { id: 's4', x: 0.65, y: 0.32 },
+      { id: 's0', x: 0.25, y: 0.15 },
+      { id: 's1', x: 0.5, y: 0.15 },
+      { id: 's2', x: 0.75, y: 0.15 },
+      { id: 's3', x: 0.35, y: 0.45 },
+      { id: 's4', x: 0.65, y: 0.45 },
     ],
     isCustom: true,
   },
   balanced: {
     id: 'ai_balanced_5',
-    name: 'Pentagon 2-1-2',
+    name: '⚖️ 2-1-2 Pentagon',
     teamSize: 5,
     slots: [
-      { id: 's0', x: 0.35, y: 0.12 },
-      { id: 's1', x: 0.65, y: 0.12 },
-      { id: 's2', x: 0.5, y: 0.28 },
-      { id: 's3', x: 0.3, y: 0.45 },
-      { id: 's4', x: 0.7, y: 0.45 },
+      { id: 's0', x: 0.35, y: 0.2 },
+      { id: 's1', x: 0.65, y: 0.2 },
+      { id: 's2', x: 0.5, y: 0.5 },
+      { id: 's3', x: 0.3, y: 0.75 },
+      { id: 's4', x: 0.7, y: 0.75 },
     ],
     isCustom: true,
   },
   aggressive: {
     id: 'ai_aggressive_5',
-    name: 'V-Attack 2-3',
+    name: '⚔️ 2-3 V-Attack',
     teamSize: 5,
     slots: [
-      { id: 's0', x: 0.3, y: 0.18 },
-      { id: 's1', x: 0.7, y: 0.18 },
-      { id: 's2', x: 0.2, y: 0.52 },
-      { id: 's3', x: 0.5, y: 0.58 },
-      { id: 's4', x: 0.8, y: 0.52 },
+      { id: 's0', x: 0.3, y: 0.25 },
+      { id: 's1', x: 0.7, y: 0.25 },
+      { id: 's2', x: 0.2, y: 0.7 },
+      { id: 's3', x: 0.5, y: 0.8 },
+      { id: 's4', x: 0.8, y: 0.7 },
     ],
     isCustom: true,
   },
   counter: {
     id: 'ai_counter_5',
-    name: 'Arrow 1-2-2',
+    name: '↔️ 1-2-2 Arrow',
     teamSize: 5,
     slots: [
-      { id: 's0', x: 0.5, y: 0.1 },
-      { id: 's1', x: 0.35, y: 0.25 },
-      { id: 's2', x: 0.65, y: 0.25 },
-      { id: 's3', x: 0.3, y: 0.45 },
-      { id: 's4', x: 0.7, y: 0.45 },
+      { id: 's0', x: 0.5, y: 0.15 },
+      { id: 's1', x: 0.35, y: 0.4 },
+      { id: 's2', x: 0.65, y: 0.4 },
+      { id: 's3', x: 0.3, y: 0.7 },
+      { id: 's4', x: 0.7, y: 0.7 },
     ],
     isCustom: true,
   },
@@ -184,4 +185,3 @@ export function getDefaultAIFormation(teamSize: number): Formation {
   const formations = getAIFormationsForTeamSize(teamSize);
   return formations.balanced || Object.values(formations)[0];
 }
-
