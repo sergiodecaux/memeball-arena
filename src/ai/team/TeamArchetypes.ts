@@ -46,7 +46,7 @@ export const TEAM_ARCHETYPES: Record<string, TeamArchetype> = {
     },
     goodAgainst: ['defensive_wall', 'balanced_flex'],
     weakAgainst: ['sniper_spam'],
-    minDifficulty: 'medium',
+    minDifficulty: 'easy',
   },
 
   sniper_spam: {
@@ -72,21 +72,22 @@ export const TEAM_ARCHETYPES: Record<string, TeamArchetype> = {
   dribble_control: {
     id: 'dribble_control',
     name: '⚡ Dribble Control',
-    description: 'Playmakers + Maestros for control and quick passes',
+    description: '2 Playmakers + Maestro + Sniper for control and penetration',
     composition: [
       { capClass: 'playmaker', count: 2, priority: 'high' },
-      { capClass: 'maestro', count: 2, priority: 'high' },
+      { capClass: 'maestro', count: 1, priority: 'high' },
       { capClass: 'sniper', count: 1, priority: 'medium' },
+      { capClass: 'balanced', count: 1, priority: 'low' },
     ],
     playStyle: {
-      aggression: 0.75,
-      passFrequency: 0.8,
+      aggression: 0.8,
+      passFrequency: 0.7,
       longShotBonus: 1.0,
-      closeRangeBonus: 1.2,
+      closeRangeBonus: 1.4,
     },
     goodAgainst: ['defensive_wall', 'tank_fortress'],
     weakAgainst: ['sniper_spam'],
-    minDifficulty: 'hard',
+    minDifficulty: 'easy',
   },
 
   tank_fortress: {
@@ -147,27 +148,28 @@ export const TEAM_ARCHETYPES: Record<string, TeamArchetype> = {
     },
     goodAgainst: ['defensive_wall', 'balanced_flex'],
     weakAgainst: ['sniper_spam'],
-    minDifficulty: 'hard',
+    minDifficulty: 'medium',
   },
 
   maestro_control: {
     id: 'maestro_control',
     name: '🎼 Maestro Control',
-    description: 'Pass-heavy with three Maestros, sniper finisher and tank cover',
+    description: 'Maestros + playmaker + sniper + trickster for passes and penetration',
     composition: [
-      { capClass: 'maestro', count: 3, priority: 'high' },
+      { capClass: 'maestro', count: 2, priority: 'high' },
+      { capClass: 'playmaker', count: 1, priority: 'high' },
       { capClass: 'sniper', count: 1, priority: 'high' },
-      { capClass: 'tank', count: 1, priority: 'medium' },
+      { capClass: 'trickster', count: 1, priority: 'medium' },
     ],
     playStyle: {
-      aggression: 0.65,
-      passFrequency: 0.95,
+      aggression: 0.7,
+      passFrequency: 0.9,
       longShotBonus: 1.5,
-      closeRangeBonus: 1.0,
+      closeRangeBonus: 1.2,
     },
     goodAgainst: ['tank_fortress', 'defensive_wall'],
     weakAgainst: ['pressure_swarm'],
-    minDifficulty: 'hard',
+    minDifficulty: 'medium',
   },
 
   balanced_flex: {

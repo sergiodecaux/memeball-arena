@@ -1261,6 +1261,7 @@ export class AIController {
       if (!this.allowedByCaptainGate(unit)) continue;
 
       const role = this.getUnitRole(unit);
+      const capClass = unit.getCapClass();
       const roleBehavior = RoleManager.getRoleBehavior(role);
       const synergyBonus = this.calculateSynergyBonus(unit);
       const ballPos = this.ball.getPosition();
@@ -1327,17 +1328,11 @@ export class AIController {
         candidates.push(goal);
       }
 
-      if (role === 'opportunist' && (unit.getCapClass() === 'trickster' || unit.getCapClass() === 'playmaker')) {
-        const finisher = this.evaluateDribblerFinisherShot(unit);
-        if (finisher) {
-          finisher.score = RoleBasedScoring.modifyScoreByRole(
-            finisher.score,
-            'goal',
-            unit,
-            role,
-            roleCtx,
-          );
-          candidates.push(finisher);
+      if (capClass === 'trickster' || capClass === 'playmaker') {
+        for (const move of this.generateAggressiveDribblerMoves(unit)) {
+          const roleModType: 'goal' | 'disrupt' = move.type === 'goal' ? 'goal' : 'disrupt';
+          move.score = RoleBasedScoring.modifyScoreByRole(move.score, roleModType, unit, role, roleCtx);
+          candidates.push(move);
         }
       }
 
@@ -1362,7 +1357,6 @@ export class AIController {
         candidates.push(defend);
       }
 
-      const capClass = unit.getCapClass();
       if (capClass === 'maestro' || role === 'playmaker') {
         const maestroPasses = this.generateMultiplePasses(unit, capClass === 'maestro' ? 3 : 2);
         for (const pass of maestroPasses) {
@@ -1405,7 +1399,7 @@ export class AIController {
       }
 
       const pressDist =
-        aggressionBonus > 0.74 || unit.getCapClass() === 'playmaker' || role === 'disruptor'
+        aggressionBonus > 0.74 || capClass === 'playmaker' || role === 'disruptor'
           ? 172
           : 92;
       let pressure = this.evaluatePressure(unit, pressDist);
@@ -1504,6 +1498,57 @@ export class AIController {
     return out;
   }
 
+  /** Доп. кандидаты удара/пресса для трикстеров и плеймейкеров (все роли). */
+  private generateAggressiveDribblerMoves(unit: AIUnit): ShotCandidate[] {
+    const capClass = unit.getCapClass();
+    if (capClass !== 'trickster' && capClass !== 'playmaker') return [];
+
+    const moves: ShotCandidate[] = [];
+    const fin = this.evaluateDribblerFinisherShot(unit);
+    if (fin) moves.push(fin);
+
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    const goalPos = { x: this.fieldBounds.centerX, y: this.fieldBounds.bottom };
+    const distToball = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    const distBallToGoal = Phaser.Math.Distance.Between(bPos.x, bPos.y, goalPos.x, goalPos.y);
+
+    if (capClass === 'playmaker' && distToball < 250 && distBallToGoal < 420) {
+      const toGoal = new Phaser.Math.Vector2(goalPos.x - bPos.x, goalPos.y - bPos.y).normalize();
+      const power = 0.62;
+      const force = this.applyError(toGoal, power, unit);
+      const target = { x: goalPos.x, y: bPos.y + (goalPos.y - bPos.y) * 0.35 };
+      let score = 68;
+      score += Math.max(0, 28 - distBallToGoal / 8);
+      moves.push({
+        unit,
+        target,
+        score,
+        type: 'goal',
+        force,
+        description: 'PLAYMAKER dribble forward',
+      });
+    }
+
+    if (distToball < 120) {
+      const toBall = new Phaser.Math.Vector2(bPos.x - uPos.x, bPos.y - uPos.y).normalize();
+      const power = 0.72;
+      const force = this.applyError(toBall, power, unit);
+      let score = 58;
+      score -= distToball * 0.14;
+      moves.push({
+        unit,
+        target: { x: bPos.x, y: bPos.y },
+        score,
+        type: 'pressure',
+        force,
+        description: `${capClass.toUpperCase()} aggressive press`,
+      });
+    }
+
+    return moves;
+  }
+
   /** Трикстер / плеймейкер у ворот игрока — добивание и кривые удары. */
   private evaluateDribblerFinisherShot(unit: AIUnit): ShotCandidate | null {
     const cls = unit.getCapClass();
@@ -1520,13 +1565,16 @@ export class AIController {
     if (distToBall > 280) return null;
 
     const goalOpenness = this.evaluateGoalOpenness();
-    if (goalOpenness > 0.5) {
+    if (goalOpenness > 0.4) {
       const toGoal = new Phaser.Math.Vector2(goalPos.x - bPos.x, goalPos.y - bPos.y).normalize();
       const power = 0.86;
       const force = this.applyError(toGoal, power, unit);
       let score = cls === 'trickster' ? 96 : 88;
       score += Math.max(0, 40 - distBallToGoal / 6);
       score -= distToBall * 0.08;
+      if (import.meta.env.DEV) {
+        console.log(`[AI] 🎯 ${cls} open goal ~${(goalOpenness * 100).toFixed(0)}% (${distBallToGoal.toFixed(0)}px)`);
+      }
       return {
         unit,
         target: goalPos,

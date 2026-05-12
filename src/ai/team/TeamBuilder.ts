@@ -52,6 +52,39 @@ export class TeamBuilder {
     return pool[Math.floor(Math.random() * pool.length)] ?? 'magma';
   }
 
+  /** Алиас для вызовов из сцен/инструментов. */
+  public static selectRandomFaction(excluding?: FactionId): FactionId {
+    return this.pickRandomFaction(excluding);
+  }
+
+  /**
+   * Чаще выбирает архетипы с трикстерами / дриблерами (доступные по сложности).
+   */
+  public static selectSmartArchetype(difficulty: AIDifficulty): TeamArchetype {
+    const gameRank: Record<AIDifficulty, number> = { easy: 0, medium: 1, hard: 2, impossible: 3 };
+    const rank = gameRank[difficulty] ?? 1;
+    const floorRank: Record<TeamArchetype['minDifficulty'], number> = {
+      easy: 0,
+      medium: 1,
+      hard: 2,
+      expert: 3,
+    };
+    const available = Object.values(TEAM_ARCHETYPES).filter((a) => floorRank[a.minDifficulty] <= rank);
+    const priorityIds = ['trickster_rush', 'dribble_control', 'pressure_swarm', 'maestro_control'];
+
+    if (Math.random() < 0.6) {
+      const priority = available.filter((a) => priorityIds.includes(a.id));
+      if (priority.length > 0) {
+        const selected = priority[Math.floor(Math.random() * priority.length)];
+        console.log(`[TeamBuilder] ⭐ Priority archetype: ${selected.name} (${selected.id})`);
+        return selected;
+      }
+    }
+    const selected = available[Math.floor(Math.random() * Math.max(1, available.length))];
+    console.log(`[TeamBuilder] 🎭 Random archetype: ${selected.name} (${selected.id})`);
+    return selected;
+  }
+
   /**
    * Ростер по архетипу: случайный выбор внутри «корзин» редкости, чтобы матчи не повторяли один и тот же набор id.
    */
@@ -137,13 +170,11 @@ export class TeamBuilder {
     archetype: TeamArchetype;
     captainId: string | null;
   } {
-    const faction = options.faction ?? this.pickRandomFaction();
-    const gameRank = { easy: 0, medium: 1, hard: 2, impossible: 3 } as const;
-    const rank = gameRank[options.difficulty] ?? 1;
-    const floorRank = { easy: 0, medium: 1, hard: 2, expert: 3 } as const;
-    const available = Object.values(TEAM_ARCHETYPES).filter((a) => floorRank[a.minDifficulty] <= rank);
-    const archetype =
-      options.archetype ?? available[Math.floor(Math.random() * Math.max(1, available.length))];
+    const faction = options.faction ?? this.selectRandomFaction();
+    console.log(`[TeamBuilder] 🎲 Selected faction: ${faction}`);
+
+    const archetype = options.archetype ?? this.selectSmartArchetype(options.difficulty);
+    console.log(`[TeamBuilder] 🎭 Selected archetype: ${archetype.name}`);
 
     const unitIds = this.buildRosterFromArchetype(
       archetype,
@@ -171,8 +202,10 @@ export class TeamBuilder {
         preferredClasses = ['trickster', 'playmaker'];
         break;
       case 'dribble_control':
+        preferredClasses = ['playmaker', 'maestro', 'sniper'];
+        break;
       case 'maestro_control':
-        preferredClasses = ['maestro', 'playmaker'];
+        preferredClasses = ['maestro', 'playmaker', 'trickster', 'sniper'];
         break;
       case 'tank_fortress':
       case 'defensive_wall':

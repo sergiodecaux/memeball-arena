@@ -142,10 +142,17 @@ export class EntityFactory {
       opponentTeam = this.getAITeamForDifficulty(this.config.opponentFaction, aiTeamSize, 'easy');
     } else {
       const playerComposition = TeamBalancer.analyzePlayerTeamByIds(playerTeam, this.config.playerFaction);
-      aiArchetype = ArchetypeSelector.selectCounterArchetype(
+      const counterArchetype = ArchetypeSelector.selectCounterArchetype(
         playerComposition.composition,
         aiTeamSize,
         aiDifficulty,
+      );
+      const usedSmartBlend = Math.random() < 0.58;
+      aiArchetype = usedSmartBlend
+        ? TeamBuilder.selectSmartArchetype(aiDifficulty)
+        : counterArchetype;
+      console.log(
+        `[EntityFactory] 🎭 AI archetype (${usedSmartBlend ? 'smart' : 'counter'}): ${aiArchetype.name} (${aiArchetype.id})`,
       );
       opponentTeam = TeamBuilder.buildRosterFromArchetype(
         aiArchetype,
@@ -157,8 +164,6 @@ export class EntityFactory {
       if (capPick) {
         console.log(`[EntityFactory] 👑 Meta captain preference on roster: ${capPick}`);
       }
-      console.log(`[EntityFactory] 🎭 AI archetype: ${aiArchetype.name} (${aiArchetype.id})`);
-
       if (opponentTeam.length < aiTeamSize) {
         const pad = TeamBalancer.createBalancedAITeam(
           playerComposition,

@@ -27,7 +27,6 @@ import { MatchDirector } from '../controllers/match/MatchDirector';
 import { ShootingController, ShootEventData } from '../controllers/ShootingController';
 import { AIController } from '../ai/AIController';
 import type { TeamArchetype } from '../ai/team/TeamArchetypes';
-import { RoleManager } from '../ai/roles/UnitRoles';
 import type { AIMatchContext } from '../ai/MatchContext';
 import type { AIOpponentProfile } from '../ai/AIProfile';
 
@@ -3686,25 +3685,57 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    const fb = this.fieldBounds;
+    const centerY = fb.centerY;
+
+    const logForm = import.meta.env.DEV;
+    if (logForm) {
+      console.log('[Formation] ========================================');
+      console.log(`[Formation] ${reason}: ${formation.name}`);
+      console.log(
+        `[Formation] Field: top=${fb.top.toFixed(0)}, bottom=${fb.bottom.toFixed(0)}, height=${fb.height.toFixed(0)}, centerY=${centerY.toFixed(0)}`,
+      );
+      console.log('[Formation] AI defends top (low y), attacks bottom (high y)');
+    }
+
     formation.slots.forEach((slot, index) => {
       const absPos = this.aiFormationSlotToWorld(slot);
       const cap = aiCaps[index];
       if (!cap) return;
 
       const role = this.aiController!.getRoleForUnitId(cap.id);
-      let x = absPos.x;
-      let y = absPos.y;
-      if (role !== 'flex') {
-        const roleAnchor = RoleManager.getTargetPosition(role, this.fieldBounds, slot.x);
-        const blend = role === 'goalkeeper' || role === 'defender' ? 0.22 : 0.14;
-        x = Phaser.Math.Linear(absPos.x, roleAnchor.x, blend * 0.35);
-        y = Phaser.Math.Linear(absPos.y, roleAnchor.y, blend);
+      cap.reset(absPos.x, absPos.y);
+
+      const y = absPos.y;
+      const isOnAISide = y < centerY;
+      if (logForm) {
+        const mark = isOnAISide ? '✅' : '❌';
+        console.log(
+          `${mark} [Formation] Unit ${index} (${role}): slot.y=${slot.y.toFixed(2)} → y=${y.toFixed(0)} (${isOnAISide ? 'AI side' : 'PLAYER side'})`,
+        );
       }
-      cap.reset(x, y);
+      if (!isOnAISide) {
+        console.error(`[Formation] AI unit ${index} (${role}) on wrong half — slot too low?`);
+      }
     });
 
-    if (import.meta.env.DEV) {
-      console.log(`[GameScene] AI formation synced (${reason}): ${formation.name}`);
+    let wrong = 0;
+    for (const cap of aiCaps) {
+      if (cap.body.position.y > centerY) wrong++;
+    }
+    if (wrong > 0) {
+      console.error(`[Formation] ${wrong} AI cap(s) past center — emergency clamp to own half`);
+      const rescueY = fb.top + fb.height * 0.15;
+      for (const cap of aiCaps) {
+        if (cap.body.position.y > centerY) {
+          cap.reset(cap.body.position.x, rescueY);
+          console.warn(`[Formation] Emergency: ${cap.id} → y=${rescueY.toFixed(0)}`);
+        }
+      }
+    }
+
+    if (logForm) {
+      console.log('[Formation] ========================================');
     }
   }
 
