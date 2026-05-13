@@ -46,6 +46,10 @@ export interface TeamBuildOptions {
 }
 
 export class TeamBuilder {
+  /** Последние id юнитов в AI-ростерах (разнообразие между матчами). */
+  private static unitHistory: string[] = [];
+  private static readonly MAX_UNIT_HISTORY = 15;
+
   public static pickRandomFaction(excluding?: FactionId): FactionId {
     const all: FactionId[] = ['magma', 'cyborg', 'void', 'insect'];
     const pool = excluding ? all.filter((f) => f !== excluding) : all;
@@ -70,9 +74,16 @@ export class TeamBuilder {
       expert: 3,
     };
     const available = Object.values(TEAM_ARCHETYPES).filter((a) => floorRank[a.minDifficulty] <= rank);
-    const priorityIds = ['trickster_rush', 'dribble_control', 'pressure_swarm', 'maestro_control'];
+    const priorityIds = [
+      'trickster_rush',
+      'dribble_storm',
+      'maestro_orchestra',
+      'hybrid_assault',
+      'fortress_counter',
+      'enforcer_wall',
+    ];
 
-    if (Math.random() < 0.6) {
+    if (Math.random() < 0.72) {
       const priority = available.filter((a) => priorityIds.includes(a.id));
       if (priority.length > 0) {
         const selected = priority[Math.floor(Math.random() * priority.length)];
@@ -95,10 +106,13 @@ export class TeamBuilder {
     difficulty: AIDifficulty,
     avoidUnitIds?: string[],
   ): string[] {
-    const avoid = new Set(avoidUnitIds ?? []);
-    const pool = getUnitsByFaction(faction).filter(
+    const avoid = new Set([...(avoidUnitIds ?? []), ...this.unitHistory]);
+    let pool = getUnitsByFaction(faction).filter(
       (u) => !u.id.startsWith('boss_') && !u.isCaptain && !avoid.has(u.id),
     );
+    if (pool.length === 0) {
+      pool = getUnitsByFaction(faction).filter((u) => !u.id.startsWith('boss_') && !u.isCaptain);
+    }
     const rows = [...archetype.composition].sort(
       (a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority],
     );
@@ -147,8 +161,13 @@ export class TeamBuilder {
       }
     }
 
+    const fillerRoles: CapClass[] = ['tank', 'enforcer', 'playmaker', 'maestro', 'trickster'];
     while (unitIds.length < teamSize) {
-      let candidates = pool.filter((u) => u.role === 'balanced' && !used.has(u.id));
+      let candidates: UnitData[] = [];
+      for (const cls of fillerRoles) {
+        candidates = pool.filter((u) => u.role === cls && !used.has(u.id));
+        if (candidates.length > 0) break;
+      }
       if (candidates.length === 0) candidates = pool.filter((u) => !used.has(u.id));
       if (candidates.length === 0) break;
       const pick = shuffle(sortByPower(candidates))[0];
@@ -159,6 +178,19 @@ export class TeamBuilder {
 
     console.log(`[TeamBuilder] ✅ Roster ${faction} / ${archetype.id}:`, unitIds);
     return unitIds.slice(0, teamSize);
+  }
+
+  /** Запоминает состав последних матчей (для исключения повторов). */
+  public static recordMatchRoster(unitIds: string[]): void {
+    this.unitHistory.push(...unitIds);
+    if (this.unitHistory.length > this.MAX_UNIT_HISTORY) {
+      this.unitHistory = this.unitHistory.slice(-this.MAX_UNIT_HISTORY);
+    }
+    console.log(`[TeamBuilder] 📝 Roster history size=${this.unitHistory.length}`);
+  }
+
+  public static clearUnitHistory(): void {
+    this.unitHistory = [];
   }
 
   /**
@@ -184,6 +216,8 @@ export class TeamBuilder {
       options.avoidUnits,
     );
 
+    this.recordMatchRoster(unitIds);
+
     const captainId = this.selectCaptainFromUnitIds(unitIds, archetype);
     console.log(`[TeamBuilder] 👑 Captain: ${captainId}`);
     return { faction, unitIds, archetype, captainId };
@@ -195,27 +229,29 @@ export class TeamBuilder {
 
     let preferredClasses: CapClass[] = [];
     switch (archetype.id) {
-      case 'sniper_spam':
-        preferredClasses = ['sniper', 'maestro'];
-        break;
       case 'trickster_rush':
-        preferredClasses = ['trickster', 'playmaker'];
+        preferredClasses = ['trickster', 'maestro', 'tank'];
         break;
-      case 'dribble_control':
-        preferredClasses = ['playmaker', 'maestro', 'sniper'];
+      case 'dribble_storm':
+        preferredClasses = ['playmaker', 'tank', 'enforcer'];
         break;
-      case 'maestro_control':
-        preferredClasses = ['maestro', 'playmaker', 'trickster', 'sniper'];
+      case 'maestro_orchestra':
+        preferredClasses = ['maestro', 'trickster', 'tank'];
         break;
-      case 'tank_fortress':
-      case 'defensive_wall':
-        preferredClasses = ['tank', 'enforcer', 'sniper'];
+      case 'hybrid_assault':
+        preferredClasses = ['trickster', 'playmaker', 'tank'];
         break;
-      case 'pressure_swarm':
-        preferredClasses = ['playmaker', 'trickster'];
+      case 'fortress_counter':
+        preferredClasses = ['tank', 'enforcer', 'playmaker'];
+        break;
+      case 'enforcer_wall':
+        preferredClasses = ['enforcer', 'playmaker', 'maestro'];
+        break;
+      case 'balanced_tactical':
+        preferredClasses = ['tank', 'playmaker', 'trickster', 'maestro'];
         break;
       default:
-        preferredClasses = ['sniper', 'playmaker', 'maestro'];
+        preferredClasses = ['playmaker', 'maestro', 'trickster'];
     }
 
     for (const capClass of preferredClasses) {

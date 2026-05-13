@@ -27,6 +27,7 @@ import { MatchDirector } from '../controllers/match/MatchDirector';
 import { ShootingController, ShootEventData } from '../controllers/ShootingController';
 import { AIController } from '../ai/AIController';
 import type { TeamArchetype } from '../ai/team/TeamArchetypes';
+import type { UnitRole } from '../ai/roles/UnitRoles';
 import type { AIMatchContext } from '../ai/MatchContext';
 import type { AIOpponentProfile } from '../ai/AIProfile';
 
@@ -3665,6 +3666,24 @@ export class GameScene extends Phaser.Scene {
     return { x, y };
   }
 
+  /** Защитники первыми слотами; слот Y поджимается к своим воротам для GK/def. */
+  private sortAiCapsForFormation(caps: GameUnit[]): GameUnit[] {
+    const order: Record<UnitRole, number> = {
+      goalkeeper: 0,
+      defender: 1,
+      disruptor: 2,
+      playmaker: 3,
+      opportunist: 4,
+      finisher: 5,
+      flex: 6,
+    };
+    return [...caps].sort((a, b) => {
+      const ra = this.aiController?.getRoleForUnitId(a.id) ?? 'flex';
+      const rb = this.aiController?.getRoleForUnitId(b.id) ?? 'flex';
+      return (order[ra] ?? 99) - (order[rb] ?? 99);
+    });
+  }
+
   /** Слоты AI-расстановки: малый y — у верхних ворот (бот), большой — у ворот игрока. */
   private aiFormationSlotToWorld(slot: { x: number; y: number }): { x: number; y: number } {
     return this.relativeToAbsolute(slot.x, slot.y);
@@ -3698,12 +3717,18 @@ export class GameScene extends Phaser.Scene {
       console.log('[Formation] AI defends top (low y), attacks bottom (high y)');
     }
 
-    formation.slots.forEach((slot, index) => {
-      const absPos = this.aiFormationSlotToWorld(slot);
-      const cap = aiCaps[index];
-      if (!cap) return;
+    const sortedCaps = this.sortAiCapsForFormation(aiCaps);
+
+    sortedCaps.forEach((cap, index) => {
+      const slot = formation.slots[index];
+      if (!slot) return;
 
       const role = this.aiController!.getRoleForUnitId(cap.id);
+      let slotY = slot.y;
+      if (role === 'goalkeeper') slotY = Math.min(slot.y, 0.1);
+      else if (role === 'defender') slotY = Math.min(slot.y, 0.25);
+
+      const absPos = this.relativeToAbsolute(slot.x, slotY);
       cap.reset(absPos.x, absPos.y);
 
       const y = absPos.y;
@@ -3711,7 +3736,7 @@ export class GameScene extends Phaser.Scene {
       if (logForm) {
         const mark = isOnAISide ? '✅' : '❌';
         console.log(
-          `${mark} [Formation] Unit ${index} (${role}): slot.y=${slot.y.toFixed(2)} → y=${y.toFixed(0)} (${isOnAISide ? 'AI side' : 'PLAYER side'})`,
+          `${mark} [Formation] Unit ${index} (${role}): slot.y=${slot.y.toFixed(2)} → adj=${slotY.toFixed(2)} → y=${y.toFixed(0)} (${isOnAISide ? 'AI side' : 'PLAYER side'})`,
         );
       }
       if (!isOnAISide) {
@@ -3720,13 +3745,13 @@ export class GameScene extends Phaser.Scene {
     });
 
     let wrong = 0;
-    for (const cap of aiCaps) {
+    for (const cap of sortedCaps) {
       if (cap.body.position.y > centerY) wrong++;
     }
     if (wrong > 0) {
       console.error(`[Formation] ${wrong} AI cap(s) past center — emergency clamp to own half`);
       const rescueY = fb.top + fb.height * 0.15;
-      for (const cap of aiCaps) {
+      for (const cap of sortedCaps) {
         if (cap.body.position.y > centerY) {
           cap.reset(cap.body.position.x, rescueY);
           console.warn(`[Formation] Emergency: ${cap.id} → y=${rescueY.toFixed(0)}`);

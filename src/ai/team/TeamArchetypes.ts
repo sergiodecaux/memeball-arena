@@ -8,6 +8,15 @@ import { getUnitById } from '../../data/UnitsRepository';
 /** Порог доступности архетипа (expert = только impossible в игре). */
 export type ArchetypeSkillFloor = 'easy' | 'medium' | 'hard' | 'expert';
 
+/** Теги стиля игрока для контр-пика (см. ArchetypeSelector.detectPlayerStyle). */
+export type PlayerStyleTag =
+  | 'trickster_heavy'
+  | 'playmaker_heavy'
+  | 'maestro_heavy'
+  | 'tank_heavy'
+  | 'sniper_heavy'
+  | 'mixed';
+
 export interface TeamArchetype {
   id: string;
   name: string;
@@ -23,7 +32,7 @@ export interface TeamArchetype {
     longShotBonus: number;
     closeRangeBonus: number;
   };
-  goodAgainst: string[];
+  goodAgainst: PlayerStyleTag[];
   weakAgainst: string[];
   minDifficulty: ArchetypeSkillFloor;
 }
@@ -31,164 +40,143 @@ export interface TeamArchetype {
 export const TEAM_ARCHETYPES: Record<string, TeamArchetype> = {
   trickster_rush: {
     id: 'trickster_rush',
-    name: '🌀 Trickster Rush',
-    description: '3+ Tricksters for unpredictable chaos attacks',
+    name: '🌀 Trickster Ambush',
+    description: 'Tricksters at opponent goal, tank + maestro support',
     composition: [
       { capClass: 'trickster', count: 3, priority: 'high' },
-      { capClass: 'playmaker', count: 1, priority: 'medium' },
-      { capClass: 'balanced', count: 1, priority: 'low' },
+      { capClass: 'tank', count: 1, priority: 'medium' },
+      { capClass: 'maestro', count: 1, priority: 'medium' },
+    ],
+    playStyle: {
+      aggression: 0.95,
+      passFrequency: 0.4,
+      longShotBonus: 0.7,
+      closeRangeBonus: 1.8,
+    },
+    goodAgainst: ['tank_heavy', 'maestro_heavy', 'mixed'],
+    weakAgainst: [],
+    minDifficulty: 'easy',
+  },
+
+  dribble_storm: {
+    id: 'dribble_storm',
+    name: '⚡ Dribble Storm',
+    description: 'Playmakers push the field, tank + enforcer anchor',
+    composition: [
+      { capClass: 'playmaker', count: 3, priority: 'high' },
+      { capClass: 'tank', count: 1, priority: 'high' },
+      { capClass: 'enforcer', count: 1, priority: 'medium' },
     ],
     playStyle: {
       aggression: 0.9,
       passFrequency: 0.3,
       longShotBonus: 0.8,
-      closeRangeBonus: 1.5,
+      closeRangeBonus: 1.6,
     },
-    goodAgainst: ['defensive_wall', 'balanced_flex'],
-    weakAgainst: ['sniper_spam'],
+    goodAgainst: ['tank_heavy', 'sniper_heavy'],
+    weakAgainst: [],
     minDifficulty: 'easy',
   },
 
-  sniper_spam: {
-    id: 'sniper_spam',
-    name: '🎯 Sniper Spam',
-    description: '3+ Snipers for long-range domination',
+  maestro_orchestra: {
+    id: 'maestro_orchestra',
+    name: '🎼 Maestro Orchestra',
+    description: 'Pass-heavy maestros with trickster finisher and tank',
     composition: [
-      { capClass: 'sniper', count: 3, priority: 'high' },
-      { capClass: 'maestro', count: 1, priority: 'high' },
-      { capClass: 'balanced', count: 1, priority: 'medium' },
+      { capClass: 'maestro', count: 3, priority: 'high' },
+      { capClass: 'trickster', count: 1, priority: 'high' },
+      { capClass: 'tank', count: 1, priority: 'high' },
     ],
     playStyle: {
-      aggression: 0.7,
-      passFrequency: 0.5,
-      longShotBonus: 1.8,
-      closeRangeBonus: 0.6,
+      aggression: 0.75,
+      passFrequency: 0.95,
+      longShotBonus: 1.2,
+      closeRangeBonus: 1.3,
     },
-    goodAgainst: ['trickster_rush', 'dribble_control'],
-    weakAgainst: ['pressure_swarm'],
+    goodAgainst: ['mixed', 'trickster_heavy'],
+    weakAgainst: [],
     minDifficulty: 'medium',
   },
 
-  dribble_control: {
-    id: 'dribble_control',
-    name: '⚡ Dribble Control',
-    description: '2 Playmakers + Maestro + Sniper for control and penetration',
+  hybrid_assault: {
+    id: 'hybrid_assault',
+    name: '🔥 Hybrid Assault',
+    description: 'Tricksters + playmakers + tank',
     composition: [
+      { capClass: 'trickster', count: 2, priority: 'high' },
       { capClass: 'playmaker', count: 2, priority: 'high' },
-      { capClass: 'maestro', count: 1, priority: 'high' },
-      { capClass: 'sniper', count: 1, priority: 'medium' },
-      { capClass: 'balanced', count: 1, priority: 'low' },
+      { capClass: 'tank', count: 1, priority: 'high' },
     ],
     playStyle: {
-      aggression: 0.8,
-      passFrequency: 0.7,
-      longShotBonus: 1.0,
-      closeRangeBonus: 1.4,
+      aggression: 0.88,
+      passFrequency: 0.5,
+      longShotBonus: 0.9,
+      closeRangeBonus: 1.5,
     },
-    goodAgainst: ['defensive_wall', 'tank_fortress'],
-    weakAgainst: ['sniper_spam'],
+    goodAgainst: ['tank_heavy', 'maestro_heavy', 'sniper_heavy'],
+    weakAgainst: [],
     minDifficulty: 'easy',
   },
 
-  tank_fortress: {
-    id: 'tank_fortress',
-    name: '🛡️ Tank Fortress',
-    description: 'Tanks/Enforcers for dense defense',
+  fortress_counter: {
+    id: 'fortress_counter',
+    name: '🏰 Fortress Counter',
+    description: 'Tanks + enforcer, playmaker + trickster counter',
     composition: [
       { capClass: 'tank', count: 2, priority: 'high' },
       { capClass: 'enforcer', count: 1, priority: 'high' },
-      { capClass: 'sniper', count: 1, priority: 'medium' },
-      { capClass: 'balanced', count: 1, priority: 'low' },
-    ],
-    playStyle: {
-      aggression: 0.3,
-      passFrequency: 0.4,
-      longShotBonus: 0.7,
-      closeRangeBonus: 0.8,
-    },
-    goodAgainst: ['trickster_rush', 'pressure_swarm'],
-    weakAgainst: ['sniper_spam', 'dribble_control'],
-    minDifficulty: 'medium',
-  },
-
-  defensive_wall: {
-    id: 'defensive_wall',
-    name: '🏰 Defensive Wall',
-    description: 'Balanced defense with counter-attack',
-    composition: [
-      { capClass: 'tank', count: 2, priority: 'medium' },
-      { capClass: 'balanced', count: 2, priority: 'medium' },
-      { capClass: 'sniper', count: 1, priority: 'high' },
-    ],
-    playStyle: {
-      aggression: 0.4,
-      passFrequency: 0.3,
-      longShotBonus: 1.2,
-      closeRangeBonus: 0.8,
-    },
-    goodAgainst: ['pressure_swarm'],
-    weakAgainst: ['dribble_control', 'sniper_spam'],
-    minDifficulty: 'easy',
-  },
-
-  pressure_swarm: {
-    id: 'pressure_swarm',
-    name: '🐝 Pressure Swarm',
-    description: 'High-speed pressure with Playmakers and Tricksters',
-    composition: [
-      { capClass: 'playmaker', count: 2, priority: 'high' },
-      { capClass: 'trickster', count: 2, priority: 'medium' },
-      { capClass: 'enforcer', count: 1, priority: 'medium' },
-    ],
-    playStyle: {
-      aggression: 0.95,
-      passFrequency: 0.6,
-      longShotBonus: 0.9,
-      closeRangeBonus: 1.4,
-    },
-    goodAgainst: ['defensive_wall', 'balanced_flex'],
-    weakAgainst: ['sniper_spam'],
-    minDifficulty: 'medium',
-  },
-
-  maestro_control: {
-    id: 'maestro_control',
-    name: '🎼 Maestro Control',
-    description: 'Maestros + playmaker + sniper + trickster for passes and penetration',
-    composition: [
-      { capClass: 'maestro', count: 2, priority: 'high' },
       { capClass: 'playmaker', count: 1, priority: 'high' },
-      { capClass: 'sniper', count: 1, priority: 'high' },
       { capClass: 'trickster', count: 1, priority: 'medium' },
     ],
     playStyle: {
-      aggression: 0.7,
-      passFrequency: 0.9,
-      longShotBonus: 1.5,
+      aggression: 0.4,
+      passFrequency: 0.4,
+      longShotBonus: 1.0,
+      closeRangeBonus: 1.1,
+    },
+    goodAgainst: ['playmaker_heavy', 'trickster_heavy'],
+    weakAgainst: [],
+    minDifficulty: 'easy',
+  },
+
+  enforcer_wall: {
+    id: 'enforcer_wall',
+    name: '💪 Enforcer Wall',
+    description: 'Enforcers lock down, playmaker + maestro outlet',
+    composition: [
+      { capClass: 'enforcer', count: 3, priority: 'high' },
+      { capClass: 'playmaker', count: 1, priority: 'high' },
+      { capClass: 'maestro', count: 1, priority: 'medium' },
+    ],
+    playStyle: {
+      aggression: 0.5,
+      passFrequency: 0.45,
+      longShotBonus: 0.9,
       closeRangeBonus: 1.2,
     },
-    goodAgainst: ['tank_fortress', 'defensive_wall'],
-    weakAgainst: ['pressure_swarm'],
+    goodAgainst: ['trickster_heavy', 'playmaker_heavy'],
+    weakAgainst: [],
     minDifficulty: 'medium',
   },
 
-  balanced_flex: {
-    id: 'balanced_flex',
-    name: '⚖️ Balanced Flex',
-    description: 'Universal composition',
+  balanced_tactical: {
+    id: 'balanced_tactical',
+    name: '⚖️ Tactical Balance',
+    description: 'One of each combat role, no sniper/balanced spam',
     composition: [
-      { capClass: 'sniper', count: 1, priority: 'medium' },
-      { capClass: 'playmaker', count: 1, priority: 'medium' },
-      { capClass: 'tank', count: 1, priority: 'medium' },
-      { capClass: 'balanced', count: 2, priority: 'medium' },
+      { capClass: 'tank', count: 1, priority: 'high' },
+      { capClass: 'enforcer', count: 1, priority: 'medium' },
+      { capClass: 'playmaker', count: 1, priority: 'high' },
+      { capClass: 'trickster', count: 1, priority: 'high' },
+      { capClass: 'maestro', count: 1, priority: 'medium' },
     ],
     playStyle: {
-      aggression: 0.6,
-      passFrequency: 0.5,
+      aggression: 0.65,
+      passFrequency: 0.55,
       longShotBonus: 1.0,
-      closeRangeBonus: 1.0,
+      closeRangeBonus: 1.2,
     },
-    goodAgainst: [],
+    goodAgainst: ['mixed'],
     weakAgainst: [],
     minDifficulty: 'easy',
   },
@@ -218,6 +206,9 @@ function gameDifficultyRank(d: AIDifficulty): number {
   }
 }
 
+/** Классы для добора слотов (без balanced / sniper). */
+const FILLER_CLASSES: CapClass[] = ['tank', 'enforcer', 'playmaker', 'maestro', 'trickster'];
+
 export function flattenArchetypeComposition(archetype: TeamArchetype, teamSize: number): CapClass[] {
   const rows = [...archetype.composition].sort(
     (a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority],
@@ -228,8 +219,10 @@ export function flattenArchetypeComposition(archetype: TeamArchetype, teamSize: 
       slots.push(row.capClass);
     }
   }
+  let fi = 0;
   while (slots.length < teamSize) {
-    slots.push('balanced');
+    slots.push(FILLER_CLASSES[fi % FILLER_CLASSES.length]);
+    fi++;
   }
   return slots.slice(0, teamSize);
 }
@@ -240,34 +233,41 @@ export class ArchetypeSelector {
     teamSize: number,
     difficulty: AIDifficulty,
   ): TeamArchetype {
-    const playerArchetype = this.detectPlayerArchetype(playerComposition);
-    console.log(`[ArchetypeSelector] Player meta tag: ${playerArchetype} (teamSize=${teamSize})`);
+    const playerStyle = this.detectPlayerStyle(playerComposition);
+    console.log(`[ArchetypeSelector] Player style: ${playerStyle} (teamSize=${teamSize})`);
 
     const gameRank = gameDifficultyRank(difficulty);
     const available = Object.values(TEAM_ARCHETYPES).filter(
       (a) => ARCHETYPE_MIN_RANK[a.minDifficulty] <= gameRank,
     );
 
-    const counters = available.filter((a) => a.goodAgainst.includes(playerArchetype));
+    const counters = available.filter((a) => a.goodAgainst.includes(playerStyle));
     let selected: TeamArchetype;
     if (counters.length > 0) {
       selected = counters[Math.floor(Math.random() * counters.length)];
       console.log(`[ArchetypeSelector] Counter pick: ${selected.name}`);
     } else {
-      selected = available[Math.floor(Math.random() * available.length)] ?? TEAM_ARCHETYPES.balanced_flex;
+      selected = available[Math.floor(Math.random() * available.length)] ?? TEAM_ARCHETYPES.balanced_tactical;
       console.log(`[ArchetypeSelector] Fallback random: ${selected.name}`);
     }
     return selected;
   }
 
-  private static detectPlayerArchetype(composition: Record<CapClass, number>): string {
-    if (composition.trickster >= 3) return 'trickster_rush';
-    if (composition.sniper >= 3) return 'sniper_spam';
-    if (composition.playmaker >= 2 && composition.maestro >= 1) return 'dribble_control';
-    if (composition.tank + composition.enforcer >= 3) return 'tank_fortress';
-    if (composition.maestro >= 2) return 'maestro_control';
-    if (composition.playmaker >= 2 && composition.trickster >= 1) return 'pressure_swarm';
-    return 'balanced_flex';
+  private static detectPlayerStyle(composition: Record<CapClass, number>): PlayerStyleTag {
+    const tank = composition.tank ?? 0;
+    const enf = composition.enforcer ?? 0;
+    const trick = composition.trickster ?? 0;
+    const pm = composition.playmaker ?? 0;
+    const ma = composition.maestro ?? 0;
+    const sn = composition.sniper ?? 0;
+
+    if (trick >= 2 && pm >= 1) return 'mixed';
+    if (trick >= 2) return 'trickster_heavy';
+    if (pm >= 2) return 'playmaker_heavy';
+    if (ma >= 2) return 'maestro_heavy';
+    if (tank + enf >= 3) return 'tank_heavy';
+    if (sn >= 2) return 'sniper_heavy';
+    return 'mixed';
   }
 
   public static selectCaptain(unitIds: string[], archetype: TeamArchetype): string | null {
@@ -277,25 +277,29 @@ export class ArchetypeSelector {
 
     let preferredClasses: CapClass[] = [];
     switch (archetype.id) {
-      case 'sniper_spam':
-        preferredClasses = ['sniper', 'maestro'];
-        break;
       case 'trickster_rush':
-        preferredClasses = ['trickster', 'playmaker'];
+        preferredClasses = ['trickster', 'maestro', 'tank'];
         break;
-      case 'dribble_control':
-      case 'maestro_control':
-        preferredClasses = ['maestro', 'playmaker'];
+      case 'dribble_storm':
+        preferredClasses = ['playmaker', 'tank', 'enforcer'];
         break;
-      case 'tank_fortress':
-      case 'defensive_wall':
-        preferredClasses = ['tank', 'enforcer'];
+      case 'maestro_orchestra':
+        preferredClasses = ['maestro', 'trickster', 'tank'];
         break;
-      case 'pressure_swarm':
-        preferredClasses = ['playmaker', 'trickster'];
+      case 'hybrid_assault':
+        preferredClasses = ['trickster', 'playmaker', 'tank'];
+        break;
+      case 'fortress_counter':
+        preferredClasses = ['tank', 'enforcer', 'playmaker'];
+        break;
+      case 'enforcer_wall':
+        preferredClasses = ['enforcer', 'playmaker', 'maestro'];
+        break;
+      case 'balanced_tactical':
+        preferredClasses = ['tank', 'playmaker', 'trickster', 'maestro'];
         break;
       default:
-        preferredClasses = ['sniper', 'playmaker', 'maestro'];
+        preferredClasses = ['playmaker', 'maestro', 'trickster'];
     }
 
     for (const cls of preferredClasses) {

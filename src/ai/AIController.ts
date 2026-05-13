@@ -961,28 +961,32 @@ export class AIController {
     }
 
     let candidates = this.generateAllCandidates();
+    console.log(`[AI] Level 1: normal candidates = ${candidates.length}`);
 
     if (candidates.length === 0) {
-      console.warn('[AI] No candidates — emergency shots (toward goal)');
+      console.warn('[AI] Level 2: no normal candidates — emergency shots');
       candidates = this.generateEmergencyShots();
-      console.log(`[AI] Emergency tier-1: ${candidates.length} shots`);
+      console.log(`[AI] Level 2: emergency candidates = ${candidates.length}`);
     }
 
     if (candidates.length === 0) {
-      console.error('[AI] CRITICAL: still no shots after emergency generator');
+      console.error('[AI] Level 3: still no candidates — absolute last resort');
       const anyUnit = this.aiUnits.find((u) => !u.isStunned?.());
       if (anyUnit) {
-        const dir = new Phaser.Math.Vector2(Math.random() - 0.5, Math.random() * 0.55 + 0.12).normalize();
-        console.warn('[AI] LAST RESORT: random impulse on first movable unit');
-        this.scene.matter.body.applyForce(
-          anyUnit.body,
-          anyUnit.body.position,
-          this.applyError(dir, 0.48, anyUnit),
-        );
+        const randomAngle = Math.random() * Math.PI * 2;
+        const randomForce = 0.04 + Math.random() * 0.03;
+        const force = {
+          x: Math.cos(randomAngle) * randomForce,
+          y: Math.sin(randomAngle) * randomForce,
+        };
+        console.warn(`[AI] Level 3: random impulse (${force.x.toFixed(4)}, ${force.y.toFixed(4)})`);
+        this.scene.matter.body.applyForce(anyUnit.body, anyUnit.body.position, force);
+        AudioManager.getInstance().playSFX('sfx_kick');
         this.finishMove();
         console.log('[AI] ================================================');
         return;
       }
+      console.error('[AI] Level 3: no movable AI units');
       this.finishMove();
       console.log('[AI] ================================================');
       return;
@@ -990,8 +994,8 @@ export class AIController {
 
     candidates.sort((a, b) => b.score - a.score);
 
-    if (import.meta.env.DEV && candidates.length > 0) {
-      console.log('[AI] Top candidates:');
+    if (candidates.length > 0) {
+      console.log('[AI] Top 5 candidates:');
       candidates.slice(0, 5).forEach((c, i) => {
         console.log(`  ${i + 1}. [${c.type}] ${c.description} — ${c.score.toFixed(1)}`);
       });
@@ -1176,6 +1180,197 @@ export class AIController {
     };
   }
 
+  private countDefendersNearGoal(): number {
+    const goalY = this.fieldBounds.top;
+    const defenseRadius = 180;
+    let n = 0;
+    for (const unit of this.aiUnits) {
+      if (unit.isStunned?.()) continue;
+      if (Math.abs(unit.body.position.y - goalY) < defenseRadius) n++;
+    }
+    return n;
+  }
+
+  private hasEnoughDefenders(): boolean {
+    const n = this.countDefendersNearGoal();
+    console.log(`[AI] 🛡️ Defenders near goal: ${n} (need: 2)`);
+    return n >= 2;
+  }
+
+  /** Вратарь/защитник слишком низко — срочно вернуть к верхним воротам. */
+  private ensureTanksNearGoal(): ShotCandidate[] {
+    const moves: ShotCandidate[] = [];
+    const goalY = this.fieldBounds.top;
+    const maxDistance = 150;
+
+    for (const unit of this.aiUnits) {
+      if (unit.isStunned?.()) continue;
+      if (!this.allowedByCaptainGate(unit)) continue;
+      const role = this.getUnitRole(unit);
+      if (role !== 'goalkeeper' && role !== 'defender') continue;
+
+      const dist = Math.abs(unit.body.position.y - goalY);
+      if (dist <= maxDistance) continue;
+
+      const targetY = goalY + 60;
+      const targetX = this.fieldBounds.centerX;
+      const uPos = unit.body.position;
+      const toTarget = new Phaser.Math.Vector2(targetX - uPos.x, targetY - uPos.y);
+      const distance = toTarget.length();
+      if (distance < 1) continue;
+      toTarget.normalize();
+      const power = Math.min(0.08, distance * 0.00025);
+
+      console.error(
+        `[AI] 🚨 ${role} too far from goal: ${dist.toFixed(0)}px (max ${maxDistance}) — emergency return`,
+      );
+      moves.push({
+        unit,
+        target: { x: targetX, y: targetY },
+        score: 150,
+        type: 'defend',
+        force: { x: toTarget.x * power, y: toTarget.y * power },
+        description: `🚨 EMERGENCY: ${unit.getCapClass().toUpperCase()} RETURN TO GOAL! (${dist.toFixed(0)}px)`,
+      });
+    }
+    return moves;
+  }
+
+  private generateReturnToDefenseMove(): ShotCandidate | null {
+    const goalY = this.fieldBounds.top;
+    const defenseRadius = 180;
+
+    for (const unit of this.aiUnits) {
+      if (unit.isStunned?.()) continue;
+      if (!this.allowedByCaptainGate(unit)) continue;
+      const role = this.getUnitRole(unit);
+      if (role !== 'goalkeeper' && role !== 'defender') continue;
+
+      const dist = Math.abs(unit.body.position.y - goalY);
+      if (dist <= defenseRadius) continue;
+
+      const targetY = goalY + 80;
+      const targetX = this.fieldBounds.centerX;
+      const uPos = unit.body.position;
+      const toTarget = new Phaser.Math.Vector2(targetX - uPos.x, targetY - uPos.y);
+      const distance = toTarget.length();
+      if (distance < 1) continue;
+      toTarget.normalize();
+      const power = Math.min(0.06, distance * 0.0002);
+
+      return {
+        unit,
+        target: { x: targetX, y: targetY },
+        score: 120,
+        type: 'defend',
+        force: { x: toTarget.x * power, y: toTarget.y * power },
+        description: `🛡️ RETURN DEFENDER to goal (${unit.getCapClass()})`,
+      };
+    }
+    return null;
+  }
+
+  private generatePassToTricksterNearGoal(): ShotCandidate | null {
+    const opponentGoalY = this.fieldBounds.bottom;
+    const tricksterNearGoal = this.aiUnits.find((u) => {
+      if (u.getCapClass() !== 'trickster') return false;
+      return Math.abs(u.body.position.y - opponentGoalY) < 200;
+    });
+    if (!tricksterNearGoal) return null;
+
+    const ballPos = this.ball.body.position;
+    const tsPos = tricksterNearGoal.body.position;
+    const distBallToTs = Phaser.Math.Distance.Between(ballPos.x, ballPos.y, tsPos.x, tsPos.y);
+    if (distBallToTs > 400) return null;
+
+    for (const unit of this.aiUnits) {
+      if (unit.id === tricksterNearGoal.id) continue;
+      if (unit.isStunned?.()) continue;
+      if (!this.allowedByCaptainGate(unit)) continue;
+
+      const uPos = unit.body.position;
+      const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, ballPos.x, ballPos.y);
+      if (distToBall > 280) continue;
+
+      const toTs = new Phaser.Math.Vector2(tsPos.x - uPos.x, tsPos.y - uPos.y);
+      const len = toTs.length();
+      if (len < 1) continue;
+      toTs.normalize();
+      const power = this.calculatePower(unit, distToBall) * 0.72;
+      const force = this.applyError(toTs, power, unit);
+
+      return {
+        unit,
+        target: { x: tsPos.x, y: tsPos.y },
+        score: 95,
+        type: 'pass',
+        force,
+        description: `🎯 PASS to TRICKSTER near goal! (${unit.getCapClass()} → trickster)`,
+      };
+    }
+    return null;
+  }
+
+  private isPathToGoalBlocked(ballPos: { x: number; y: number }, goalPos: { x: number; y: number }): boolean {
+    const dx = goalPos.x - ballPos.x;
+    const dy = goalPos.y - ballPos.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+
+    for (const opponent of this.playerUnits) {
+      const o = opponent.body.position;
+      const ox = o.x - ballPos.x;
+      const oy = o.y - ballPos.y;
+      const proj = ox * ux + oy * uy;
+      if (proj <= 0 || proj >= len) continue;
+      const perp = Math.abs(ox * uy - oy * ux);
+      if (perp < 60) return true;
+    }
+    return false;
+  }
+
+  private generateDribbleRun(unit: AIUnit): ShotCandidate | null {
+    if (unit.getCapClass() !== 'playmaker') return null;
+
+    const uPos = unit.body.position;
+    const bPos = this.ball.body.position;
+    const goalPos = { x: this.fieldBounds.centerX, y: this.fieldBounds.bottom };
+
+    const distToBall = Phaser.Math.Distance.Between(uPos.x, uPos.y, bPos.x, bPos.y);
+    const distBallToGoal = Phaser.Math.Distance.Between(bPos.x, bPos.y, goalPos.x, goalPos.y);
+    if (distBallToGoal < 150 || distToBall > 250) return null;
+
+    const blocked = this.isPathToGoalBlocked(bPos, goalPos);
+    const toGoal = new Phaser.Math.Vector2(goalPos.x - bPos.x, goalPos.y - bPos.y).normalize();
+
+    if (blocked) {
+      const sideAngle = Math.random() > 0.5 ? Math.PI / 4 : -Math.PI / 4;
+      const dir = new Phaser.Math.Vector2(toGoal.x, toGoal.y).rotate(sideAngle);
+      const power = 0.65;
+      const force = this.applyError(dir, power, unit);
+      return {
+        unit,
+        target: { x: bPos.x + dir.x * 150, y: bPos.y + dir.y * 150 },
+        score: 82,
+        type: 'goal',
+        force,
+        description: `⚡ PLAYMAKER dribble around obstacle (${distBallToGoal.toFixed(0)}px)`,
+      };
+    }
+
+    const power = 0.7;
+    const force = this.applyError(toGoal, power, unit);
+    return {
+      unit,
+      target: { x: bPos.x + toGoal.x * 200, y: bPos.y + toGoal.y * 200 },
+      score: 88,
+      type: 'goal',
+      force,
+      description: `⚡⚡ PLAYMAKER DRIBBLE RUN! (${200}px)`,
+    };
+  }
+
   private generateAllCandidates(): ShotCandidate[] {
     const candidates: ShotCandidate[] = [];
 
@@ -1190,6 +1385,22 @@ export class AIController {
     const longShotMult = arch?.playStyle.longShotBonus ?? 1;
     const closeRangeMult = arch?.playStyle.closeRangeBonus ?? 1;
     const passStyle = arch?.playStyle.passFrequency ?? 0.55;
+
+    const roleCtx = this.buildRoleScoreContext();
+
+    const urgentTank = this.ensureTanksNearGoal();
+    if (urgentTank.length > 0 && urgentTank[0].score >= 110) {
+      console.warn('[AI] Level-A: defender/GK emergency return to own goal');
+      return urgentTank;
+    }
+
+    if (!this.hasEnoughDefenders()) {
+      const rt = this.generateReturnToDefenseMove();
+      if (rt) {
+        console.warn('[AI] Level-A2: insufficient cover near own goal — forced return');
+        return [rt];
+      }
+    }
 
     const pushPassChainCandidate = (chain: PassChainPlan, scoreBoost: number, description: string) => {
       const pass = chain.passes[0];
@@ -1254,7 +1465,20 @@ export class AIController {
       }
     }
 
-    const roleCtx = this.buildRoleScoreContext();
+    const passCamp = this.generatePassToTricksterNearGoal();
+    if (passCamp) {
+      passCamp.score = RoleBasedScoring.modifyScoreByRole(
+        passCamp.score,
+        'pass',
+        passCamp.unit,
+        this.getUnitRole(passCamp.unit),
+        roleCtx,
+      );
+      candidates.push(passCamp);
+      if (import.meta.env.DEV) {
+        console.log('[AI] 🎯 Trickster camping pass candidate');
+      }
+    }
 
     for (const unit of this.aiUnits) {
       if (unit.isStunned?.()) continue;
@@ -1544,6 +1768,11 @@ export class AIController {
         force,
         description: `${capClass.toUpperCase()} aggressive press`,
       });
+    }
+
+    if (capClass === 'playmaker') {
+      const dribbleRun = this.generateDribbleRun(unit);
+      if (dribbleRun) moves.push(dribbleRun);
     }
 
     return moves;

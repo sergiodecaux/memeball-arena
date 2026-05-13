@@ -203,6 +203,7 @@ export class EntityFactory {
       }
     }
     console.log(`[EntityFactory] 🤖 Opponent team (${aiTeamSize}, ${aiDifficulty}):`, opponentTeam);
+    TeamBuilder.recordMatchRoster(opponentTeam);
 
     // ===== PLAYER UNITS =====
     for (let i = 0; i < playerTeamSize; i++) {
