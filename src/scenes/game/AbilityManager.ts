@@ -1032,47 +1032,51 @@ export class AbilityManager extends Phaser.Events.EventEmitter {
    * ✅ NEW: Handle AI card usage (bypasses UI and directly applies the card)
    */
   public handleAICardUsage(cardId: string, targetData: any): boolean {
-    const card = getCard(cardId);
-    if (!card) {
-      console.warn(`[AbilityManager] AI card not found: ${cardId}`);
-      return false;
+    try {
+      const card = getCard(cardId);
+      if (!card) {
+        console.warn(`[AbilityManager] AI card not found: ${cardId}`);
+        return false;
+      }
+
+      console.log(`[AbilityManager] AI activating card: ${card.name} (${cardId})`, targetData);
+
+      // Prepare data in the format expected by applyCard
+      const data: { position?: { x: number; y: number } | null; unitIds?: string[] } = {};
+
+      if (targetData?.position) {
+        data.position = targetData.position;
+      }
+
+      if (targetData?.unitIds) {
+        data.unitIds = targetData.unitIds;
+      }
+
+      const success = this.applyCard(cardId, data);
+
+      if (success) {
+        this.markCardAsUsed(cardId);
+        this.lastGlobalActivationTime = Date.now();
+
+        eventBus.dispatch(GameEvents.ABILITY_ACTIVATED, {
+          playerId: this.playerId,
+          abilityType: cardId,
+        });
+
+        this.emit('card_activated', {
+          cardId: card.id,
+          success: true,
+        });
+
+        console.log(`[AbilityManager P${this.playerId}] AI card executed: ${card.name}`);
+      } else {
+        console.warn(`[AbilityManager] AI card execution failed: ${card.name}`);
+      }
+
+      return success;
+    } finally {
+      this.forceClearTargetingUI();
     }
-
-    console.log(`[AbilityManager] AI activating card: ${card.name} (${cardId})`, targetData);
-
-    // Prepare data in the format expected by applyCard
-    const data: { position?: { x: number; y: number } | null; unitIds?: string[]; } = {};
-
-    if (targetData?.position) {
-      data.position = targetData.position;
-    }
-
-    if (targetData?.unitIds) {
-      data.unitIds = targetData.unitIds;
-    }
-
-    const success = this.applyCard(cardId, data);
-
-    if (success) {
-      this.markCardAsUsed(cardId);
-      this.lastGlobalActivationTime = Date.now();
-
-      eventBus.dispatch(GameEvents.ABILITY_ACTIVATED, {
-        playerId: this.playerId,
-        abilityType: cardId,
-      });
-
-      this.emit('card_activated', {
-        cardId: card.id,
-        success: true,
-      });
-
-      console.log(`[AbilityManager P${this.playerId}] AI card executed: ${card.name}`);
-    } else {
-      console.warn(`[AbilityManager] AI card execution failed: ${card.name}`);
-    }
-
-    return success;
   }
 
   // ============================================================

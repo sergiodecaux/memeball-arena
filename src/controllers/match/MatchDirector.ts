@@ -234,12 +234,30 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
    * Выстрел произведён
    */
   onShot(unitId: string): void {
+    const sm = this.stateMachine;
+    const phaseBefore = sm.getPhase();
+    let ok = sm.executeShot(unitId);
+
+    // Зависший AIMING (например, после отмены UI) блокирует executeShot из WAITING
+    if (!ok && phaseBefore === MatchPhase.AIMING) {
+      sm.cancelAiming();
+      ok = sm.executeShot(unitId);
+    }
+
+    if (!ok) {
+      console.error('[MatchDirector] executeShot rejected — phase/state mismatch', {
+        unitId,
+        phaseBefore,
+        phaseNow: sm.getPhase(),
+        currentPlayer: sm.getCurrentPlayer(),
+      });
+      return;
+    }
+
     this.internalState.shotsCount++;
     this.stoppedFrames = 0;
     this.movingStartTime = Date.now();
-    
-    this.stateMachine.executeShot(unitId);
-    
+
     eventBus.dispatch(GameEvents.SHOT_EXECUTED, {
       unitId,
       velocity: { x: 0, y: 0 }, // Будет заполнено из ShootingController

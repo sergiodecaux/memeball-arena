@@ -2891,6 +2891,8 @@ export class GameScene extends Phaser.Scene {
     // Cleanup previous state
     if (this.abilityManager.isActivating()) this.abilityManager.cancelActivation();
     this.abilityManager.forceClearTargetingUI();
+    if (this.player2AbilityManager?.isActivating()) this.player2AbilityManager.cancelActivation();
+    this.player2AbilityManager?.forceClearTargetingUI();
     this.hideCardInfo();
     this.abilityManager.onTurnEnd(this.lastShootingCap);
     this.player2AbilityManager?.onTurnEnd();
@@ -3362,6 +3364,10 @@ export class GameScene extends Phaser.Scene {
     if (this.abilityManager.isActivating()) {
       this.abilityManager.cancelActivation();
     }
+    if (this.player2AbilityManager?.isActivating()) {
+      this.player2AbilityManager.cancelActivation();
+    }
+    this.player2AbilityManager?.forceClearTargetingUI();
     this.abilityButton.hide();
     this.cardPanel?.setVisible(false);
     this.abilityManager.forceClearTargetingUI();
@@ -3390,6 +3396,11 @@ export class GameScene extends Phaser.Scene {
       if (this.abilityManager.isActivating()) {
         this.abilityManager.cancelActivation();
       }
+      if (this.player2AbilityManager?.isActivating()) {
+        this.player2AbilityManager.cancelActivation();
+      }
+      this.abilityManager.forceClearTargetingUI();
+      this.player2AbilityManager?.forceClearTargetingUI();
       
       this.abilityButton.hide();
       this.cardPanel?.setVisible(false);
@@ -3410,6 +3421,9 @@ export class GameScene extends Phaser.Scene {
     if (this.abilityManager.isActivating()) {
       this.abilityManager.cancelActivation();
     }
+    if (this.player2AbilityManager?.isActivating()) {
+      this.player2AbilityManager.cancelActivation();
+    }
 
     this.abilityButton.hide();
     this.cardPanel?.setVisible(false);
@@ -3418,6 +3432,7 @@ export class GameScene extends Phaser.Scene {
       this.abilityManager.cancelActivation();
     }
     this.abilityManager.forceClearTargetingUI();
+    this.player2AbilityManager?.forceClearTargetingUI();
     this.hideCardInfo();
 
     this.shootingController.setEnabled(false);
@@ -3461,6 +3476,10 @@ export class GameScene extends Phaser.Scene {
     if (this.abilityManager.isActivating()) {
       this.abilityManager.cancelActivation();
     }
+    if (this.player2AbilityManager?.isActivating()) {
+      this.player2AbilityManager.cancelActivation();
+    }
+    this.player2AbilityManager?.forceClearTargetingUI();
 
     this.abilityButton.hide();
     this.cardPanel?.setVisible(false);
@@ -3505,6 +3524,7 @@ export class GameScene extends Phaser.Scene {
           this.aiController &&
           !this.aiController.isThinking) {
         this.maybeSyncAIFormationBeforeAITurn();
+        this.player2AbilityManager?.forceClearTargetingUI();
         this.captainMatchSystem?.tryActivateAiCaptainUltIfReady();
         this.aiController.startTurn();
       }
