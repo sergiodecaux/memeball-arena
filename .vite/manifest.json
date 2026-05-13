@@ -1,0 +1,286 @@
+{
+  "_ChestsCatalog-DEsSv0b_.js": {
+    "file": "assets/ChestsCatalog-DEsSv0b_.js",
+    "name": "ChestsCatalog"
+  },
+  "_SwipeNavigationManager-e_rKdV-H.js": {
+    "file": "assets/SwipeNavigationManager-e_rKdV-H.js",
+    "name": "SwipeNavigationManager"
+  },
+  "_accountLevelMatchRules-CcYmSfk9.js": {
+    "file": "assets/accountLevelMatchRules-CcYmSfk9.js",
+    "name": "accountLevelMatchRules"
+  },
+  "_index-BMVRpNaS.js": {
+    "file": "assets/index-BMVRpNaS.js",
+    "name": "index",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js"
+    ],
+    "dynamicImports": [
+      "src/scenes/FactionSelectScene.ts",
+      "src/scenes/ProfileSetupScene.ts",
+      "src/scenes/CampaignSelectScene.ts",
+      "src/scenes/MatchmakingScene.ts",
+      "src/scenes/PvPMatchmakingScene.ts",
+      "src/scenes/MatchPreparationScene.ts",
+      "src/scenes/ShopScene.ts",
+      "src/scenes/ProfileScene.ts",
+      "src/scenes/SettingsScene.ts",
+      "src/scenes/TeamScene.ts",
+      "src/scenes/LeagueScene.ts",
+      "src/scenes/TournamentScene.ts",
+      "src/scenes/TournamentBracketScene.ts",
+      "src/scenes/CollectionScene.ts",
+      "src/scenes/QuestsScene.ts",
+      "src/scenes/MatchModeSelectScene.ts",
+      "src/scenes/AIDifficultySelectScene.ts",
+      "src/scenes/BattlePassScene.ts",
+      "src/managers/AchievementManager.ts",
+      "_phaser-BYyZiPfI.js"
+    ]
+  },
+  "_leagueRewards-BbU1JtIR.js": {
+    "file": "assets/leagueRewards-BbU1JtIR.js",
+    "name": "leagueRewards",
+    "imports": [
+      "_index-BMVRpNaS.js"
+    ]
+  },
+  "_phaser-BYyZiPfI.js": {
+    "file": "assets/phaser-BYyZiPfI.js",
+    "name": "phaser",
+    "isDynamicEntry": true
+  },
+  "src/data/AvatarData.ts": {
+    "file": "assets/AvatarData-D8b-QOYj.js",
+    "name": "AvatarData",
+    "src": "src/data/AvatarData.ts",
+    "isDynamicEntry": true
+  },
+  "src/managers/AchievementManager.ts": {
+    "file": "assets/AchievementManager-KNTaY42f.js",
+    "name": "AchievementManager",
+    "src": "src/managers/AchievementManager.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_index-BMVRpNaS.js",
+      "_phaser-BYyZiPfI.js"
+    ]
+  },
+  "src/scenes/AIDifficultySelectScene.ts": {
+    "file": "assets/AIDifficultySelectScene-CSJTCILv.js",
+    "name": "AIDifficultySelectScene",
+    "src": "src/scenes/AIDifficultySelectScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_accountLevelMatchRules-CcYmSfk9.js"
+    ]
+  },
+  "src/scenes/BattlePassScene.ts": {
+    "file": "assets/BattlePassScene-D4l6vZ-E.js",
+    "name": "BattlePassScene",
+    "src": "src/scenes/BattlePassScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_SwipeNavigationManager-e_rKdV-H.js",
+      "_ChestsCatalog-DEsSv0b_.js"
+    ]
+  },
+  "src/scenes/CampaignSelectScene.ts": {
+    "file": "assets/CampaignSelectScene-C2g0V2-q.js",
+    "name": "CampaignSelectScene",
+    "src": "src/scenes/CampaignSelectScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js"
+    ]
+  },
+  "src/scenes/CollectionScene.ts": {
+    "file": "assets/CollectionScene-BJruXFyo.js",
+    "name": "CollectionScene",
+    "src": "src/scenes/CollectionScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_SwipeNavigationManager-e_rKdV-H.js"
+    ]
+  },
+  "src/scenes/FactionSelectScene.ts": {
+    "file": "assets/FactionSelectScene-DNSfI0km.js",
+    "name": "FactionSelectScene",
+    "src": "src/scenes/FactionSelectScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_SwipeNavigationManager-e_rKdV-H.js"
+    ]
+  },
+  "src/scenes/LeagueScene.ts": {
+    "file": "assets/LeagueScene-Eqt3QLMM.js",
+    "name": "LeagueScene",
+    "src": "src/scenes/LeagueScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_leagueRewards-BbU1JtIR.js",
+      "_SwipeNavigationManager-e_rKdV-H.js"
+    ]
+  },
+  "src/scenes/MatchModeSelectScene.ts": {
+    "file": "assets/MatchModeSelectScene-BT3vFb-c.js",
+    "name": "MatchModeSelectScene",
+    "src": "src/scenes/MatchModeSelectScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_SwipeNavigationManager-e_rKdV-H.js"
+    ]
+  },
+  "src/scenes/MatchPreparationScene.ts": {
+    "file": "assets/MatchPreparationScene-DrwtZbrG.js",
+    "name": "MatchPreparationScene",
+    "src": "src/scenes/MatchPreparationScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js"
+    ]
+  },
+  "src/scenes/MatchmakingScene.ts": {
+    "file": "assets/MatchmakingScene-COaepElA.js",
+    "name": "MatchmakingScene",
+    "src": "src/scenes/MatchmakingScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_accountLevelMatchRules-CcYmSfk9.js"
+    ]
+  },
+  "src/scenes/ProfileScene.ts": {
+    "file": "assets/ProfileScene-CLEaUK1H.js",
+    "name": "ProfileScene",
+    "src": "src/scenes/ProfileScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_index-BMVRpNaS.js",
+      "_phaser-BYyZiPfI.js",
+      "_leagueRewards-BbU1JtIR.js"
+    ],
+    "dynamicImports": [
+      "_index-BMVRpNaS.js",
+      "src/ui/AvatarSelectionOverlay.ts"
+    ]
+  },
+  "src/scenes/ProfileSetupScene.ts": {
+    "file": "assets/ProfileSetupScene-rti3_Y-a.js",
+    "name": "ProfileSetupScene",
+    "src": "src/scenes/ProfileSetupScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js"
+    ]
+  },
+  "src/scenes/PvPMatchmakingScene.ts": {
+    "file": "assets/PvPMatchmakingScene-sMQid5ad.js",
+    "name": "PvPMatchmakingScene",
+    "src": "src/scenes/PvPMatchmakingScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_accountLevelMatchRules-CcYmSfk9.js"
+    ]
+  },
+  "src/scenes/QuestsScene.ts": {
+    "file": "assets/QuestsScene-BMAevrhH.js",
+    "name": "QuestsScene",
+    "src": "src/scenes/QuestsScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_SwipeNavigationManager-e_rKdV-H.js"
+    ]
+  },
+  "src/scenes/SettingsScene.ts": {
+    "file": "assets/SettingsScene-D1hL560D.js",
+    "name": "SettingsScene",
+    "src": "src/scenes/SettingsScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js"
+    ]
+  },
+  "src/scenes/ShopScene.ts": {
+    "file": "assets/ShopScene-juA54cHH.js",
+    "name": "ShopScene",
+    "src": "src/scenes/ShopScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_index-BMVRpNaS.js",
+      "_phaser-BYyZiPfI.js",
+      "_ChestsCatalog-DEsSv0b_.js",
+      "_SwipeNavigationManager-e_rKdV-H.js"
+    ],
+    "dynamicImports": [
+      "src/data/AvatarData.ts"
+    ]
+  },
+  "src/scenes/TeamScene.ts": {
+    "file": "assets/TeamScene-DI2NaX2L.js",
+    "name": "TeamScene",
+    "src": "src/scenes/TeamScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_SwipeNavigationManager-e_rKdV-H.js"
+    ]
+  },
+  "src/scenes/TournamentBracketScene.ts": {
+    "file": "assets/TournamentBracketScene-C9VqUoKf.js",
+    "name": "TournamentBracketScene",
+    "src": "src/scenes/TournamentBracketScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js"
+    ]
+  },
+  "src/scenes/TournamentScene.ts": {
+    "file": "assets/TournamentScene-1_KhFBSy.js",
+    "name": "TournamentScene",
+    "src": "src/scenes/TournamentScene.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "_SwipeNavigationManager-e_rKdV-H.js"
+    ]
+  },
+  "src/ui/AvatarSelectionOverlay.ts": {
+    "file": "assets/AvatarSelectionOverlay-2RCyeN7o.js",
+    "name": "AvatarSelectionOverlay",
+    "src": "src/ui/AvatarSelectionOverlay.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_phaser-BYyZiPfI.js",
+      "_index-BMVRpNaS.js",
+      "src/data/AvatarData.ts"
+    ]
+  }
+}

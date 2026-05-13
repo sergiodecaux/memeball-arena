@@ -1,0 +1,1 @@
+function e(a){const t=Math.max(1,Math.floor(Number(a)||1));return t<=5?{teamSize:3,matchDurationSeconds:180}:t<10?{teamSize:4,matchDurationSeconds:240}:{teamSize:5,matchDurationSeconds:300}}function r(a){const t=Math.min(5,Math.max(3,Math.floor(Number(a)||3)));return t<=3?180:t===4?240:300}export{e as a,r as g};
