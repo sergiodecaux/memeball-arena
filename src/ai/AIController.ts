@@ -227,6 +227,13 @@ export class AIController {
 
   private moveCompleteCallback?: (skipDirectorShot?: boolean) => void;
   private thinkingTimer?: Phaser.Time.TimerEvent;
+  /** Защита от зависания: принудительное завершение хода, если колбэк/лассо не сработали. */
+  private moveTimeoutTimer?: Phaser.Time.TimerEvent;
+  private lassoTimeoutTimer?: Phaser.Time.TimerEvent;
+  private readonly MOVE_TIMEOUT_MS = 10000;
+  private readonly LASSO_TIMEOUT_MS = 5000;
+  /** Время установки `isThinking === true` в `startTurn` (для DEV-диагностики). */
+  private thinkingStartedAt = 0;
 
   /** Запуск сценария лассо (трикстер); при успехе ход уже завершён через handleLassoReleased → onShot(capId). */
   private tricksterLassoRunner?: (
@@ -263,6 +270,12 @@ export class AIController {
   public isThinking = false;
   private lastMoveTime = 0;
   private readonly MOVE_COOLDOWN = 800;
+
+  /** Длительность текущего «размышления» AI (мс); 0 если не в ходе. */
+  getThinkingElapsedMs(): number {
+    if (!this.isThinking) return 0;
+    return Date.now() - this.thinkingStartedAt;
+  }
 
   constructor(scene: Phaser.Scene, difficulty: AIDifficultyInput = 'medium', profile?: AIOpponentProfile) {
     this.scene = scene;
@@ -860,20 +873,30 @@ export class AIController {
   // === НАЧАЛО ХОДА ===
 
   startTurn(): void {
-    // ЗАЩИТА ОТ ДВОЙНОГО ВЫЗОВА
     const now = Date.now();
-    
+
+    if (!this.scene?.matter?.world) {
+      console.error('[AI] Scene or physics not available — cannot start turn');
+      return;
+    }
+
+    if (!this.scene.matter.world.enabled) {
+      console.error('[AI] Physics world disabled — cannot start turn');
+      return;
+    }
+
     if (this.isThinking) {
       console.log('[AI] ⚠️ Already thinking, ignoring startTurn');
       return;
     }
-    
+
     if (now - this.lastMoveTime < this.MOVE_COOLDOWN) {
       console.log('[AI] ⚠️ Move on cooldown, ignoring startTurn');
       return;
     }
-    
+
     this.isThinking = true;
+    this.thinkingStartedAt = Date.now();
     this.state.turnsSinceLastGoal++;
     this.state.turnNumber++;
 
@@ -898,6 +921,14 @@ export class AIController {
     if (this.thinkingTimer) {
       this.thinkingTimer.destroy();
       this.thinkingTimer = undefined;
+    }
+    if (this.moveTimeoutTimer) {
+      this.moveTimeoutTimer.destroy();
+      this.moveTimeoutTimer = undefined;
+    }
+    if (this.lassoTimeoutTimer) {
+      this.lassoTimeoutTimer.destroy();
+      this.lassoTimeoutTimer = undefined;
     }
     this.isThinking = false;
   }
@@ -940,6 +971,7 @@ export class AIController {
 
     if (!this.isThinking) {
       console.warn('[AI] Not thinking anymore, aborting move');
+      this.finishMove();
       return;
     }
 
@@ -948,6 +980,8 @@ export class AIController {
       this.finishMove();
       return;
     }
+
+    this.startMoveTimeout();
 
     const cardRoll = this.shouldUseCard();
     if (import.meta.env.DEV) {
@@ -1039,6 +1073,54 @@ export class AIController {
     );
     this.executeShot(selected);
     console.log('[AI] ================================================');
+  }
+
+  private startMoveTimeout(): void {
+    if (this.moveTimeoutTimer) {
+      this.moveTimeoutTimer.destroy();
+      this.moveTimeoutTimer = undefined;
+    }
+
+    this.moveTimeoutTimer = this.scene.time.delayedCall(this.MOVE_TIMEOUT_MS, () => {
+      if (this.isThinking) {
+        console.error('[AI] MOVE TIMEOUT — forcing finish after 10s');
+        console.error('[AI] State:', {
+          isThinking: this.isThinking,
+          turn: this.state.turnNumber,
+          physicsEnabled: this.scene.matter?.world?.enabled,
+        });
+        this.forceFinishMove();
+      }
+    });
+  }
+
+  private forceFinishMove(): void {
+    console.error('[AI] Force finishing move (hang recovery)');
+
+    if (this.thinkingTimer) {
+      this.thinkingTimer.destroy();
+      this.thinkingTimer = undefined;
+    }
+    if (this.moveTimeoutTimer) {
+      this.moveTimeoutTimer.destroy();
+      this.moveTimeoutTimer = undefined;
+    }
+    if (this.lassoTimeoutTimer) {
+      this.lassoTimeoutTimer.destroy();
+      this.lassoTimeoutTimer = undefined;
+    }
+
+    this.isThinking = false;
+    this.lastMoveTime = Date.now();
+    if (this.concedeReactionTurnsLeft > 0) {
+      this.concedeReactionTurnsLeft--;
+    }
+
+    if (this.moveCompleteCallback) {
+      this.moveCompleteCallback(false);
+    } else {
+      console.error('[AI] No moveCompleteCallback set');
+    }
   }
 
   /** Экстренные «прострелы» в сторону ворот игрока, если основная эвристика ничего не дала. */
@@ -2338,6 +2420,11 @@ export class AIController {
   }
 
   private executeTricksterLasso(candidate: ShotCandidate): void {
+    if (this.lassoTimeoutTimer) {
+      this.lassoTimeoutTimer.destroy();
+      this.lassoTimeoutTimer = undefined;
+    }
+
     const runner = this.tricksterLassoRunner;
     if (!runner) {
       const fb = this.evaluateGoalShot(candidate.unit);
@@ -2346,7 +2433,20 @@ export class AIController {
       return;
     }
 
+    let callbackExecuted = false;
+
     const finishOrFallback = (usedLasso: boolean) => {
+      if (callbackExecuted) {
+        console.warn('[AI] Lasso callback already executed');
+        return;
+      }
+      callbackExecuted = true;
+
+      if (this.lassoTimeoutTimer) {
+        this.lassoTimeoutTimer.destroy();
+        this.lassoTimeoutTimer = undefined;
+      }
+
       if (usedLasso) {
         this.finishMove({ skipDirectorShot: true });
         return;
@@ -2369,10 +2469,27 @@ export class AIController {
 
     if (!started) {
       finishOrFallback(false);
+      return;
     }
+
+    this.lassoTimeoutTimer = this.scene.time.delayedCall(this.LASSO_TIMEOUT_MS, () => {
+      if (!callbackExecuted) {
+        console.error('[AI] LASSO TIMEOUT — forcing fallback after 5s');
+        finishOrFallback(false);
+      }
+    });
   }
 
   private finishMove(opts?: { skipDirectorShot?: boolean }): void {
+    if (this.moveTimeoutTimer) {
+      this.moveTimeoutTimer.destroy();
+      this.moveTimeoutTimer = undefined;
+    }
+    if (this.lassoTimeoutTimer) {
+      this.lassoTimeoutTimer.destroy();
+      this.lassoTimeoutTimer = undefined;
+    }
+
     this.isThinking = false;
     this.lastMoveTime = Date.now();
     if (this.concedeReactionTurnsLeft > 0) {

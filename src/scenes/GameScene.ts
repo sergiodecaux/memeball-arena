@@ -101,6 +101,8 @@ export class GameScene extends Phaser.Scene {
   private isProcessingGoal: boolean = false;
   /** Троттлинг проверки «улетевшего» мяча после магнитного паса */
   private lastPassCatchStrayCheckMs = 0;
+  /** DEV: троттлинг лога «долгое размышление AI» */
+  private lastDevAiThinkWarnMs = 0;
 
   // === РЎСѓС‰РЅРѕСЃС‚Рё ===
   private ball!: Ball;
@@ -3525,7 +3527,23 @@ export class GameScene extends Phaser.Scene {
 
     const phase = this.matchDirector.getPhase();
     if (phase === MatchPhase.PAUSED || phase === MatchPhase.FINISHED) return;
-    
+
+    if (
+      import.meta.env.DEV &&
+      this.isAIEnabled &&
+      !this.isRealtimePvP &&
+      this.aiController?.isThinking
+    ) {
+      const elapsed = this.aiController.getThinkingElapsedMs();
+      if (elapsed > 8000) {
+        const now = this.time.now;
+        if (now - this.lastDevAiThinkWarnMs >= 1000) {
+          this.lastDevAiThinkWarnMs = now;
+          console.warn(`[GameScene] AI thinking for ${(elapsed / 1000).toFixed(1)}s`);
+        }
+      }
+    }
+
     // ✅ TUTORIAL: В режиме обучения обновляем физику, но пропускаем MatchDirector
     if (this.isTutorialMode) {
       // Обновляем базовые компоненты и физику (нужно для waitForObjectsToStop)
