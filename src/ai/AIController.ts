@@ -1390,16 +1390,12 @@ export class AIController {
 
     const urgentTank = this.ensureTanksNearGoal();
     if (urgentTank.length > 0 && urgentTank[0].score >= 110) {
-      console.warn('[AI] Level-A: defender/GK emergency return to own goal');
-      return urgentTank;
+      candidates.push(...urgentTank);
     }
 
     if (!this.hasEnoughDefenders()) {
       const rt = this.generateReturnToDefenseMove();
-      if (rt) {
-        console.warn('[AI] Level-A2: insufficient cover near own goal — forced return');
-        return [rt];
-      }
+      if (rt) candidates.push(rt);
     }
 
     const pushPassChainCandidate = (chain: PassChainPlan, scoreBoost: number, description: string) => {

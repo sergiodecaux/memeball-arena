@@ -109,6 +109,9 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
   private readonly STOP_THRESHOLD = 0.28;
   private readonly FRAMES_TO_CONFIRM = 8;
   private readonly MIN_MOVING_TIME = 400;
+  /** Если фаза MOVING не завершилась (зависание детектора), принудительно завершаем ход. */
+  private readonly MOVING_SOFT_TIMEOUT_MS = 14000;
+  private readonly MOVING_HARD_TIMEOUT_MS = 22000;
   private movingStartTime: number = 0;
 
   constructor(config: MatchDirectorConfig) {
@@ -487,10 +490,23 @@ export class MatchDirector extends Phaser.Events.EventEmitter {
     if (elapsed < this.MIN_MOVING_TIME) {
       return;
     }
-    
-    if (this.areAllObjectsStopped()) {
+
+    if (elapsed >= this.MOVING_HARD_TIMEOUT_MS) {
+      console.warn('[MatchDirector] MOVING hard timeout — forcing turn resolution');
+      this.onAllStopped();
+      return;
+    }
+
+    const allStopped = this.areAllObjectsStopped();
+    if (elapsed >= this.MOVING_SOFT_TIMEOUT_MS && allStopped) {
+      console.warn('[MatchDirector] MOVING soft timeout — objects stopped, resolving turn');
+      this.onAllStopped();
+      return;
+    }
+
+    if (allStopped) {
       this.stoppedFrames++;
-      
+
       if (this.stoppedFrames >= this.FRAMES_TO_CONFIRM) {
         this.onAllStopped();
       }
