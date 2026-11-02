@@ -14,7 +14,47 @@ interface GoalVisual {
   container: Phaser.GameObjects.Container;
   frame: Phaser.GameObjects.Graphics;
   net: Phaser.GameObjects.Graphics;
-  forceField?: Phaser.GameObjects.Graphics;
+  accentColor: number;
+}
+
+interface GoalLayout {
+  isTop: boolean;
+  goalWidth: number;
+  goalDepth: number;
+  postWidth: number;
+  startY: number;
+  endY: number;
+  midY: number;
+  backBarY: number;
+  leftPostX: number;
+  rightPostX: number;
+  netLeft: number;
+  netRight: number;
+  netTop: number;
+  netBottom: number;
+  deepY: number;
+}
+
+interface GoalParts {
+  interior: Phaser.GameObjects.Graphics;
+  ambient: Phaser.GameObjects.Container;
+  net: Phaser.GameObjects.Graphics;
+  frame: Phaser.GameObjects.Graphics;
+  overlay: Phaser.GameObjects.Container;
+}
+
+interface GoalNetOptions {
+  color: number;
+  edgeColor: number;
+  alpha: number;
+  edgeAlpha: number;
+  lineWidth: number;
+  edgeLineWidth: number;
+  baseColor?: number;
+  baseWidth?: number;
+  dash?: [number, number];
+  curve?: number;
+  nodes?: { color: number; alpha: number; step: number; radius: number };
 }
 
 interface ArenaAssets {
@@ -50,6 +90,7 @@ export class FieldRenderer {
 
   private particleEmitters: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
   private cornerPulseTweens: Phaser.Tweens.Tween[] = [];
+  private goalTweens: Phaser.Tweens.Tween[] = [];
   
   // Твин пульсации самой разметки
   private markingsPulseTween?: Phaser.Tweens.Tween;
@@ -844,82 +885,866 @@ export class FieldRenderer {
 
     const goalWidth = GOAL.WIDTH * this.scale;
     const goalDepth = GOAL.DEPTH * this.scale * (skin.goalDepthMultiplier ?? 1);
-    const postWidth = 6 * this.scale;
+    const postWidth = Math.max(3, 6 * this.scale);
+    const pad = Math.max(2, 3 * this.scale);
+
+    const startY = isTop ? -goalDepth : 0;
+    const endY = isTop ? 0 : goalDepth;
+    const backBarY = isTop ? startY : endY - postWidth;
 
     const container = scene.add.container(x, y);
     container.setDepth(15);
 
-    const frame = scene.add.graphics();
-    const startY = isTop ? -goalDepth : 0;
-    const endY = isTop ? 0 : goalDepth;
-
-    const frameColor = skin.goalFrameColor || skin.goalColor;
-    const darkColor = this.darkenColor(frameColor, 0.5);
-
-    frame.fillStyle(darkColor, 1);
-    frame.fillRect(-goalWidth / 2, startY, goalWidth, goalDepth);
-
-    frame.fillStyle(frameColor, 1);
-    frame.fillRect(-goalWidth / 2 - postWidth, startY, postWidth, goalDepth);
-    frame.fillRect(goalWidth / 2, startY, postWidth, goalDepth);
-
-    const barY = isTop ? startY : endY - postWidth;
-    frame.fillRect(-goalWidth / 2 - postWidth, barY, goalWidth + postWidth * 2, postWidth);
-
-    frame.fillStyle(0xffffff, 1);
-    frame.fillRect(-goalWidth / 2, isTop ? -2 : 0, goalWidth, 3);
-
-    container.add(frame);
-
+    const interior = scene.add.graphics();
+    const ambient = scene.add.container(0, 0);
     const net = scene.add.graphics();
-    const netAlpha = 0.3;
-    const netStep = 7 * this.scale;
-    const pad = 3 * this.scale;
+    const frame = scene.add.graphics();
+    const overlay = scene.add.container(0, 0);
 
-    net.lineStyle(1, 0xffffff, netAlpha);
+    // Порядок слоёв: мир внутри ворот -> анимация -> сетка -> каркас -> акценты.
+    container.add([interior, ambient, net, frame, overlay]);
 
-    const netLeft = -goalWidth / 2 + pad;
-    const netRight = goalWidth / 2 - pad;
-    const netTop = startY + pad;
-    const netBottom = isTop ? -pad : goalDepth - pad;
+    const layout: GoalLayout = {
+      isTop,
+      goalWidth,
+      goalDepth,
+      postWidth,
+      startY,
+      endY,
+      midY: (startY + endY) / 2,
+      backBarY,
+      leftPostX: -goalWidth / 2 - postWidth,
+      rightPostX: goalWidth / 2,
+      netLeft: -goalWidth / 2 + pad,
+      netRight: goalWidth / 2 - pad,
+      netTop: startY + pad,
+      netBottom: isTop ? -pad : goalDepth - pad,
+      deepY: isTop ? startY + goalDepth * 0.32 : endY - goalDepth * 0.32,
+    };
 
-    for (let nx = netLeft; nx <= netRight; nx += netStep) {
-      net.beginPath();
-      net.moveTo(nx, netTop);
-      net.lineTo(nx, netBottom);
-      net.strokePath();
+    const parts: GoalParts = { interior, ambient, net, frame, overlay };
+
+    let accentColor = skin.goalFrameColor || skin.goalColor || 0xffffff;
+
+    switch (this.factionId) {
+      case 'cyborg':
+        accentColor = 0x00f0ff;
+        this.buildCyborgGoal(layout, parts);
+        break;
+      case 'magma':
+        accentColor = 0xff5500;
+        this.buildMagmaGoal(layout, parts);
+        break;
+      case 'void':
+        accentColor = 0xb55cff;
+        this.buildVoidGoal(layout, parts);
+        break;
+      case 'insect':
+        accentColor = 0x39ff14;
+        this.buildInsectGoal(layout, parts);
+        break;
+      default:
+        this.buildDefaultGoal(layout, parts);
+        break;
     }
 
-    const step = isTop ? -netStep : netStep;
-    for (let ny = netTop; isTop ? ny >= netBottom : ny <= netBottom; ny += step) {
-      net.beginPath();
-      net.moveTo(netLeft, ny);
-      net.lineTo(netRight, ny);
-      net.strokePath();
+    return { side, container, frame, net, accentColor };
+  }
+
+  // ==================== FACTION GOALS ====================
+
+  private buildCyborgGoal(layout: GoalLayout, parts: GoalParts): void {
+    const { isTop, goalWidth, goalDepth, postWidth, startY, midY, leftPostX, rightPostX } =
+      layout;
+
+    parts.interior.fillGradientStyle(
+      isTop ? 0x020a14 : 0x053c59,
+      isTop ? 0x020a14 : 0x053c59,
+      isTop ? 0x053c59 : 0x020a14,
+      isTop ? 0x053c59 : 0x020a14,
+      1
+    );
+    parts.interior.fillRect(-goalWidth / 2, startY, goalWidth, goalDepth);
+
+    parts.interior.lineStyle(this.goalPx(0.7), 0x00f0ff, 0.14);
+    for (let i = 1; i < 3; i++) {
+      const lineY = startY + (goalDepth / 3) * i;
+      parts.interior.lineBetween(-goalWidth / 2 + 1, lineY, goalWidth / 2 - 1, lineY);
     }
 
-    container.add(net);
-
-    let forceField: Phaser.GameObjects.Graphics | undefined;
-    if (this.factionId === 'cyborg' || this.factionId === 'void') {
-      forceField = scene.add.graphics();
-      const ffColor =
-        FieldRenderer.ARENA_ASSETS[this.factionId ?? 'cyborg']?.glowColor || 0x00ffff;
-      forceField.fillStyle(ffColor, 0.08);
-      forceField.fillRect(-goalWidth / 2, startY, goalWidth, goalDepth);
-      container.add(forceField);
-
-      scene.tweens.add({
-        targets: forceField,
-        alpha: { from: 0.05, to: 0.15 },
-        duration: 1200,
+    const glow = this.scene.add
+      .ellipse(0, midY, goalWidth * 0.92, goalDepth * 0.9, 0x00f0ff, 0.12)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    parts.ambient.add(glow);
+    this.goalTweens.push(
+      this.scene.tweens.add({
+        targets: glow,
+        alpha: { from: 0.06, to: 0.2 },
+        scaleX: { from: 0.96, to: 1.04 },
+        scaleY: { from: 0.9, to: 1.05 },
+        duration: 1600,
         yoyo: true,
         repeat: -1,
         ease: 'Sine.easeInOut',
-      });
+      })
+    );
+
+    const scan = this.scene.add
+      .rectangle(0, midY, goalWidth * 0.16, goalDepth * 0.94, 0x00f0ff, 0.18)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    parts.ambient.add(scan);
+    this.goalTweens.push(
+      this.scene.tweens.add({
+        targets: scan,
+        x: { from: -goalWidth * 0.4, to: goalWidth * 0.4 },
+        alpha: { from: 0.08, to: 0.28 },
+        duration: 1900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    );
+
+    parts.net.setBlendMode(Phaser.BlendModes.ADD);
+    this.drawGoalNet(parts.net, layout, {
+      color: 0x00f0ff,
+      edgeColor: 0x00f0ff,
+      alpha: 0.16,
+      edgeAlpha: 0.55,
+      lineWidth: this.goalPx(0.8),
+      edgeLineWidth: this.goalPx(1.5),
+    });
+
+    this.drawGoalFrameBase(parts.frame, layout, 0x0f2942);
+    this.drawGoalChannel(parts.frame, layout, this.goalPx(3.4), 0x00f0ff, 0.18);
+    this.drawGoalChannel(parts.frame, layout, this.goalPx(1.6), 0x00f0ff, 1);
+    this.drawGoalChannel(parts.frame, layout, this.goalPx(0.7), 0xffffff, 0.95);
+
+    const accents = this.scene.add.graphics();
+    accents.fillStyle(0xe0f2fe, 1);
+    accents.fillRect(leftPostX, -2 * this.scale, postWidth, 4 * this.scale);
+    accents.fillRect(rightPostX, -2 * this.scale, postWidth, 4 * this.scale);
+    parts.overlay.add(accents);
+
+    this.createGoalMouthLine(parts, layout, 0x00f0ff, this.goalPx(1.8));
+  }
+
+  private buildMagmaGoal(layout: GoalLayout, parts: GoalParts): void {
+    const { isTop, goalWidth, goalDepth, postWidth, startY, endY, midY, leftPostX, rightPostX } =
+      layout;
+
+    parts.interior.fillGradientStyle(
+      isTop ? 0x1a0500 : 0x6e1400,
+      isTop ? 0x1a0500 : 0x6e1400,
+      isTop ? 0x6e1400 : 0x1a0500,
+      isTop ? 0x6e1400 : 0x1a0500,
+      1
+    );
+    parts.interior.fillRect(-goalWidth / 2, startY, goalWidth, goalDepth);
+
+    // Тектонические трещины, светящиеся лавой.
+    parts.interior.lineStyle(this.goalPx(0.8), 0xff7b00, 0.55);
+    for (let i = 0; i < 3; i++) {
+      const cx = -goalWidth * 0.3 + i * goalWidth * 0.3;
+      parts.interior.beginPath();
+      parts.interior.moveTo(cx - goalWidth * 0.08, startY + 1);
+      parts.interior.lineTo(cx + goalWidth * 0.03, midY - goalDepth * 0.12);
+      parts.interior.lineTo(cx - goalWidth * 0.04, midY + goalDepth * 0.1);
+      parts.interior.lineTo(cx + goalWidth * 0.06, endY - 1);
+      parts.interior.strokePath();
     }
 
-    return { side, container, frame, net, forceField };
+    // Базальтовые плиты, плавающие в лаве.
+    for (let i = 0; i < 5; i++) {
+      const px = -goalWidth * 0.36 + i * goalWidth * 0.18;
+      const py = midY + Math.sin(i * 1.7) * goalDepth * 0.16;
+      const pw = goalWidth * 0.13;
+      const ph = goalDepth * 0.32;
+
+      parts.interior.fillStyle(0x140603, 0.86);
+      parts.interior.beginPath();
+      parts.interior.moveTo(px - pw * 0.5, py - ph * 0.4);
+      parts.interior.lineTo(px + pw * 0.4, py - ph * 0.5);
+      parts.interior.lineTo(px + pw * 0.6, py + ph * 0.3);
+      parts.interior.lineTo(px - pw * 0.3, py + ph * 0.5);
+      parts.interior.closePath();
+      parts.interior.fillPath();
+
+      parts.interior.lineStyle(this.goalPx(0.8), 0xff7b00, 0.7);
+      parts.interior.strokePath();
+    }
+
+    const outerGlow = this.scene.add
+      .ellipse(0, midY, goalWidth, goalDepth * 0.95, 0xff3d00, 0.22)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    parts.ambient.add(outerGlow);
+    this.goalTweens.push(
+      this.scene.tweens.add({
+        targets: outerGlow,
+        alpha: { from: 0.14, to: 0.3 },
+        scaleX: { from: 0.96, to: 1.06 },
+        scaleY: { from: 0.92, to: 1.08 },
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    );
+
+    const innerGlow = this.scene.add
+      .ellipse(0, midY, goalWidth * 0.58, goalDepth * 0.6, 0xffd166, 0.26)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    parts.ambient.add(innerGlow);
+    this.goalTweens.push(
+      this.scene.tweens.add({
+        targets: innerGlow,
+        alpha: { from: 0.16, to: 0.38 },
+        duration: 700,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    );
+
+    // Раскалённые угольки, поднимающиеся из жерла.
+    for (let i = 0; i < 5; i++) {
+      const emberX = -goalWidth * 0.34 + i * goalWidth * 0.17;
+      const emberStartY = midY + Math.cos(i) * goalDepth * 0.18;
+      const ember = this.scene.add
+        .circle(emberX, emberStartY, this.goalPx(1.4), i % 2 ? 0xffd166 : 0xff6a00, 0.9)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      parts.ambient.add(ember);
+      this.goalTweens.push(
+        this.scene.tweens.add({
+          targets: ember,
+          y: emberStartY - goalDepth * 0.45,
+          alpha: { from: 0.9, to: 0 },
+          duration: 1300 + i * 140,
+          delay: i * 180,
+          repeat: -1,
+          ease: 'Sine.easeOut',
+        })
+      );
+    }
+
+    this.drawGoalNet(parts.net, layout, {
+      baseColor: 0x1c0a04,
+      baseWidth: this.goalPx(2.4),
+      color: 0xff7314,
+      edgeColor: 0xffae00,
+      alpha: 0.72,
+      edgeAlpha: 0.95,
+      lineWidth: this.goalPx(1),
+      edgeLineWidth: this.goalPx(1.6),
+      dash: [4, 3],
+    });
+
+    this.drawGoalFrameBase(parts.frame, layout, 0x1f0d07);
+
+    parts.frame.fillStyle(0x5c2814, 0.55);
+    parts.frame.fillRect(leftPostX + postWidth * 0.55, startY + 1, postWidth * 0.35, goalDepth - 2);
+    parts.frame.fillRect(rightPostX + postWidth * 0.1, startY + 1, postWidth * 0.35, goalDepth - 2);
+
+    const runePath = [
+      { x: leftPostX + postWidth / 2, y: 0 },
+      { x: leftPostX + postWidth / 2, y: layout.backBarY + postWidth / 2 },
+      { x: rightPostX + postWidth / 2, y: layout.backBarY + postWidth / 2 },
+      { x: rightPostX + postWidth / 2, y: 0 },
+    ];
+    this.drawDashedPolyline(
+      parts.frame,
+      runePath,
+      1.4,
+      1,
+      this.goalPx(2.2),
+      0xff7b00,
+      0.9
+    );
+    this.drawDashedPolyline(
+      parts.frame,
+      runePath,
+      1.4,
+      1,
+      this.goalPx(0.8),
+      0xfff3b0,
+      0.85
+    );
+
+    const accents = this.scene.add.graphics();
+    const dir = isTop ? -1 : 1;
+    const backOuterY = isTop ? startY : endY;
+    this.drawOrcBlade(accents, leftPostX, 0, -1, dir);
+    this.drawOrcBlade(accents, rightPostX + postWidth, 0, 1, dir);
+    this.drawOrcBlade(accents, leftPostX, backOuterY, -1, -dir * 0.5);
+    this.drawOrcBlade(accents, rightPostX + postWidth, backOuterY, 1, -dir * 0.5);
+    parts.overlay.add(accents);
+
+    this.createGoalMouthLine(parts, layout, 0xff9100, this.goalPx(2));
+  }
+
+  private buildVoidGoal(layout: GoalLayout, parts: GoalParts): void {
+    const { isTop, goalWidth, goalDepth, postWidth, startY, midY, leftPostX, rightPostX } =
+      layout;
+
+    parts.interior.fillGradientStyle(
+      isTop ? 0x04000c : 0x2e0b59,
+      isTop ? 0x04000c : 0x2e0b59,
+      isTop ? 0x2e0b59 : 0x04000c,
+      isTop ? 0x2e0b59 : 0x04000c,
+      1
+    );
+    parts.interior.fillRect(-goalWidth / 2, startY, goalWidth, goalDepth);
+    parts.interior.fillStyle(0x04000c, 0.92);
+    parts.interior.fillEllipse(0, midY, goalWidth * 0.3, goalDepth * 0.55);
+
+    const glow = this.scene.add
+      .ellipse(0, midY, goalWidth * 0.9, goalDepth * 0.9, 0x7e22ce, 0.3)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    parts.ambient.add(glow);
+    this.goalTweens.push(
+      this.scene.tweens.add({
+        targets: glow,
+        alpha: { from: 0.2, to: 0.4 },
+        scaleX: { from: 0.96, to: 1.06 },
+        scaleY: { from: 0.9, to: 1.06 },
+        duration: 1800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    );
+
+    // Вращающиеся эллиптические вихри сингулярности.
+    for (let i = 1; i <= 3; i++) {
+      const ring = this.scene.add
+        .ellipse(0, midY, goalWidth * 0.14 * i, goalDepth * 0.16 * i, 0xffffff, 0)
+        .setStrokeStyle(this.goalPx(1), i === 2 ? 0x00f0ff : 0xc084fc, 0.42)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      parts.ambient.add(ring);
+      this.goalTweens.push(
+        this.scene.tweens.add({
+          targets: ring,
+          scaleX: { from: 0.86, to: 1.16 },
+          scaleY: { from: 0.82, to: 1.18 },
+          alpha: { from: 0.25, to: 0.7 },
+          duration: 1600 + i * 380,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        })
+      );
+    }
+
+    const singularity = this.scene.add
+      .circle(0, midY, this.goalPx(2.4), 0xf0abfc, 0.85)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    parts.ambient.add(singularity);
+    this.goalTweens.push(
+      this.scene.tweens.add({
+        targets: singularity,
+        scale: { from: 0.7, to: 1.5 },
+        alpha: { from: 0.45, to: 1 },
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    );
+
+    parts.net.setBlendMode(Phaser.BlendModes.ADD);
+    this.drawGoalNet(parts.net, layout, {
+      color: 0x7e22ce,
+      edgeColor: 0xc084fc,
+      alpha: 0.22,
+      edgeAlpha: 0.62,
+      lineWidth: this.goalPx(0.8),
+      edgeLineWidth: this.goalPx(1.3),
+    });
+
+    this.drawGoalFrameBase(parts.frame, layout, 0x14062b);
+    this.drawGoalOuterOutline(parts.frame, layout, this.goalPx(2.4), 0xffbe3d, 0.95);
+    this.drawGoalChannel(parts.frame, layout, this.goalPx(1.2), 0x00f0ff, 0.95);
+
+    const accents = this.scene.add.graphics();
+    accents.fillStyle(0xffbe3d, 1);
+    accents.fillRect(leftPostX, -2 * this.scale, postWidth, 4 * this.scale);
+    accents.fillRect(rightPostX, -2 * this.scale, postWidth, 4 * this.scale);
+    parts.overlay.add(accents);
+
+    this.createGoalMouthLine(parts, layout, 0x00f0ff, this.goalPx(1.8), true);
+  }
+
+  private buildInsectGoal(layout: GoalLayout, parts: GoalParts): void {
+    const {
+      isTop,
+      goalWidth,
+      goalDepth,
+      postWidth,
+      startY,
+      endY,
+      midY,
+      leftPostX,
+      rightPostX,
+    } = layout;
+
+    parts.interior.fillGradientStyle(
+      isTop ? 0x041208 : 0x0b2914,
+      isTop ? 0x041208 : 0x0b2914,
+      isTop ? 0x0b2914 : 0x041208,
+      isTop ? 0x0b2914 : 0x041208,
+      1
+    );
+    parts.interior.fillRect(-goalWidth / 2, startY, goalWidth, goalDepth);
+
+    // Биомеханические рёбра-сухожилия.
+    for (let i = -3; i <= 3; i++) {
+      const rx = (i / 3) * goalWidth * 0.42;
+      parts.interior.lineStyle(this.goalPx(1.5), 0x39ff14, 0.18);
+      this.strokeQuadraticCurve(
+        parts.interior,
+        rx,
+        0,
+        rx + i * 1.6 * this.scale,
+        midY,
+        rx * 0.96,
+        isTop ? startY : endY
+      );
+    }
+
+    const glow = this.scene.add
+      .ellipse(0, midY, goalWidth * 0.9, goalDepth * 0.92, 0x39ff14, 0.2)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    parts.ambient.add(glow);
+    this.goalTweens.push(
+      this.scene.tweens.add({
+        targets: glow,
+        alpha: { from: 0.12, to: 0.3 },
+        scaleX: { from: 0.95, to: 1.05 },
+        duration: 1400,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    );
+
+    // Пульсирующие коконы в глубине улья.
+    for (let i = -2; i <= 2; i++) {
+      const eggX = i * goalWidth * 0.17;
+      const eggY = layout.deepY + Math.sin(i) * goalDepth * 0.05;
+      const egg = this.scene.add
+        .circle(eggX, eggY, this.goalPx(2.6), 0x39ff14, 0.85)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      parts.ambient.add(egg);
+      this.goalTweens.push(
+        this.scene.tweens.add({
+          targets: egg,
+          scale: { from: 0.8, to: 1.2 },
+          alpha: { from: 0.5, to: 1 },
+          duration: 900 + Math.abs(i) * 160,
+          delay: Math.abs(i) * 90,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        })
+      );
+    }
+
+    parts.net.setBlendMode(Phaser.BlendModes.ADD);
+    this.drawGoalNet(parts.net, layout, {
+      color: 0x39ff14,
+      edgeColor: 0x39ff14,
+      alpha: 0.42,
+      edgeAlpha: 0.85,
+      lineWidth: this.goalPx(1),
+      edgeLineWidth: this.goalPx(1.8),
+      curve: 1.6 * this.scale,
+      nodes: {
+        color: 0xeaff00,
+        alpha: 0.8,
+        step: 2,
+        radius: this.goalPx(1.4),
+      },
+    });
+
+    this.drawGoalFrameBase(parts.frame, layout, 0x071a0e);
+    this.drawDashedPolyline(
+      parts.frame,
+      [
+        { x: leftPostX + postWidth / 2, y: 0 },
+        { x: leftPostX + postWidth / 2, y: layout.backBarY + postWidth / 2 },
+        { x: rightPostX + postWidth / 2, y: layout.backBarY + postWidth / 2 },
+        { x: rightPostX + postWidth / 2, y: 0 },
+      ],
+      1.6,
+      1.4,
+      this.goalPx(3.2),
+      0x1f4d2e,
+      0.95
+    );
+    this.drawGoalChannel(parts.frame, layout, this.goalPx(2), 0x39ff14, 0.95);
+    this.drawGoalChannel(parts.frame, layout, this.goalPx(0.8), 0xeaff00, 0.95);
+
+    const accents = this.scene.add.graphics();
+    const dir = isTop ? -1 : 1;
+    this.drawAlienSpike(accents, leftPostX, 0, 1, dir);
+    this.drawAlienSpike(accents, rightPostX + postWidth, 0, -1, dir);
+    parts.overlay.add(accents);
+
+    this.createGoalMouthLine(parts, layout, 0x39ff14, this.goalPx(1.8));
+  }
+
+  private buildDefaultGoal(layout: GoalLayout, parts: GoalParts): void {
+    const { goalWidth, goalDepth, postWidth, startY, backBarY, isTop } = layout;
+
+    const frameColor = this.skin.goalFrameColor || this.skin.goalColor || 0xffffff;
+    const darkColor = this.darkenColor(frameColor, 0.5);
+
+    parts.interior.fillStyle(darkColor, 1);
+    parts.interior.fillRect(-goalWidth / 2, startY, goalWidth, goalDepth);
+
+    parts.frame.fillStyle(frameColor, 1);
+    parts.frame.fillRect(-goalWidth / 2 - postWidth, startY, postWidth, goalDepth);
+    parts.frame.fillRect(goalWidth / 2, startY, postWidth, goalDepth);
+    parts.frame.fillRect(
+      -goalWidth / 2 - postWidth,
+      backBarY,
+      goalWidth + postWidth * 2,
+      postWidth
+    );
+
+    this.drawGoalNet(parts.net, layout, {
+      color: 0xffffff,
+      edgeColor: 0xffffff,
+      alpha: 0.3,
+      edgeAlpha: 0.3,
+      lineWidth: 1,
+      edgeLineWidth: 1,
+    });
+
+    parts.frame.fillStyle(0xffffff, 1);
+    parts.frame.fillRect(-goalWidth / 2, isTop ? -2 : 0, goalWidth, 3);
+  }
+
+  private goalPx(value: number): number {
+    return Math.max(0.8, value * this.scale);
+  }
+
+  private drawGoalNet(
+    g: Phaser.GameObjects.Graphics,
+    layout: GoalLayout,
+    options: GoalNetOptions
+  ): void {
+    const { netLeft, netRight, netTop, netBottom, isTop } = layout;
+    const step = Math.max(4, 7 * this.scale);
+    const dash: [number, number] | undefined = options.dash
+      ? [Math.max(2, options.dash[0] * this.scale), Math.max(2, options.dash[1] * this.scale)]
+      : undefined;
+
+    const verticals = [netLeft, netRight];
+    for (let nx = netLeft + step; nx < netRight - 0.01; nx += step) verticals.push(nx);
+
+    const horizontals = [netTop, netBottom];
+    for (let ny = netTop + step; ny < netBottom - 0.01; ny += step) horizontals.push(ny);
+
+    const drawSegment = (
+      x1: number,
+      y1: number,
+      x2: number,
+      y2: number,
+      isEdge: boolean,
+      isVertical: boolean
+    ) => {
+      if (options.baseColor !== undefined) {
+        const baseWidth = options.baseWidth ?? options.lineWidth;
+        g.lineStyle(
+          isEdge ? baseWidth * 1.35 : baseWidth,
+          options.baseColor,
+          0.92
+        );
+        g.beginPath();
+        g.moveTo(x1, y1);
+        g.lineTo(x2, y2);
+        g.strokePath();
+      }
+
+      g.lineStyle(
+        isEdge ? options.edgeLineWidth : options.lineWidth,
+        isEdge ? options.edgeColor : options.color,
+        isEdge ? options.edgeAlpha : options.alpha
+      );
+
+      if (dash) {
+        this.drawDashedSegment(g, x1, y1, x2, y2, dash[0], dash[1]);
+      } else if (options.curve) {
+        const controlX = isVertical
+          ? (x1 + x2) / 2 + Math.sin((y1 + y2) * 0.17 + x1 * 0.31) * options.curve
+          : (x1 + x2) / 2;
+        const controlY = isVertical
+          ? (y1 + y2) / 2
+          : (y1 + y2) / 2 + Math.cos((x1 + x2) * 0.17 + y1 * 0.29) * options.curve;
+        this.strokeQuadraticCurve(g, x1, y1, controlX, controlY, x2, y2);
+      } else {
+        g.beginPath();
+        g.moveTo(x1, y1);
+        g.lineTo(x2, y2);
+        g.strokePath();
+      }
+    };
+
+    for (const nx of verticals) {
+      const isEdge = nx <= netLeft + 0.01 || nx >= netRight - 0.01;
+      drawSegment(nx, netTop, nx, netBottom, isEdge, true);
+    }
+
+    for (const ny of horizontals) {
+      const isEdge = isTop ? ny <= netTop + 0.01 : ny >= netBottom - 0.01;
+      drawSegment(netLeft, ny, netRight, ny, isEdge, false);
+    }
+
+    if (options.nodes) {
+      g.fillStyle(options.nodes.color, options.nodes.alpha);
+      for (let i = 1; i < verticals.length - 1; i++) {
+        if (i % options.nodes.step !== 0) continue;
+        for (let j = 1; j < horizontals.length - 1; j++) {
+          g.fillCircle(verticals[i], horizontals[j], options.nodes.radius);
+        }
+      }
+    }
+  }
+
+  private drawGoalFrameBase(
+    g: Phaser.GameObjects.Graphics,
+    layout: GoalLayout,
+    bodyColor: number
+  ): void {
+    const { goalWidth, goalDepth, postWidth, startY, leftPostX, rightPostX, backBarY } = layout;
+
+    g.fillStyle(0x000000, 0.45);
+    g.fillRect(leftPostX + this.goalPx(1), startY + this.goalPx(1), postWidth, goalDepth);
+    g.fillRect(rightPostX + this.goalPx(1), startY + this.goalPx(1), postWidth, goalDepth);
+    g.fillRect(
+      leftPostX + this.goalPx(1),
+      backBarY + this.goalPx(1),
+      goalWidth + postWidth * 2,
+      postWidth
+    );
+
+    g.fillStyle(bodyColor, 1);
+    g.fillRect(leftPostX, startY, postWidth, goalDepth);
+    g.fillRect(rightPostX, startY, postWidth, goalDepth);
+    g.fillRect(leftPostX, backBarY, goalWidth + postWidth * 2, postWidth);
+
+    g.lineStyle(this.goalPx(0.8), this.lightenColor(bodyColor, 0.12), 0.55);
+    g.strokeRect(leftPostX, startY, postWidth, goalDepth);
+    g.strokeRect(rightPostX, startY, postWidth, goalDepth);
+    g.strokeRect(leftPostX, backBarY, goalWidth + postWidth * 2, postWidth);
+  }
+
+  private drawGoalChannel(
+    g: Phaser.GameObjects.Graphics,
+    layout: GoalLayout,
+    width: number,
+    color: number,
+    alpha: number
+  ): void {
+    const leftCenter = layout.leftPostX + layout.postWidth / 2;
+    const rightCenter = layout.rightPostX + layout.postWidth / 2;
+    const backCenterY = layout.backBarY + layout.postWidth / 2;
+
+    g.lineStyle(width, color, alpha);
+    g.beginPath();
+    g.moveTo(leftCenter, 0);
+    g.lineTo(leftCenter, backCenterY);
+    g.lineTo(rightCenter, backCenterY);
+    g.lineTo(rightCenter, 0);
+    g.strokePath();
+  }
+
+  private drawGoalOuterOutline(
+    g: Phaser.GameObjects.Graphics,
+    layout: GoalLayout,
+    width: number,
+    color: number,
+    alpha: number
+  ): void {
+    const outerLeft = layout.leftPostX;
+    const outerRight = layout.rightPostX + layout.postWidth;
+    const outerBack = layout.isTop ? layout.startY : layout.endY;
+
+    g.lineStyle(width, color, alpha);
+    g.beginPath();
+    g.moveTo(outerLeft, 0);
+    g.lineTo(outerLeft, outerBack);
+    g.lineTo(outerRight, outerBack);
+    g.lineTo(outerRight, 0);
+    g.strokePath();
+  }
+
+  private createGoalMouthLine(
+    parts: GoalParts,
+    layout: GoalLayout,
+    color: number,
+    width: number,
+    dashed = false
+  ): void {
+    const halfWidth = layout.goalWidth / 2;
+
+    const drawLine = (g: Phaser.GameObjects.Graphics) => {
+      g.lineStyle(width, color, 1);
+      if (dashed) {
+        this.drawDashedSegment(
+          g,
+          -halfWidth,
+          0,
+          halfWidth,
+          0,
+          Math.max(3, 5 * this.scale),
+          Math.max(2, 3 * this.scale)
+        );
+      } else {
+        g.lineBetween(-halfWidth, 0, halfWidth, 0);
+      }
+    };
+
+    const glow = this.scene.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
+    glow.lineStyle(width * 3.5, color, 0.18);
+    if (dashed) {
+      this.drawDashedSegment(
+        glow,
+        -halfWidth,
+        0,
+        halfWidth,
+        0,
+        Math.max(3, 5 * this.scale),
+        Math.max(2, 3 * this.scale)
+      );
+    } else {
+      glow.lineBetween(-halfWidth, 0, halfWidth, 0);
+    }
+    parts.overlay.add(glow);
+
+    const line = this.scene.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
+    drawLine(line);
+    parts.overlay.add(line);
+
+    this.goalTweens.push(
+      this.scene.tweens.add({
+        targets: line,
+        alpha: { from: 0.55, to: 1 },
+        duration: 1400,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    );
+  }
+
+  private drawOrcBlade(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    sideX: number,
+    dirY: number
+  ): void {
+    g.fillStyle(0xc2b5a3, 1);
+    g.lineStyle(this.goalPx(1.2), 0x291108, 1);
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + sideX * 9 * this.scale, y + dirY * 3 * this.scale);
+    g.lineTo(x, y + dirY * 10 * this.scale);
+    g.closePath();
+    g.fillPath();
+    g.strokePath();
+  }
+
+  private drawAlienSpike(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    inwardX: number,
+    dirY: number
+  ): void {
+    g.fillStyle(0x0b2414, 1);
+    g.lineStyle(this.goalPx(1), 0x39ff14, 0.9);
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + inwardX * 10 * this.scale, y + dirY * 6 * this.scale);
+    g.lineTo(x, y + dirY * 5 * this.scale);
+    g.closePath();
+    g.fillPath();
+    g.strokePath();
+  }
+
+  private drawDashedPolyline(
+    g: Phaser.GameObjects.Graphics,
+    points: Array<{ x: number; y: number }>,
+    dash: number,
+    gap: number,
+    width: number,
+    color: number,
+    alpha: number
+  ): void {
+    g.lineStyle(width, color, alpha);
+    for (let i = 1; i < points.length; i++) {
+      this.drawDashedSegment(
+        g,
+        points[i - 1].x,
+        points[i - 1].y,
+        points[i].x,
+        points[i].y,
+        dash * this.scale,
+        gap * this.scale
+      );
+    }
+  }
+
+  private drawDashedSegment(
+    g: Phaser.GameObjects.Graphics,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    dash: number,
+    gap: number
+  ): void {
+    const length = Math.hypot(x2 - x1, y2 - y1);
+    if (length < 0.001) return;
+
+    const dx = (x2 - x1) / length;
+    const dy = (y2 - y1) / length;
+    const safeDash = Math.max(1, dash);
+    const safeGap = Math.max(1, gap);
+
+    for (let distance = 0; distance < length; distance += safeDash + safeGap) {
+      const end = Math.min(distance + safeDash, length);
+      g.beginPath();
+      g.moveTo(x1 + dx * distance, y1 + dy * distance);
+      g.lineTo(x1 + dx * end, y1 + dy * end);
+      g.strokePath();
+    }
+  }
+
+  private strokeQuadraticCurve(
+    g: Phaser.GameObjects.Graphics,
+    x1: number,
+    y1: number,
+    controlX: number,
+    controlY: number,
+    x2: number,
+    y2: number
+  ): void {
+    const steps = 6;
+    g.beginPath();
+    g.moveTo(x1, y1);
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const mt = 1 - t;
+      g.lineTo(
+        mt * mt * x1 + 2 * mt * t * controlX + t * t * x2,
+        mt * mt * y1 + 2 * mt * t * controlY + t * t * y2
+      );
+    }
+    g.strokePath();
   }
 
   private createAtmosphericEffects(): void {
@@ -1098,9 +1923,12 @@ export class FieldRenderer {
 
     this.scene.tweens.add({
       targets: goal.net,
-      alpha: { from: 0.25, to: 0.7 },
+      alpha: { from: 0.35, to: 1 },
       yoyo: true,
       duration: 110,
+      onComplete: () => {
+        goal.net.alpha = 1;
+      },
     });
 
     if (clamped > 0.4) {
@@ -1111,7 +1939,7 @@ export class FieldRenderer {
     const impactX = b.centerX;
     const impactY = side === 'top' ? b.top : b.bottom;
 
-    const waveColor = this.skin.goalFrameColor || this.skin.goalColor || 0xffffff;
+    const waveColor = goal.accentColor;
 
     const shock = this.scene.add.circle(
       impactX,
@@ -1233,6 +2061,9 @@ export class FieldRenderer {
   }
 
   destroy(): void {
+    this.goalTweens.forEach((t) => t.stop());
+    this.goalTweens = [];
+
     this.particleEmitters.forEach((e) => e.destroy());
     this.particleEmitters = [];
 
