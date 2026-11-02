@@ -5,6 +5,9 @@ dist/
 *.tar.gz
 *.tgz
 
+# Android release artifacts
+builds/
+
 # Временные файлы в public
 public/ui/Новый текстовый документ*.txt
 public/backgrounds/Новая папка/

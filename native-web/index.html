@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#050505" />
+  <title>Galaxy League</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #050505;
+      color: #fff;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .wrap {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 22px;
+      padding: 32px;
+      text-align: center;
+    }
+    .logo {
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      background: linear-gradient(180deg, #67e8f9 0%, #00b7ff 55%, #ffb020 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .spinner {
+      width: 46px;
+      height: 46px;
+      border: 4px solid rgba(255, 255, 255, 0.12);
+      border-top-color: #00f2ff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    .hint { font-size: 14px; line-height: 1.5; opacity: 0.75; max-width: 300px; }
+    button {
+      margin-top: 6px;
+      padding: 12px 28px;
+      border: 1px solid rgba(0, 242, 255, 0.6);
+      border-radius: 12px;
+      background: rgba(0, 242, 255, 0.12);
+      color: #00f2ff;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">GALAXY LEAGUE</div>
+    <div class="spinner"></div>
+    <div class="hint">Загружаем игру… Если экран не появился, проверьте подключение к интернету.</div>
+    <button onclick="location.reload()">Повторить</button>
+  </div>
+</body>
+</html>

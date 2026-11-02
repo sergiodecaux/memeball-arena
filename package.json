@@ -9,6 +9,11 @@
     "build:fast": "node scripts/bump-version.cjs && vite build",
     "build:no-bump": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "android:sync": "npx cap sync android",
+    "android:assets": "python scripts/generate-android-assets.py",
+    "android:debug": "node scripts/build-android.cjs debug",
+    "android:apk": "node scripts/build-android.cjs release",
+    "android:open": "npx cap open android",
     "deploy": "npm run build && npx gh-pages -d dist",
     "version:bump": "node scripts/bump-version.cjs",
     "version:set": "node scripts/set-version.cjs",
@@ -20,11 +25,14 @@
     "precommit": "npm run lint && npm run audit:leaks"
   },
   "dependencies": {
+    "@capacitor/android": "^6.2.3",
+    "@capacitor/core": "^6.2.3",
     "phaser": "^3.80.1",
     "socket.io-client": "^4.8.1",
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.2.3",
     "gh-pages": "^6.1.0",
     "jscodeshift": "^0.15.0",
     "typescript": "^5.4.5",
